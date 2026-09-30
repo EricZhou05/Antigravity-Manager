@@ -179,7 +179,7 @@ impl UpstreamClient {
             .connect_timeout(Duration::from_secs(20))
             .pool_max_idle_per_host(20) // 每主机最多 20 个空闲连接 (对齐官方指纹)
             .pool_idle_timeout(Duration::from_secs(90)) // 空闲连接保持 90 秒
-            .tcp_keepalive(Duration::from_secs(60)) // TCP 保活探测 60 秒
+            .tcp_keepalive(Duration::from_secs(2)) // TCP 保活探测 2 秒 (打破中间代理与上游静默断连)
             // 强制开启 HTTP/2 协议，并支持在 SOCKS/HTTPS 代理下通过 ALPN 强制降级/协商
             .timeout(Duration::from_secs(600));
 
@@ -209,7 +209,7 @@ impl UpstreamClient {
             .connect_timeout(Duration::from_secs(20))
             .pool_max_idle_per_host(20)
             .pool_idle_timeout(Duration::from_secs(90))
-            .tcp_keepalive(Duration::from_secs(60))
+            .tcp_keepalive(Duration::from_secs(2)) // TCP 保活探测 2 秒 (打破中间代理与上游静默断连)
             .timeout(Duration::from_secs(600))
             .proxy(proxy_config.proxy); // Apply the specific proxy
 

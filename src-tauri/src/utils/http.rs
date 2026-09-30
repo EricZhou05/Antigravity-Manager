@@ -131,6 +131,7 @@ fn apply_upstream_proxy(builder: rquest::ClientBuilder, label: &str) -> rquest::
 fn create_base_client(timeout_secs: u64) -> Client {
     let builder = Client::builder()
         .emulation(Emulation::Chrome123)
+        .tcp_keepalive(std::time::Duration::from_secs(2))
         .timeout(std::time::Duration::from_secs(timeout_secs));
     let builder = apply_upstream_proxy(builder, "HTTP shared client");
 

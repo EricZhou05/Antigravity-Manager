@@ -86,6 +86,7 @@ impl ProxyPoolManager {
     ) -> Client {
         let mut builder = Client::builder()
             .emulation(Emulation::Chrome123)
+            .tcp_keepalive(Duration::from_secs(2))
             .timeout(Duration::from_secs(timeout_secs));
 
         // 尝试获取代理配置
