@@ -2287,8 +2287,14 @@ pub fn is_thought_part(part: &Value) -> bool {
 ///
 /// 返回最终写入锚点的签名（若有）。
 pub fn place_turn_signature(parts: &mut [Value], fallback_sig: Option<&str>) -> Option<String> {
-    // 1. 锚点 = 第一个非思考 part；整轮皆思考则本轮无锚点
-    let anchor = parts.iter().position(|p| !is_thought_part(p))?;
+    // 1. 权威锚点定位：
+    // 若当前轮包含工具调用 (functionCall)，由于 Google Gemini 严格要求「每个工具调用序列的首个 functionCall 必须携带 thought_signature」，
+    // 锚点必须优先定位到首个 functionCall；若无工具调用，则退回至首个非思考 part (通常为正文 text)。
+    // 整轮皆思考则本轮无锚点。
+    let anchor = parts
+        .iter()
+        .position(|p| p.get("functionCall").is_some())
+        .or_else(|| parts.iter().position(|p| !is_thought_part(p)))?;
 
     // 2. 必须在清空之前取出锚点自带的签名
     let own_sig = parts[anchor]
