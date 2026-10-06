@@ -177,11 +177,17 @@ impl UpstreamClient {
             .connect_timeout(Duration::from_secs(20))
             .pool_max_idle_per_host(20) // 每主机最多 20 个空闲连接 (对齐官方指纹)
             .pool_idle_timeout(Duration::from_secs(90)) // 空闲连接保持 90 秒
-            // [FIX #3593 / #3571] 彻底恢复 Chrome 123 原生协议行为：
-            // 1. 实测证实 Google GFE 对客户端 HTTP/2 PING 帧静默丢弃、不回复 PING ACK，
-            //    导致 hyper2 在 keep_alive_timeout 到期时本地自杀式掐死连接并抛出 error reading a body from connection；
-            // 2. 移除破坏性的底层 HTTP/2 PING 配置，回归 4.8.8 稳态基线；
-            // 3. 依赖标准 L4 TCP Keep-Alive (60s) 保活，下游已有 PR #3578 的 3s SSE 注释心跳防客户端超时。
+            // [FIX #3593 / #3571] 穿透配置上游 HTTP/2 PING 保活：
+            // 1. 保活探测间隔为 5s，在模型深度思考/长生成静默期持续重置中间代理 L7 空闲读计时器（防 10~15s 切断）；
+            // 2. 【关键 - 绝不设置 keep_alive_timeout】：实测证实 Google GFE 对客户端 HTTP/2 PING 帧静默丢弃、不回复 PING ACK，
+            //    若设置 keep_alive_timeout 会导致底层 hyper2 在超时到期时于本地自杀式掐死连接并抛出 error reading a body from connection；
+            //    保持 timeout 为 None，本地协议栈不挂载自杀定时器，彻底免疫 Google GFE 丢弃 ACK 的特性；
+            // 3. 【关键 - 设置 keep_alive_while_idle 为 false】：仅在有活跃请求等待响应（如长思考静默期）时发送 PING，
+            //    杜绝空闲期未应答 PING 堆积污染连接池导致的 503 Token pool is empty 雪崩。
+            .http2(|mut h2| {
+                h2.keep_alive_interval(Duration::from_secs(5))
+                    .keep_alive_while_idle(false);
+            })
             .tcp_keepalive(Duration::from_secs(60)) // TCP 稳态保活探测 (60秒)
             // 强制开启 HTTP/2 协议，并支持在 SOCKS/HTTPS 代理下通过 ALPN 强制降级/协商
             .timeout(Duration::from_secs(600));
