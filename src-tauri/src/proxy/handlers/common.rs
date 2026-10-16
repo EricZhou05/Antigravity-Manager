@@ -616,13 +616,15 @@ pub async fn handle_detect_model(
 
 /// [Issue #3414] 从形如 "All accounts limited. Wait 29s." 或其他明确冷却提示中解析等待秒数
 pub fn extract_retry_after_seconds(error_text: &str) -> Option<u64> {
-    if let Some(pos) = error_text.find("Wait ") {
-        let rest = &error_text[pos + 5..];
-        if let Some(s_pos) = rest.find('s') {
-            if let Ok(sec) = rest[..s_pos].trim().parse::<u64>() {
-                if sec > 0 {
-                    return Some(sec);
-                }
+    // 查找 "Wait " (大写) 或 "wait " (小写)
+    let pos = error_text
+        .find("Wait ")
+        .or_else(|| error_text.find("wait "))?;
+    let rest = &error_text[pos + 5..];
+    if let Some(s_pos) = rest.find('s') {
+        if let Ok(sec) = rest[..s_pos].trim().parse::<u64>() {
+            if sec > 0 {
+                return Some(sec);
             }
         }
     }
@@ -1000,6 +1002,10 @@ mod retry_after_tests {
         assert_eq!(
             extract_retry_after_seconds("Token error: All accounts limited. Wait 5s."),
             Some(5)
+        );
+        assert_eq!(
+            extract_retry_after_seconds("All accounts rate-limited. Cooldown wait 27s."),
+            Some(27)
         );
         assert_eq!(extract_retry_after_seconds("Token pool is empty"), None);
         assert_eq!(
