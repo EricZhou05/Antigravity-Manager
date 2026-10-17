@@ -1427,10 +1427,14 @@
             },
             "toast": {
                 "sync_success": "同期に成功しました！{{name}} の準備が整いました。",
-                "sync_error": "同期に失敗しました：{{error}}"
+                "sync_error": "同期に失敗しました：{{error}}",
+                "sync_success_with_model": "{{name}} の同期に成功しました。モデル: {{model}}"
             },
             "sync_confirm_title": "同期の確認",
-            "sync_confirm_message": "{{name}} の設定を同期する準備ができました。⚠️ 注意：これにより、既存のローカル設定ファイル（ログイントークン、APIキーなど）が上書きされます。続行してもよろしいですか？"
+            "sync_confirm_message": "{{name}} の設定を同期する準備ができました。⚠️ 注意：これにより、既存のローカル設定ファイル（ログイントークン、APIキーなど）が上書きされます。続行してもよろしいですか？",
+            "apps": {
+                "gemini": "Antigravity CLI (agy)"
+            }
         },
         "agent_settings": {
             "banner_title": "特定 Agent 専用機能と最適化ガバナンス",

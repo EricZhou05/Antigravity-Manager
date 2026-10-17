@@ -1411,9 +1411,13 @@
             "toast": {
                 "config_missing": "請先生成 API Key 並啟動服務",
                 "sync_success": "同步成功！{{name}} 已準備就緒。",
-                "sync_error": "同步 {{name}} 失敗: {{error}}"
+                "sync_error": "同步 {{name}} 失敗: {{error}}",
+                "sync_success_with_model": "同步成功！{{name}} 已同步模型: {{model}}"
             },
-            "model_select": "Select Model"
+            "model_select": "Select Model",
+            "apps": {
+                "gemini": "Antigravity CLI (agy)"
+            }
         },
         "hermes_sync": {
             "modal_title": "在 Hermes 中配置 Antigravity Manager",

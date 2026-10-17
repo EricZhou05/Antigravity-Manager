@@ -3,6 +3,37 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v4.9.8-beta.8 (2026-10-17)**:
+        -   **[对齐 Claude Code 2.1.301 协议规范、全链路请求追溯与 Claude 5 模型族] (PR #3689, Ref #3684, Ref #3686, Thanks to @cubelikeplayDaniel)**:
+            -   **防 WAF 身份清洗扩展与 Agent SDK CLI 深度对齐**: 针对 `@anthropic-ai/claude-code@2.1.301` 引入的第三种复合身份提示词（Agent SDK CLI 运行时开场白：`You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK.`），在 `prompt_sanitizer.rs` 中全面扩展 `RE_WAF_TRIGGER_HEADERS` 与身份归一化清洗规则；全面识别并清洗 `cc_workload`、`cc_is_subagent`、`cc_prev_req`、`cc_prompt_id`、`cc_turn_origin` 等 2.1.301 扩展归属元数据请求头，坚决杜绝因上游 Google Cloud Code WAF 识别非白名单特征触发 429 限流风控。(PR #3689, Ref #3684, Thanks to @cubelikeplayDaniel)
+            -   **全链路下行追踪对齐 (request-id)**: 在 Claude 协议处理器（`handlers/claude.rs`）的流式 (SSE)、流聚合 JSON 与非流式 JSON 三大响应分支中，统一对齐注入 `request-id: req_{trace_id}` 响应头，与客户端 `x-gateway-upstream-request-id` 严格对应，确保客户端在网络重试与会话归档时可无缝回溯全链路会话日志。(PR #3689, Thanks to @cubelikeplayDaniel)
+            -   **Claude 协议规范补全与自适应思考展示控制**: 在 Claude 模型定义中补充 `ThinkingConfig.display`（支持 `"omitted"` / `"summarized"` / `"highlights"`）以适配自适应思考模式下的展示控制属性；在 `Usage` 中补充 `cache_creation` 结构，无缝接收与传递下行缓存创建 Token 分布，杜绝反序列化丢项或报错。(PR #3689, Thanks to @cubelikeplayDaniel)
+            -   **Claude 5 模型族录入与 CLI 动态同步**: 在 `cli_sync.rs` 的网关核心模型列表（`get_core_gateway_models()`）中全面录入 Claude 5 系列 8 个核心模型（`claude-fable-5`、`claude-opus-5-5`、`claude-sonnet-5-5`、`claude-haiku-5-5` 及其思考变体），上调上下文规格至 256k，确保 Antigravity CLI (`agy`) 与 JeikCode 配置文件能够完整识别并动态同步新模型。(PR #3689, Ref #3686, Thanks to @cubelikeplayDaniel)
+
+    *   **v4.9.8-beta.7 (2026-10-16)**:
+        -   **[Antigravity CLI (agy) 原生全面演进、防遥测封号与模型动态选择导入] (Ref #3686)**:
+            -   **平滑迁移至 Antigravity CLI (agy)**: 在 CLI 配置同步模块中正式迁移支持 Antigravity CLI (`agy`)，并保持对旧版 `gemini` CLI 探测与配置恢复的 100% 向后兼容。 (Ref #3686)
+            -   **前端模型自由选择与状态实时反查回显**: 彻底重塑 CLI 模型导入机制，前端下拉列表支持自由选择或自定义输入任意模型（Gemini 4 Argon 全系列、Gemini 3.8 Flash、Gemini 3.1 Pro 及 Claude / Codex 等）；后端在状态检测时实时反查提取本地实际生效的配置模型并精准回显至前端，同步成功提供包含选定模型的即时感知反馈。
+            -   **自动 Shell Wrapper 接管与智能思考档位拆解**: 自动识别系统 `~/.local/bin/agy` 二进制并接管写入包装脚本，无缝注入 `GEMINI_API_KEY`、`GOOGLE_GEMINI_BASE_URL` 及防风控遥测标头；底层智能拆解基底模型与思考档位（如 `gemini-3.8-flash-low` 自动映射为 `--model gemini-3.8-flash --effort low`），杜绝因复合命名引发已知模型解析失败而静默降级的问题。
+            -   **Google OAuth 历史凭据自动隔离与防云端误连**: 在同步时自动对历史 `antigravity-oauth-token` 实施安全备份隔离，强制声明 `modelProvider: "gemini"` 与 API Key 鉴权模式，从根源杜绝客户端误走 Google 内部账号通道连接 `daily-cloudcode-pa.googleapis.com` 引发流式 EOF 与网络中断异常。
+            -   **全量 12 种系统语言与更新日志同步**: 覆盖简体中文、繁体中文、英文、日文、韩文、西文、葡文、俄文、土文、越文、阿文、马文等全部 12 国语言标签与提示文案。
+        -   **[修复 503 响应 Retry-After 头部提取与大小写兼容] (PR #3687, Fixes #3506, Thanks to @EricZhou05)**:
+            -   **全账号限流重试秒数解析大小写双向兼顾**: 解决历史提交在将全账号限流错误文案升级为 `"All accounts rate-limited. Cooldown wait Ns."` 时，`extract_retry_after_seconds` 内部硬编码检索大写 `"Wait "` 导致无法解析冷却秒数的缺陷；支持 `"Wait "` 与 `"wait "` 大小写双向链式匹配，确保 503 错误响应正常生成 `Retry-After: N` 标准头部，避免外部客户端（如 Claude Code / OpenCode 等）因缺失退避指示触发无序重试或长冻结。 (PR #3687, Fixes #3506, Thanks to @EricZhou05)
+        -   **[彻底移除 0ms 乐观重置风暴、物理冷却退避与端点健康解耦] (PR #3685, Fixes #3506, Ref #3525, Ref #3634, Ref #3666, Ref #3680, Thanks to @cubelikeplayDaniel)**:
+            -   **根除 0ms 乐观重置风暴与物理异步冷却**: 彻底移除 `token_manager` 中的 `clear_for_optimistic_reset()` 机制，杜绝多会话并发瞬态 429 时网关在 0ms 间隔内将所有账号清空并盲目重放打穿 Google 上游；当号池最短限流等待时间 `<= 5s` 时，执行真实的物理异步冷却（`wait_sec * 1000 + 100ms`），让限流自然恢复；当等待时间 `> 5s` 时，主动返回明确的冷却需求错误，触发客户端标准退避。 (PR #3685, Thanks to @cubelikeplayDaniel)
+            -   **两轮自适应匀速轮换与阶梯退避重试**: 首轮全池轮换延迟由 50ms 放宽至 150ms 匀速轮换，留出微冷却时间；将请求级 429 快速失败门槛从单轮放宽至两轮（`pool_size * 2`），并在第二轮引入温和线性阶梯退避（1.5s ~ 3.5s），兼顾突发大 Prompt 限流恢复与防长假死。实测将高并发 429 失败率从 37.4% 彻底降低至 0.0%。 (PR #3685, Thanks to @cubelikeplayDaniel)
+            -   **后台配额轮询与推理主力端点健康彻底解耦**: 为 `modules/quota.rs` 建立专属独立的 `QUOTA_ENDPOINT_HEALTH`（60 秒观察期）并将探测超时放宽至 15 秒，坚决杜绝后台定时抓取配额与 `project_id` 探针超时污染主代理网关的推理主力端点。 (PR #3685, Thanks to @cubelikeplayDaniel)
+            -   **候选端点体积自适应看门狗与收紧 HTTP/2 空闲连接**: 看门狗防假死超时按请求体体积自适应延展（保底 15 秒，大请求按 256KB/s 动态追加），防止 11MB 等超大 prompt 在上传时因固定超时被误判假死；将 HTTP/2 `pool_idle_timeout` 收紧至 15 秒，`pool_max_idle_per_host` 限制为 10，杜绝复用被 Google GFE 静默掐断的死连接导致流式中断。 (PR #3685, Thanks to @cubelikeplayDaniel)
+        -   **[官方原生 Antigravity 身份深度对齐与第三方工具函数安全清洗] (Fixes #3684)**:
+            -   **官方原生 Antigravity 助手身份深度对齐**: 针对 Google 上游近期对非 Antigravity Harness（如 Claude Code CLI、OpenCode、DSH、Pi、Codex 等）加强语义特征风控导致频繁触发假性 429 报错的问题，在 `PromptSanitizer` 中全面引入并对齐官方原生 Antigravity 身份声明（`OFFICIAL_ANTIGRAVITY_IDENTITY`）；将原先刻意保留的 Claude Code CLI / Agent SDK 等专有前导声明以及广谱归属声明，统一收敛对齐为官方原生开场白，彻底抹去外部 Harness 语义特征，享受官方原生 IDE 同等最高容忍度。 (Fixes #3684)
+            -   **第三方工具函数 (Tools) 描述文本防御性清洗**: 解决第三方客户端在工具声明（`tools[].functionDeclarations`）的 `description` 中混入计费伪 Header（如 `x-anthropic-billing-header:`）或 SDK 指纹引发 WAF 拦截的隐患。在入站清洗流水线中增加对工具描述的 Header 轨防御性过滤，同时 100% 捍卫函数名称（`name`）与参数结构（`parameters`）的协议契约完好无损，确保各类自主 Agent 工具调用丝滑执行。 (Fixes #3684)
+        -   **[流量监控报文详情重构：统一单 Tab 视窗、正文结构化审查与双链路 HAR 导出]**:
+            -   **统一 Postman 风格单 Tab 视窗架构**: 将报文详情重塑为「请求 (Request)」、「转出 (Forwarded)」、「响应 (Response)」三大主选项卡，告别上下分屏挤压，配合紧凑元数据栏与防换行 Token 消耗状态，大幅提升查阅空间。
+            -   **正文「结构化拆分」与「原始代码」双视图**: 支持一键切换视图；智能拆解展示系统提示词、多轮对话气泡、工具函数声明、思考推理块与调用回执，复杂 Agent 报文清晰直观。
+            -   **键值对表格与敏感 Header 脱敏保护**: 请求头与 Query 参数升级为两列键值对表格，支持关键词搜索、悬浮复制及 `Bearer sk-***` 掩码脱敏与明文切换。
+            -   **标准双链路 HAR 1.2 导出 (3 报文齐全)**: 导出包含「客户端->网关」与「网关->上游真实端点」双链路 Entry，确保抓包工具导入时客户端请求、网关转出及响应 3 个报文 100% 齐全；支持一键复制 cURL 命令与全量 JSON。
+            -   **全量 12 种多国语言覆盖**: 新增组件、标签与提示文案全面接入并同步至 12 种系统语言。
+
     *   **v4.9.8-beta.6 (2026-10-16)**:
         -   **[Gemini 4 Argon 独立配额展示、按需渲染与后端熔断防穿透隔离]**:
             -   **前端按需全宽独立配额条**: 针对 Google 旗舰推理模型 Gemini 4 Argon 独立的配额计算机制，在账号卡片、表格视图、当前主账号及配额详情窗口中，新增专属于 Argon 的全宽配额条；采用数据驱动（Data-driven）按需渲染，仅对真实具备 Argon 配额或授权的账号渲染展示，移除了挤占空间的告警图标，确保第三方模型图标与 Argon 图标整洁互不遮挡。

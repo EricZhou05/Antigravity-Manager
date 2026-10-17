@@ -1404,9 +1404,13 @@
             "toast": {
                 "config_missing": "Vui lòng tạo API Key và khởi chạy dịch vụ trước",
                 "sync_success": "Thành công! {{name}} đã sẵn sàng.",
-                "sync_error": "Lỗi đồng bộ {{name}}: {{error}}"
+                "sync_error": "Lỗi đồng bộ {{name}}: {{error}}",
+                "sync_success_with_model": "Đã đồng bộ {{name}} thành công với mô hình: {{model}}"
             },
-            "model_select": "Select Model"
+            "model_select": "Select Model",
+            "apps": {
+                "gemini": "Antigravity CLI (agy)"
+            }
         },
         "supported_models": {
             "title": "Model Hỗ trợ & Tích hợp",

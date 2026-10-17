@@ -1406,9 +1406,13 @@
             "toast": {
                 "config_missing": "Lütfen önce bir API anahtarı oluşturun ve hizmeti başlatın",
                 "sync_success": "Başarılı! {{name}} kullanıma hazır.",
-                "sync_error": "{{name}} senkronizasyon hatası: {{error}}"
+                "sync_error": "{{name}} senkronizasyon hatası: {{error}}",
+                "sync_success_with_model": "{{name}} başarıyla senkronize edildi. Model: {{model}}"
             },
-            "model_select": "Select Model"
+            "model_select": "Select Model",
+            "apps": {
+                "gemini": "Antigravity CLI (agy)"
+            }
         },
         "supported_models": {
             "title": "Desteklenen Modeller ve Entegrasyon",

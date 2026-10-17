@@ -1,10 +1,27 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { X, Copy, CheckCircle, Sparkles, FileCode2, Eye, EyeOff, Clock, ChevronDown } from 'lucide-react';
+import {
+    X,
+    Copy,
+    Check,
+    CheckCircle,
+    Sparkles,
+    FileCode2,
+    Eye,
+    EyeOff,
+    Clock,
+    ChevronDown,
+    LayoutGrid,
+    SplitSquareVertical,
+    Download,
+    Terminal,
+} from 'lucide-react';
 import { formatCompactNumber } from '../../utils/format';
 import { copyToClipboard } from '../../utils/clipboard';
 import { VirtualizedPayloadViewer } from './VirtualizedPayloadViewer';
 import { extractConcisePayload } from './concisePayload';
+import { PostmanDetailView } from './PostmanDetailView';
+import { exportToHarString, downloadHarFile, exportToCurl } from '../../utils/harExport';
 
 export interface ProxyRequestLog {
     id: string;
@@ -561,8 +578,80 @@ export interface RequestDetailModalProps {
 export const RequestDetailModal: React.FC<RequestDetailModalProps> = ({ log, onClose, loadingDetail }) => {
     const { t } = useTranslation();
     const [payloadViewMode, setPayloadViewMode] = useState<'concise' | 'full'>('concise');
+    const [modalLayout, setModalLayout] = useState<'3-column' | 'postman'>(() => {
+        try {
+            return (localStorage.getItem('at_proxy_modal_layout') as '3-column' | 'postman') || '3-column';
+        } catch {
+            return '3-column';
+        }
+    });
+    const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
+    const [exportSuccessMsg, setExportSuccessMsg] = useState<string | null>(null);
     const [showMetadata, setShowMetadata] = useState(true);
     const [copiedCard, setCopiedCard] = useState<'req' | 'upstream' | 'resp' | 'timing' | null>(null);
+    const exportMenuRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+                setIsExportMenuOpen(false);
+            }
+        };
+        if (isExportMenuOpen) {
+            document.addEventListener('mousedown', handleClickOutside);
+        }
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, [isExportMenuOpen]);
+
+    const handleLayoutChange = (layout: '3-column' | 'postman') => {
+        setModalLayout(layout);
+        try {
+            localStorage.setItem('at_proxy_modal_layout', layout);
+        } catch {}
+    };
+
+    const handleCopyHar = async () => {
+        if (!log) return;
+        const har = exportToHarString(log);
+        const success = await copyToClipboard(har);
+        if (success) {
+            setExportSuccessMsg(t('monitor.details.copied_har', '已复制 HAR'));
+            setTimeout(() => setExportSuccessMsg(null), 2000);
+        }
+        setIsExportMenuOpen(false);
+    };
+
+    const handleDownloadHar = () => {
+        if (!log) return;
+        downloadHarFile(log);
+        setExportSuccessMsg(t('monitor.details.exported_har', '已导出 .har'));
+        setTimeout(() => setExportSuccessMsg(null), 2000);
+        setIsExportMenuOpen(false);
+    };
+
+    const handleCopyCurl = async () => {
+        if (!log) return;
+        const curl = exportToCurl(log);
+        const success = await copyToClipboard(curl);
+        if (success) {
+            setExportSuccessMsg(t('monitor.details.copied_curl', '已复制 cURL'));
+            setTimeout(() => setExportSuccessMsg(null), 2000);
+        }
+        setIsExportMenuOpen(false);
+    };
+
+    const handleCopyFullJson = async () => {
+        if (!log) return;
+        const full = JSON.stringify(log, null, 2);
+        const success = await copyToClipboard(full);
+        if (success) {
+            setExportSuccessMsg(t('monitor.details.copied_full_json', '已复制全量 JSON'));
+            setTimeout(() => setExportSuccessMsg(null), 2000);
+        }
+        setIsExportMenuOpen(false);
+    };
 
     const conciseRequestBody = useMemo(() => {
         return log?.request_body
@@ -625,7 +714,10 @@ export const RequestDetailModal: React.FC<RequestDetailModalProps> = ({ log, onC
                         <span className="font-mono font-bold text-gray-900 dark:text-white text-sm shrink-0">{log.method}</span>
                         <span className="text-xs text-gray-500 dark:text-gray-400 font-mono truncate max-w-lg hidden sm:inline" title={log.url}>{log.url}</span>
                     </div>
-                    <button onClick={onClose} className="btn btn-ghost btn-sm btn-circle text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-base-200" aria-label="关闭"><X size={18} /></button>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                        <button onClick={onClose} className="btn btn-ghost btn-sm btn-circle text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-base-200" aria-label="关闭"><X size={18} /></button>
+                    </div>
                 </div>
 
                 {/* Modal Content */}
@@ -633,29 +725,29 @@ export const RequestDetailModal: React.FC<RequestDetailModalProps> = ({ log, onC
                     {/* Metadata Section */}
                     {showMetadata && (
                         <div className="bg-white dark:bg-base-200 p-3 sm:p-3.5 rounded-xl border border-gray-200 dark:border-base-300 shadow-sm shrink-0 text-xs transition-all duration-200">
-                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-[1.1fr_0.8fr_auto_0.8fr_1.2fr_1.3fr] gap-3 items-center">
                                 <div>
-                                    <span className="block text-gray-500 dark:text-gray-400 uppercase font-bold text-[10px] tracking-wider">{t('monitor.details.time')}</span>
+                                    <span className="block text-gray-500 dark:text-gray-400 uppercase font-bold text-[10px] tracking-wider whitespace-nowrap">{t('monitor.details.time')}</span>
                                     <span className="font-mono font-semibold text-gray-900 dark:text-white text-xs truncate block" title={new Date(log.timestamp).toLocaleString()}>{new Date(log.timestamp).toLocaleString()}</span>
                                 </div>
                                 <div>
-                                    <span className="block text-gray-500 dark:text-gray-400 uppercase font-bold text-[10px] tracking-wider">{t('monitor.details.duration')}</span>
+                                    <span className="block text-gray-500 dark:text-gray-400 uppercase font-bold text-[10px] tracking-wider whitespace-nowrap">{t('monitor.details.duration')}</span>
                                     <span className="font-mono font-semibold text-gray-900 dark:text-white text-xs">{log.duration}ms</span>
                                 </div>
-                                <div>
-                                    <span className="block text-gray-500 dark:text-gray-400 uppercase font-bold text-[10px] tracking-wider">{t('monitor.details.tokens')}</span>
-                                    <div className="font-mono text-[11px] flex items-center gap-1.5 mt-0.5">
+                                <div className="min-w-fit shrink-0">
+                                    <span className="block text-gray-500 dark:text-gray-400 uppercase font-bold text-[10px] tracking-wider whitespace-nowrap">{t('monitor.details.tokens')}</span>
+                                    <div className="font-mono text-[11px] flex items-center gap-1.5 mt-0.5 whitespace-nowrap flex-nowrap">
                                         {(() => {
                                             const totalIn = (log.cached_tokens && log.cached_tokens > (log.input_tokens ?? 0))
                                                 ? (log.input_tokens ?? 0) + log.cached_tokens
                                                 : (log.input_tokens ?? 0);
                                             return (
-                                                <span className="text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/40 px-1.5 py-0.5 rounded font-bold" title={`Total Input Tokens: ${totalIn}`}>
+                                                <span className="text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/40 px-1.5 py-0.5 rounded font-bold shrink-0" title={`Total Input Tokens: ${totalIn}`}>
                                                     In: {formatCompactNumber(totalIn)}
                                                 </span>
                                             );
                                         })()}
-                                        <span className="text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-0.5 rounded font-bold">Out: {formatCompactNumber(log.output_tokens ?? 0)}</span>
+                                        <span className="text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-0.5 rounded font-bold shrink-0">Out: {formatCompactNumber(log.output_tokens ?? 0)}</span>
                                         {log.cached_tokens != null && log.cached_tokens > 0 && (() => {
                                             const totalIn = (log.cached_tokens && log.cached_tokens > (log.input_tokens ?? 0))
                                                 ? (log.input_tokens ?? 0) + log.cached_tokens
@@ -664,7 +756,7 @@ export const RequestDetailModal: React.FC<RequestDetailModalProps> = ({ log, onC
                                             const hitRateText = totalIn > 0 ? (hitRate >= 100 ? '100%' : (hitRate % 1 === 0 ? `${hitRate.toFixed(0)}%` : `${hitRate.toFixed(1)}%`)) : '';
                                             return (
                                                 <span
-                                                    className="text-purple-700 dark:text-purple-300 bg-purple-100 dark:bg-purple-900/40 px-1.5 py-0.5 rounded font-bold"
+                                                    className="text-purple-700 dark:text-purple-300 bg-purple-100 dark:bg-purple-900/40 px-1.5 py-0.5 rounded font-bold shrink-0"
                                                     title={`Cache: ${log.cached_tokens.toLocaleString()}${hitRateText ? ` (${hitRateText})` : ''}`}
                                                 >
                                                     Cache: {formatCompactNumber(log.cached_tokens)}{hitRateText ? ` (${hitRateText})` : ''}
@@ -705,7 +797,38 @@ export const RequestDetailModal: React.FC<RequestDetailModalProps> = ({ log, onC
 
                     {/* Mode & Toolbar Bar */}
                     <div className="flex flex-wrap items-center justify-between gap-2 px-1 shrink-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                            {/* Layout Switcher */}
+                            <div className="inline-flex items-center p-1 bg-gray-200/70 dark:bg-base-200 rounded-xl border border-gray-300/70 dark:border-base-300 gap-1 shadow-inner">
+                                <button
+                                    type="button"
+                                    onClick={() => handleLayoutChange('3-column')}
+                                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all duration-150 cursor-pointer select-none ${
+                                        modalLayout === '3-column'
+                                            ? 'bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-sm border border-gray-200 dark:border-base-300'
+                                            : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                                    }`}
+                                    title={t('monitor.details.layout_3col_title', '三栏横向对比视图')}
+                                >
+                                    <LayoutGrid size={13} className={modalLayout === '3-column' ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400'} />
+                                    <span>{t('monitor.details.layout_3col', '三栏对比')}</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handleLayoutChange('postman')}
+                                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all duration-150 cursor-pointer select-none ${
+                                        modalLayout === 'postman'
+                                            ? 'bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-sm border border-gray-200 dark:border-base-300'
+                                            : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                                    }`}
+                                    title={t('monitor.details.layout_postman_title', 'Postman 风格上下分屏视图')}
+                                >
+                                    <SplitSquareVertical size={13} className={modalLayout === 'postman' ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400'} />
+                                    <span>{t('monitor.details.layout_postman', 'Postman 风格')}</span>
+                                </button>
+                            </div>
+
+                            {/* Payload Concise / Full Switcher */}
                             <div className="inline-flex items-center p-1 bg-gray-200/70 dark:bg-base-200 rounded-xl border border-gray-300/70 dark:border-base-300 gap-1 shadow-inner">
                                 <button
                                     type="button"
@@ -735,85 +858,167 @@ export const RequestDetailModal: React.FC<RequestDetailModalProps> = ({ log, onC
                             <span className="hidden sm:inline-block text-[11px] text-gray-500 dark:text-gray-400">
                                 {payloadViewMode === 'concise'
                                     ? t('monitor.details.concise_desc', '保留转出报文的原始层级，并将标识、模型、思考配置、系统提示词、对话与工具前置；图片等大体积内容已省略')
-                                    : '显示原始完整未修剪报文'}
+                                    : t('monitor.details.full_desc', '显示原始完整未修剪报文')}
                             </span>
                         </div>
 
                         <div className="flex items-center gap-2">
+                            {/* Export Menu Dropdown */}
+                            <div className="relative" ref={exportMenuRef}>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsExportMenuOpen((prev) => !prev)}
+                                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all duration-150 cursor-pointer select-none border shadow-2xs ${
+                                        isExportMenuOpen
+                                            ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-800'
+                                            : 'bg-white dark:bg-base-100 text-gray-700 dark:text-gray-200 border-gray-200 dark:border-base-300 hover:bg-gray-50 dark:hover:bg-base-200 hover:text-blue-600 dark:hover:text-blue-400'
+                                    }`}
+                                    title={t('monitor.details.export_menu_title', '导出 HAR 格式、复制为 cURL 或诊断 JSON')}
+                                >
+                                    {exportSuccessMsg ? (
+                                        <Check size={12} className="text-emerald-500" />
+                                    ) : (
+                                        <Download size={12} className="text-blue-500" />
+                                    )}
+                                    <span>{exportSuccessMsg || t('monitor.details.export_menu', '导出 / 复制')}</span>
+                                    <ChevronDown size={11} className={`text-gray-400 transition-transform duration-200 ${isExportMenuOpen ? 'rotate-180' : ''}`} />
+                                </button>
+
+                                {isExportMenuOpen && (
+                                    <div
+                                        className="absolute right-0 top-full mt-1.5 w-48 bg-white dark:bg-base-100 rounded-xl shadow-xl border border-gray-200 dark:border-base-300 py-1.5 z-40 font-sans text-xs divide-y divide-gray-100 dark:divide-base-300"
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
+                                        <div className="py-0.5">
+                                            <button
+                                                type="button"
+                                                onClick={handleCopyHar}
+                                                className="w-full text-left px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-blue-950/40 flex items-center gap-2 text-gray-700 dark:text-gray-200 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                                            >
+                                                <Copy size={13} className="text-blue-500" />
+                                                <span className="font-medium">{t('monitor.details.copy_har', '复制 HAR 报文')}</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={handleDownloadHar}
+                                                className="w-full text-left px-3 py-1.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 flex items-center gap-2 text-gray-700 dark:text-gray-200 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
+                                            >
+                                                <Download size={13} className="text-emerald-500" />
+                                                <span className="font-medium">{t('monitor.details.download_har', '下载 .har 文件')}</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={handleCopyCurl}
+                                                className="w-full text-left px-3 py-1.5 hover:bg-purple-50 dark:hover:bg-purple-950/40 flex items-center gap-2 text-gray-700 dark:text-gray-200 hover:text-purple-600 dark:hover:text-purple-400 transition-colors"
+                                            >
+                                                <Terminal size={13} className="text-purple-500" />
+                                                <span className="font-medium">{t('monitor.details.copy_curl', '复制为 cURL 命令')}</span>
+                                            </button>
+                                        </div>
+                                        <div className="pt-1">
+                                            <button
+                                                type="button"
+                                                onClick={handleCopyFullJson}
+                                                className="w-full text-left px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-base-200 flex items-center gap-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 transition-colors"
+                                            >
+                                                <FileCode2 size={13} />
+                                                <span>{t('monitor.details.copy_full_json', '复制全量诊断 JSON')}</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
                             <button
                                 type="button"
                                 onClick={() => setShowMetadata((prev) => !prev)}
                                 className="btn btn-xs btn-ghost text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-base-200 gap-1 text-[11px]"
-                                title={showMetadata ? '折叠元数据以增大报文视野' : '展开元数据信息'}
+                                title={showMetadata ? t('monitor.details.collapse_metadata_title', '折叠元数据以增大报文视野') : t('monitor.details.expand_metadata_title', '展开元数据信息')}
                             >
                                 {showMetadata ? <EyeOff size={13} /> : <Eye size={13} />}
-                                <span>{showMetadata ? '收起元数据' : '展开元数据'}</span>
+                                <span>{showMetadata ? t('monitor.details.collapse_metadata', '收起元数据') : t('monitor.details.expand_metadata', '展开元数据')}</span>
                             </button>
                         </div>
                     </div>
 
-                    {/* Horizontal 3-Column Grid */}
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 flex-1 min-h-0 overflow-hidden">
-                        <VirtualizedPayloadViewer
-                            cardId="req"
-                            title={t('monitor.details.request_payload', '请求报文 (Request)')}
-                            badge="REQUEST"
-                            badgeStyle="bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border-blue-200 dark:border-blue-800/60"
-                            rawPayload={log.request_body}
-                            concisePayload={conciseRequestBody}
-                            headersJson={log.request_headers}
-                            viewMode={payloadViewMode}
-                            emptyPlaceholder={t('monitor.details.payload_empty', '无请求报文')}
-                            onCopy={async (text) => {
-                                const success = await copyToClipboard(text);
-                                if (success) {
-                                    setCopiedCard('req');
-                                    setTimeout(() => setCopiedCard(null), 2000);
-                                }
-                            }}
-                            isCopied={copiedCard === 'req'}
-                        />
-                        <VirtualizedPayloadViewer
-                            cardId="upstream"
-                            title={t('monitor.details.upstream_request_payload', '中转报文 (Forwarded)')}
-                            badge="FORWARDED"
-                            badgeStyle="bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 border-amber-200 dark:border-amber-800/60"
-                            rawPayload={log.upstream_request_body}
-                            concisePayload={conciseUpstreamBody}
-                            headersJson={log.upstream_request_headers}
-                            viewMode={payloadViewMode}
-                            emptyPlaceholder={t('monitor.details.no_upstream_payload', '无中转报文 (直接转发或未记录)')}
-                            onCopy={async (text) => {
-                                const success = await copyToClipboard(text);
-                                if (success) {
-                                    setCopiedCard('upstream');
-                                    setTimeout(() => setCopiedCard(null), 2000);
-                                }
-                            }}
-                            isCopied={copiedCard === 'upstream'}
-                        />
-                        <VirtualizedPayloadViewer
-                            cardId="resp"
-                            title={t('monitor.details.response_payload', '响应报文 (Response)')}
-                            badge="RESPONSE"
-                            badgeStyle="bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800/60"
-                            rawPayload={log.response_body}
-                            concisePayload={conciseResponseBody}
-                            headersJson={log.response_headers}
-                            viewMode={payloadViewMode}
-                            emptyPlaceholder={t('monitor.details.payload_empty', '无响应报文')}
-                            duration={log.duration}
+                    {/* Content Area: Postman View or 3-Column Grid */}
+                    {modalLayout === 'postman' ? (
+                        <PostmanDetailView
+                            log={log}
+                            payloadViewMode={payloadViewMode}
+                            conciseRequestBody={conciseRequestBody}
+                            conciseUpstreamBody={conciseUpstreamBody}
+                            conciseResponseBody={conciseResponseBody}
+                            timingInfo={timingInfo}
                             timingNode={timingNode}
-                            onCopy={async (text) => {
-                                const success = await copyToClipboard(text);
-                                if (success) {
-                                    setCopiedCard('resp');
-                                    setTimeout(() => setCopiedCard(null), 2000);
-                                }
+                            onCopyText={async (text) => {
+                                await copyToClipboard(text);
                             }}
-                            isCopied={copiedCard === 'resp'}
                         />
-                    </div>
+                    ) : (
+                        /* Horizontal 3-Column Grid */
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 flex-1 min-h-0 overflow-hidden">
+                            <VirtualizedPayloadViewer
+                                cardId="req"
+                                title={t('monitor.details.request_payload', '请求报文 (Request)')}
+                                badge="REQUEST"
+                                badgeStyle="bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border-blue-200 dark:border-blue-800/60"
+                                rawPayload={log.request_body}
+                                concisePayload={conciseRequestBody}
+                                headersJson={log.request_headers}
+                                viewMode={payloadViewMode}
+                                emptyPlaceholder={t('monitor.details.payload_empty', '无请求报文')}
+                                onCopy={async (text) => {
+                                    const success = await copyToClipboard(text);
+                                    if (success) {
+                                        setCopiedCard('req');
+                                        setTimeout(() => setCopiedCard(null), 2000);
+                                    }
+                                }}
+                                isCopied={copiedCard === 'req'}
+                            />
+                            <VirtualizedPayloadViewer
+                                cardId="upstream"
+                                title={t('monitor.details.upstream_request_payload', '中转报文 (Forwarded)')}
+                                badge="FORWARDED"
+                                badgeStyle="bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 border-amber-200 dark:border-amber-800/60"
+                                rawPayload={log.upstream_request_body}
+                                concisePayload={conciseUpstreamBody}
+                                headersJson={log.upstream_request_headers}
+                                viewMode={payloadViewMode}
+                                emptyPlaceholder={t('monitor.details.no_upstream_payload', '无中转报文 (直接转发或未记录)')}
+                                onCopy={async (text) => {
+                                    const success = await copyToClipboard(text);
+                                    if (success) {
+                                        setCopiedCard('upstream');
+                                        setTimeout(() => setCopiedCard(null), 2000);
+                                    }
+                                }}
+                                isCopied={copiedCard === 'upstream'}
+                            />
+                            <VirtualizedPayloadViewer
+                                cardId="resp"
+                                title={t('monitor.details.response_payload', '响应报文 (Response)')}
+                                badge="RESPONSE"
+                                badgeStyle="bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800/60"
+                                rawPayload={log.response_body}
+                                concisePayload={conciseResponseBody}
+                                headersJson={log.response_headers}
+                                viewMode={payloadViewMode}
+                                emptyPlaceholder={t('monitor.details.payload_empty', '无响应报文')}
+                                duration={log.duration}
+                                timingNode={timingNode}
+                                onCopy={async (text) => {
+                                    const success = await copyToClipboard(text);
+                                    if (success) {
+                                        setCopiedCard('resp');
+                                        setTimeout(() => setCopiedCard(null), 2000);
+                                    }
+                                }}
+                                isCopied={copiedCard === 'resp'}
+                            />
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

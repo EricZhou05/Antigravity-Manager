@@ -1408,11 +1408,15 @@
             },
             "toast": {
                 "sync_success": "Segerak berjaya! {{name}} sudah sedia.",
-                "sync_error": "Segerak gagal: {{error}}"
+                "sync_error": "Segerak gagal: {{error}}",
+                "sync_success_with_model": "Berjaya menyegerakkan {{name}} dengan model: {{model}}"
             },
             "sync_confirm_title": "Pengesahan Segerak",
             "sync_confirm_message": "Bersedia untuk menyegerakkan konfigurasi {{name}}. ⚠️ Amaran: Ini akan menimpa fail konfigurasi tempatan sedia ada anda (cth. token log masuk, Kunci API). Adakah anda pasti mahu meneruskan?",
-            "model_select": "Select Model"
+            "model_select": "Select Model",
+            "apps": {
+                "gemini": "Antigravity CLI (agy)"
+            }
         },
         "models": {
             "flash": "Ultra-fast",

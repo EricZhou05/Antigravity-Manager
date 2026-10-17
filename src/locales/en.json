@@ -1476,10 +1476,14 @@
             },
             "toast": {
                 "sync_success": "Sync successful! {{name}} is ready.",
-                "sync_error": "Sync failed: {{error}}"
+                "sync_error": "Sync failed: {{error}}",
+                "sync_success_with_model": "Successfully synced {{name}} with model: {{model}}"
             },
             "sync_confirm_title": "Sync Confirmation",
-            "sync_confirm_message": "Ready to sync {{name}} configuration. ⚠️ Warning: This will overwrite your existing local configuration files (e.g. login tokens, API Keys). Are you sure you want to continue?"
+            "sync_confirm_message": "Ready to sync {{name}} configuration. ⚠️ Warning: This will overwrite your existing local configuration files (e.g. login tokens, API Keys). Are you sure you want to continue?",
+            "apps": {
+                "gemini": "Antigravity CLI (agy)"
+            }
         },
         "hermes_sync": {
             "modal_title": "Configure Antigravity Manager in Hermes",

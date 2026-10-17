@@ -543,6 +543,7 @@ fn apply_thinking_hints(
             type_: "enabled".to_string(),
             budget_tokens: Some(budget),
             effort: existing_effort,
+            display: None,
         });
         tracing::debug!(
             "[{}] Applied thinking hint: budget_tokens={}",
@@ -570,6 +571,7 @@ fn apply_thinking_hints(
                 type_: "enabled".to_string(),
                 budget_tokens: Some(budget),
                 effort: None,
+                display: None,
             });
             tracing::debug!(
                 "[{}] Applied thinking hint: level={} -> budget_tokens={}",
@@ -818,6 +820,7 @@ fn apply_variant(
             type_: "enabled".to_string(),
             budget_tokens: Some(spec.effective_thinking_budget(client_budget)),
             effort: None,
+            display: None,
         });
     }
     request.output_config = None;
@@ -982,6 +985,7 @@ pub async fn handle_messages(
                 type_: "disabled".to_string(),
                 budget_tokens: Some(0),
                 effort: None,
+                display: None,
             });
         }
     } else if is_v3_or_above || is_explicit_tier_model {
@@ -991,6 +995,7 @@ pub async fn handle_messages(
             type_: "enabled".to_string(),
             budget_tokens: None,
             effort: effort_in_thinking,
+            display: None,
         });
     } else {
         // 由于此时还没拿到账号，先用模型默认限额兜底
@@ -1030,12 +1035,14 @@ pub async fn handle_messages(
                 type_: "disabled".to_string(),
                 budget_tokens: Some(0),
                 effort: None,
+                display: None,
             });
         } else if is_client_control && raw_client_budget.is_some() {
             request.thinking = Some(crate::proxy::mappers::claude::models::ThinkingConfig {
                 type_: "enabled".to_string(),
                 budget_tokens: raw_client_budget,
                 effort: effort_hint.clone(),
+                display: None,
             });
         } else if is_client_control {
             // [CRITICAL FIX] 客户端控制模式下，客户端未传数字预算（全缺省或仅传等级）
@@ -2165,6 +2172,7 @@ pub async fn handle_messages(
                         .header(header::CONTENT_TYPE, "text/event-stream")
                         .header(header::CACHE_CONTROL, "no-cache")
                         .header(header::CONNECTION, "keep-alive")
+                        .header("request-id", format!("req_{}", trace_id))
                         .header("X-Accel-Buffering", "no")
                         .header("X-Account-Email", &email)
                         .header("X-Mapped-Model", &request_with_mapped.model)
@@ -2338,6 +2346,7 @@ pub async fn handle_messages(
                                 return Response::builder()
                                     .status(StatusCode::OK)
                                     .header(header::CONTENT_TYPE, "application/json")
+                                    .header("request-id", format!("req_{}", trace_id))
                                     .header("X-Account-Email", &email)
                                     .header("X-Mapped-Model", &request_with_mapped.model)
                                     .header("X-Upstream-Model", config.final_model.as_str())
@@ -2491,6 +2500,7 @@ pub async fn handle_messages(
                 return Response::builder()
                     .status(StatusCode::OK)
                     .header(header::CONTENT_TYPE, "application/json")
+                    .header("request-id", format!("req_{}", trace_id))
                     .header("X-Account-Email", &email)
                     .header("X-Mapped-Model", &request_with_mapped.model)
                     .header("X-Upstream-Model", config.final_model.as_str())
@@ -2991,6 +3001,7 @@ mod opus_variant_tests {
             type_: "enabled".to_string(),
             budget_tokens: Some(spec.effective_thinking_budget(client_budget)),
             effort: None,
+            display: None,
         };
 
         assert_eq!(request_thinking.budget_tokens, client_budget);
@@ -3005,6 +3016,7 @@ mod opus_variant_tests {
             type_: "enabled".to_string(),
             budget_tokens: Some(spec.effective_thinking_budget(client_budget)),
             effort: None,
+            display: None,
         };
 
         assert_eq!(request_thinking.budget_tokens, Some(1_024));

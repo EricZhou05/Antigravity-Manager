@@ -1441,10 +1441,14 @@
             "toast": {
                 "sync_success": "Sucesso! {{name}} está pronto.",
                 "sync_error": "Falha na sincronização: {{error}}",
-                "config_missing": "Gere uma Chave de API e inicie o serviço primeiro"
+                "config_missing": "Gere uma Chave de API e inicie o serviço primeiro",
+                "sync_success_with_model": "{{name}} sincronizado com sucesso com o modelo: {{model}}!"
             },
             "sync_confirm_title": "Confirmação de Sincronização",
-            "sync_confirm_message": "Pronto para sincronizar a configuração do {{name}}. ⚠️ Aviso: Isso substituirá seus arquivos de configuração local existentes (como tokens de login, chaves de API). Tem certeza de que deseja continuar?"
+            "sync_confirm_message": "Pronto para sincronizar a configuração do {{name}}. ⚠️ Aviso: Isso substituirá seus arquivos de configuração local existentes (como tokens de login, chaves de API). Tem certeza de que deseja continuar?",
+            "apps": {
+                "gemini": "Antigravity CLI (agy)"
+            }
         },
         "opencode_sync": {
             "toast": {

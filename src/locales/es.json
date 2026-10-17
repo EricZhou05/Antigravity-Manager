@@ -1427,10 +1427,14 @@
             },
             "toast": {
                 "sync_success": "¡Sincronización exitosa! {{name}} está listo.",
-                "sync_error": "Error de sincronización: {{error}}"
+                "sync_error": "Error de sincronización: {{error}}",
+                "sync_success_with_model": "¡{{name}} sincronizado con éxito con el modelo: {{model}}!"
             },
             "sync_confirm_title": "Confirmación de Sincronización",
-            "sync_confirm_message": "Listo para sincronizar configuración de {{name}}. ⚠️ Advertencia: Esto sobrescribirá sus archivos de configuración locales existentes (ej. tokens de inicio de sesión, Claves API). ¿Está seguro de que desea continuar?"
+            "sync_confirm_message": "Listo para sincronizar configuración de {{name}}. ⚠️ Advertencia: Esto sobrescribirá sus archivos de configuración locales existentes (ej. tokens de inicio de sesión, Claves API). ¿Está seguro de que desea continuar?",
+            "apps": {
+                "gemini": "Antigravity CLI (agy)"
+            }
         },
         "agent_settings": {
             "banner_title": "Funciones exclusivas y gobernanza de optimización de Agent",

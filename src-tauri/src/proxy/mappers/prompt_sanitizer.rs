@@ -46,9 +46,10 @@ static RE_CODE_BLOCK: Lazy<Regex> =
 static RE_WAF_TRIGGER_HEADERS: Lazy<Regex> = Lazy::new(|| {
     Regex::new(concat!(
         r"(?im)^\s*(?:x-[a-z0-9_-]*billing[a-z0-9_-]*|[a-z0-9_-]+-billing-(?:header|metadata|token|info)):\s*[^\r\n]*(\r?\n)?",
-        r"|^\s*x-[a-z0-9_-]+:\s*[^\r\n]*(?:cc_version|cc_entrypoint|cch=)[^\r\n]*(\r?\n)?",
+        r"|^\s*x-[a-z0-9_-]+:\s*[^\r\n]*(?:cc_version|cc_entrypoint|cc_workload|cc_is_subagent|cc_prev_req|cc_prompt_id|cc_turn_origin|cch=)[^\r\n]*(\r?\n)?",
         r"|(?i)x-anthropic-billing-header:\s*[^\r\n]*",
-        r"|(?i)You are a Claude agent, built on Anthropic's Claude Agent SDK\.(\r?\n)?"
+        r"|(?i)You are a Claude agent, built on Anthropic's Claude Agent SDK\.(\r?\n)?",
+        r"|(?i)You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK\.(\r?\n)?"
     ))
     .unwrap()
 });
@@ -71,27 +72,29 @@ static RE_MULTI_NEWLINE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n{3,}").unwrap
 /// "created by …" 的正常引用 100% 不被误伤。
 const IDENTITY_SCAN_MAX_SENTENCES: usize = 4;
 
-/// 归一化后的中性身份声明（统一口径，抹除一切厂商 / 产品 / 竞品模型指纹）
-const NEUTRAL_IDENTITY: &str = "You are an AI Agent.";
+/// 官方原生 Antigravity 助手身份声明（完全对齐官方 Antigravity IDE 提示词模板）
+pub const OFFICIAL_ANTIGRAVITY_IDENTITY: &str =
+    "You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.";
+
+/// 归一化后的身份声明别名（统一对齐为官方 Antigravity 助手，兼容历史引用）
+#[allow(dead_code)]
+pub const NEUTRAL_IDENTITY: &str = OFFICIAL_ANTIGRAVITY_IDENTITY;
 
 /// 身份声明句归一化正则（广谱匹配，仅在系统提示词头部窗口内生效）。
 ///
 /// 形态 = A 身份开场白 + B 身份名词短语 + C 归属/版本声明 + D 归属对象 + E 句读：
 /// ```text
-/// You are Hermes Agent, an intelligent AI assistant created by Nous Research.   → You are an AI Agent.
-/// You are Codex, an advanced coding agent based on GPT-6.                       → You are an AI Agent.
-/// You are an AI agent created by Example Corp.                                  → You are an AI Agent.
-/// You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team … → You are an AI Agent.
+/// You are Hermes Agent, an intelligent AI assistant created by Nous Research.   → You are Antigravity...
+/// You are Codex, an advanced coding agent based on GPT-6.                       → You are Antigravity...
+/// You are an AI agent created by Example Corp.                                  → You are Antigravity...
+/// You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team … → You are Antigravity...
 /// ```
 /// 防误杀设计（四条硬约束，缺一不可）：
-/// 1. **必须同时具备身份名词与归属声明** —— `You are a helpful assistant.`、`You are Claude Code, Anthropic's
-///    official CLI for Claude.`、`You are JeikCode AI coding Agent by Jeik.`（无归属动词）一律原样保留；
+/// 1. **必须具备身份名词与归属声明或特定已知客户端开场**；
 /// 2. **归属对象取到句读边界（`.` `,` `。` `，` 换行）即止，且禁止跨越 XML 标签** —— 从结构上根除
-///    "跨行吞噬后续规则"的缺陷（`[^.]` 在 Rust regex 中可匹配换行，PR #3508 即因此会把身份行之后的
-///    多条规则一并删除），同时满足 Zero Delimiter Touch；
+///    "跨行吞噬后续规则"的缺陷，同时满足 Zero Delimiter Touch；
 /// 3. **只替换声明句本身** —— 归属声明之后的内容（含逗号续写的功能指令）逐字保留；
-/// 4. **过渡窗口 ≤ 8 字符**：身份名词与归属动词之间的桥接文本必须极短，防止跨子句误删
-///    （如 `… agent, and the config was created by X` 这类正文句式不得被整段归一化）。
+/// 4. **过渡窗口 ≤ 8 字符**：身份名词与归属动词之间的桥接文本必须极短，防止跨子句误删。
 static RE_IDENTITY_DECLARATION: Lazy<Regex> = Lazy::new(|| {
     Regex::new(concat!(
         // A. 身份开场白（英文与中文；要求词边界，避免误命中 "…the assistant you are talking to…"）
@@ -99,9 +102,6 @@ static RE_IDENTITY_DECLARATION: Lazy<Regex> = Lazy::new(|| {
         // B. 身份名词短语：可选冠词 + ≤8 个修饰词 + 可选 AI + 身份名词
         r"(?i:(?:an?\s+)?(?:[\w'\-]+[\s,，]+){0,8}(?:ai[\s,，]+)?(?:agent\b|assistant\b|ai\b|助手|模型|助理))",
         // C. 归属 / 版本声明（动词 + 介词，或 based on）
-        //    过渡窗口允许逗号（覆盖 `You are a Claude agent, built on Anthropic's …` 这类逗号引导形态），
-        //    但严格禁止跨越句末标点、换行与 XML 标签，且长度压在 8 字符内 —— 归属声明必然紧邻身份名词，
-        //    收窄窗口可防止把 `… agent, and the config was created by X` 这类跨子句文本整段误删。
         r"(?i:[^.!?。！？\r\n<>]{0,8}?\b(?:created|built|made|developed|designed|trained|powered|maintained|published|released|provided)\s+(?:by|on|upon|at)\s+",
         r"|[^.!?。！？\r\n<>]{0,8}?\bbased\s+on\s+)",
         // D. 归属对象：一路取到句读边界，杜绝残留孤立词片段
@@ -112,8 +112,18 @@ static RE_IDENTITY_DECLARATION: Lazy<Regex> = Lazy::new(|| {
     .unwrap()
 });
 
+/// 知名特定客户端开场白正则（如 Claude Code CLI 开场白，仅在系统提示词头部窗口内生效）
+static RE_KNOWN_CLIENT_DECLARATION: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(concat!(
+        r"(?i)\b(?:you\s+are|you're)\s+claude\s+code[\s,，]+(?:anthropic's\s+)?official\s+cli\s+for\s+claude",
+        r"(?:[\s,，]+running\s+within\s+(?:the\s+)?claude\s+agent\s+sdk)?",
+        r"([.,，。]?)"
+    ))
+    .unwrap()
+});
+
 /// 身份声明归一化的快速前置特征（命中任一才进入正则流程，规避 33k 级提示词的全量正则开销）
-const IDENTITY_FAST_MARKERS: [&str; 13] = [
+const IDENTITY_FAST_MARKERS: [&str; 16] = [
     "created by",
     "built by",
     "built on",
@@ -127,14 +137,19 @@ const IDENTITY_FAST_MARKERS: [&str; 13] = [
     "released by",
     "provided by",
     "based on",
+    "claude code",
+    "claude agent",
+    "anthropic",
 ];
 
 /// Claude Agent SDK 注入的独立身份块（整串等值匹配）
 const CLAUDE_AGENT_SDK_IDENTITY: &str =
     "You are a Claude agent, built on Anthropic's Claude Agent SDK.";
-/// 归一化目标：Claude Code CLI 身份。刻意保留「映射成已知客户端身份」而非抹成中性句 ——
-/// 上游对该身份更稳定（原适配层语义，收敛时必须原样保留）。
+/// 历史保留的 Claude Code CLI 身份声明（整串等值匹配）
 const CLAUDE_CODE_CLI_IDENTITY: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
+/// Claude Code CLI 在 Claude Agent SDK 运行时注入的身份声明（整串等值匹配）
+const CLAUDE_AGENT_SDK_CLI_IDENTITY: &str =
+    "You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK.";
 
 /// Claude Desktop 注入的单行计费元数据前缀（issue #3452：与大量工具组合会触发上游 429）。
 /// 判定**不区分 model** —— 任何客户端注入的风险元数据都必须清洗。
@@ -161,6 +176,11 @@ impl PromptSanitizer {
         let has_suspect = lower.contains("billing")
             || lower.contains("cc_version")
             || lower.contains("cc_entrypoint")
+            || lower.contains("cc_workload")
+            || lower.contains("cc_is_subagent")
+            || lower.contains("cc_prev_req")
+            || lower.contains("cc_prompt_id")
+            || lower.contains("cc_turn_origin")
             || lower.contains("cch=")
             || lower.contains("claude agent sdk");
 
@@ -219,13 +239,13 @@ impl PromptSanitizer {
         text
     }
 
-    /// System 轨：把系统提示词头部窗口内的「身份归属声明句」归一化为中性身份。
+    /// System 轨：把系统提示词头部窗口内的「身份归属声明句」与已知客户端开场白归一化为官方 Antigravity 身份。
     ///
-    /// 归一化规则（广谱、协议无关）：命中 `RE_IDENTITY_DECLARATION` 的声明句整体替换为
-    /// `NEUTRAL_IDENTITY`；若原文以逗号续写功能指令，则保留逗号，续写内容逐字不动。
+    /// 归一化规则（广谱、协议无关）：命中 `RE_IDENTITY_DECLARATION` 或 `RE_KNOWN_CLIENT_DECLARATION` 的声明句
+    /// 整体替换为 `OFFICIAL_ANTIGRAVITY_IDENTITY`；若原文以逗号续写功能指令，则保留逗号，续写内容逐字不动。
     /// 代码块（``` 与行内 `）内的身份文本 100% 豁免，头部窗口之后的原文逐字保留。
     pub fn normalize_system_identity(text: &str) -> String {
-        // 快速前置检查：无任何归属类特征词则零开销返回
+        // 快速前置检查：无任何归属类或已知客户端特征词则零开销返回
         let lower = text.to_lowercase();
         if !IDENTITY_FAST_MARKERS
             .iter()
@@ -236,7 +256,9 @@ impl PromptSanitizer {
 
         // 仅头部窗口参与身份归一化（正文引用一律豁免）
         let head = Self::identity_head_region(text);
-        if !RE_IDENTITY_DECLARATION.is_match(head) {
+        let matches_broad = RE_IDENTITY_DECLARATION.is_match(head);
+        let matches_known = RE_KNOWN_CLIENT_DECLARATION.is_match(head);
+        if !matches_broad && !matches_known {
             return text.to_string();
         }
 
@@ -249,14 +271,24 @@ impl PromptSanitizer {
         });
 
         // 步骤 2：归一化身份声明句（逗号续写场景保留逗号，避免出现 ", ," 或 ", and" 断裂）
-        let normalized = RE_IDENTITY_DECLARATION
-            .replace_all(&protected_head, |caps: &regex::Captures| {
-                match caps.get(1).map(|m| m.as_str()).unwrap_or("") {
-                    "," | "，" => "You are an AI Agent,".to_string(),
-                    _ => NEUTRAL_IDENTITY.to_string(),
-                }
-            })
-            .into_owned();
+        // 2.1 广谱归属声明归一化
+        let pass1 = RE_IDENTITY_DECLARATION.replace_all(
+            &protected_head,
+            |caps: &regex::Captures| match caps.get(1).map(|m| m.as_str()).unwrap_or("") {
+                "," | "，" => format!("{},", OFFICIAL_ANTIGRAVITY_IDENTITY),
+                _ => OFFICIAL_ANTIGRAVITY_IDENTITY.to_string(),
+            },
+        );
+
+        // 2.2 知名特定客户端开场白归一化（如 Claude Code CLI 开场白）
+        let pass2 = RE_KNOWN_CLIENT_DECLARATION.replace_all(&pass1, |caps: &regex::Captures| {
+            match caps.get(1).map(|m| m.as_str()).unwrap_or("") {
+                "," | "，" => format!("{},", OFFICIAL_ANTIGRAVITY_IDENTITY),
+                _ => OFFICIAL_ANTIGRAVITY_IDENTITY.to_string(),
+            }
+        });
+
+        let normalized = pass2.into_owned();
 
         // 步骤 3：还原受保护的代码块，并拼回头部窗口之后的原文
         let mut restored = normalized;
@@ -274,11 +306,13 @@ impl PromptSanitizer {
     /// 2. 物理剔除清洗后产生的纯空文本 Part（避免上游 400/429 报错）；
     /// 3. 清洗后若存在思考块，强制保序确保思考块严格位于首位 (Index 0)；
     /// 4. `system_scope` 决定是否叠加 System 轨（身份归一化）—— 仅系统提示词为 true。
-    /// 客户端身份归一化：已知客户端身份的**整串等值**映射为目标身份。
-    /// 与 `normalize_system_identity`（抹除归属声明）语义不同 —— 这里刻意保留"映射成已知客户端身份"。
+    /// 客户端身份归一化：已知客户端身份（Claude Agent SDK / Claude Code CLI）对齐为官方 Antigravity 身份。
     pub fn normalize_client_identity(text: &str) -> &str {
-        if text == CLAUDE_AGENT_SDK_IDENTITY {
-            CLAUDE_CODE_CLI_IDENTITY
+        if text == CLAUDE_AGENT_SDK_IDENTITY
+            || text == CLAUDE_CODE_CLI_IDENTITY
+            || text == CLAUDE_AGENT_SDK_CLI_IDENTITY
+        {
+            OFFICIAL_ANTIGRAVITY_IDENTITY
         } else {
             text
         }
@@ -483,6 +517,33 @@ impl PromptSanitizer {
             });
         }
 
+        // 3. 清洗工具声明 (tools 中的 functionDeclarations 描述文本)
+        //    防御性剥离伪 Header 与独立指纹声明，严禁触碰工具名称 (name) 与参数 Schema (parameters)
+        if let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) {
+            for tool in tools.iter_mut() {
+                if let Some(decls) = tool
+                    .get_mut("functionDeclarations")
+                    .and_then(Value::as_array_mut)
+                {
+                    for decl in decls.iter_mut() {
+                        let desc_opt = decl
+                            .get("description")
+                            .and_then(Value::as_str)
+                            .map(|s| s.to_string());
+                        if let Some(desc) = desc_opt {
+                            let cleaned = Self::clean_text(&desc);
+                            if cleaned != desc {
+                                if let Some(obj) = decl.as_object_mut() {
+                                    obj.insert("description".to_string(), Value::String(cleaned));
+                                    cleaned_count += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         cleaned_count
     }
 }
@@ -493,11 +554,15 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn test_client_identity_mapping_is_preserved_not_neutralized() {
-        // 整串等值映射：必须变成 Claude Code CLI 身份，不能抹成中性句
+    fn test_client_identity_mapping_normalizes_to_official_antigravity() {
+        // 整串等值映射：必须对齐为官方 Antigravity 身份
         assert_eq!(
             PromptSanitizer::normalize_client_identity(CLAUDE_AGENT_SDK_IDENTITY),
-            CLAUDE_CODE_CLI_IDENTITY
+            OFFICIAL_ANTIGRAVITY_IDENTITY
+        );
+        assert_eq!(
+            PromptSanitizer::normalize_client_identity(CLAUDE_CODE_CLI_IDENTITY),
+            OFFICIAL_ANTIGRAVITY_IDENTITY
         );
         assert_eq!(
             PromptSanitizer::normalize_client_identity("You are an expert coder."),
@@ -799,6 +864,64 @@ mod tests {
     }
 
     #[test]
+    fn test_clean_claude_agent_sdk_cli_identity() {
+        // [WAF 429 规避] 验证 Claude Code 在 Claude Agent SDK 运行时注入的第二类身份声明被精准剥离与归一化
+        let raw = concat!(
+            "You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK.\n\n",
+            "You have access to a variety of tools."
+        );
+        let cleaned = PromptSanitizer::clean_text(raw);
+        assert!(!cleaned.contains("Claude Agent SDK"));
+        assert!(!cleaned.contains("Claude Code"));
+        assert_eq!(cleaned, "You have access to a variety of tools.");
+
+        // System 轨头部窗口归一化为官方 Antigravity 助手
+        let normalized = PromptSanitizer::normalize_system_identity(raw);
+        eprintln!("DEBUG normalized = {:?}", normalized);
+        assert!(normalized.starts_with(OFFICIAL_ANTIGRAVITY_IDENTITY));
+        assert!(normalized.contains("You have access to a variety of tools."));
+        assert!(!normalized.contains("running within the Claude Agent SDK"));
+
+        // 客户端整串等值归一化映射
+        let sdk_cli_identity = "You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK.";
+        assert_eq!(
+            PromptSanitizer::normalize_client_identity(sdk_cli_identity),
+            OFFICIAL_ANTIGRAVITY_IDENTITY
+        );
+    }
+
+    #[test]
+    fn test_clean_waf_trigger_cc_extended_attribution_headers() {
+        // [Claude Code 2.1.301] 扩展归属元数据字段 (cc_workload, cc_is_subagent, cc_prev_req, cc_prompt_id, cc_turn_origin 等)
+        let raw1 = concat!(
+            "x-anthropic-billing-header: cc_workload=interactive; cc_is_subagent=true;\n",
+            "Actual user instructions."
+        );
+        assert_eq!(
+            PromptSanitizer::clean_text(raw1),
+            "Actual user instructions."
+        );
+
+        let raw2 = concat!(
+            "x-client-metadata: cc_workload=interactive; cc_is_subagent=true;\n",
+            "Actual user instructions."
+        );
+        assert_eq!(
+            PromptSanitizer::clean_text(raw2),
+            "Actual user instructions."
+        );
+
+        let raw3 = concat!(
+            "x-anthropic-billing-header: cc_prev_req=req_0194e4; cc_prompt_id=e7b4478f; cc_turn_origin=auto;\n",
+            "Actual user instructions."
+        );
+        assert_eq!(
+            PromptSanitizer::clean_text(raw3),
+            "Actual user instructions."
+        );
+    }
+
+    #[test]
     fn test_clean_mid_paragraph_billing_header() {
         // [WAF 429 规避] 验证即使 billing header 嵌入在段落中间也能够被剥离
         let raw = "Intro text x-anthropic-billing-header: cc_version=2.1.278; cc_entrypoint=cli; cch=fa690; and more text";
@@ -814,32 +937,37 @@ mod tests {
         for (raw, expected) in [
             (
                 "You are Hermes Agent, an intelligent AI assistant created by Nous Research.",
-                "You are an AI Agent.",
+                OFFICIAL_ANTIGRAVITY_IDENTITY.to_string(),
             ),
             (
                 "You are Codex, an advanced coding agent based on GPT-6.",
-                "You are an AI Agent.",
+                OFFICIAL_ANTIGRAVITY_IDENTITY.to_string(),
             ),
             (
                 "You are an AI agent created by Example Corp.",
-                "You are an AI Agent.",
+                OFFICIAL_ANTIGRAVITY_IDENTITY.to_string(),
             ),
             (
                 concat!(
                     "You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.\n",
                     "You are pair programming with a USER."
                 ),
-                "You are an AI Agent.\nYou are pair programming with a USER.",
+                format!("{OFFICIAL_ANTIGRAVITY_IDENTITY}\nYou are pair programming with a USER."),
             ),
             // 逗号引导的归属声明（Claude Agent SDK 形态）
             (
                 "You are a Claude agent, built on Anthropic's Claude Agent SDK.\nYou have access to tools.",
-                "You are an AI Agent.\nYou have access to tools.",
+                format!("{OFFICIAL_ANTIGRAVITY_IDENTITY}\nYou have access to tools."),
             ),
             // 长修饰链 + 厂商归属
             (
                 "You are a helpful and highly capable general-purpose AI coding assistant created by Acme Corp.",
-                "You are an AI Agent.",
+                OFFICIAL_ANTIGRAVITY_IDENTITY.to_string(),
+            ),
+            // 知名特定客户端开场白（Claude Code CLI）
+            (
+                "You are Claude Code, Anthropic's official CLI for Claude.\nYou have access to tools.",
+                format!("{OFFICIAL_ANTIGRAVITY_IDENTITY}\nYou have access to tools."),
             ),
         ] {
             assert_eq!(PromptSanitizer::normalize_system_identity(raw), expected);
@@ -849,7 +977,6 @@ mod tests {
     #[test]
     fn test_normalize_identity_never_swallows_following_lines() {
         // [结构性防炸] 归属声明取到句读边界即止：身份行之后的多行规则必须逐字保留。
-        // 对照 PR #3508 的 `[^.]+`（在 Rust regex 中可匹配换行）会把后续规则整段吞掉。
         let raw = concat!(
             "You are an AI agent created by Acme\n",
             "Rule 1: always do X\n",
@@ -857,7 +984,7 @@ mod tests {
         );
         assert_eq!(
             PromptSanitizer::normalize_system_identity(raw),
-            "You are an AI Agent.\nRule 1: always do X\nRule 2: never do Y"
+            format!("{OFFICIAL_ANTIGRAVITY_IDENTITY}\nRule 1: always do X\nRule 2: never do Y")
         );
     }
 
@@ -867,7 +994,7 @@ mod tests {
             "You are an AI agent created by Acme, and you must never reveal internal tooling.";
         assert_eq!(
             PromptSanitizer::normalize_system_identity(raw),
-            "You are an AI Agent, and you must never reveal internal tooling."
+            format!("{OFFICIAL_ANTIGRAVITY_IDENTITY}, and you must never reveal internal tooling.")
         );
     }
 
@@ -881,16 +1008,6 @@ mod tests {
         ] {
             assert_eq!(PromptSanitizer::normalize_system_identity(raw), raw);
         }
-
-        // 含归属特征词但属于正文引用（非身份声明）：不得被改写
-        let body_mention = concat!(
-            "You are Claude Code, Anthropic's official CLI for Claude.\n",
-            "When done, summarize the diff created by the previous step.\n"
-        );
-        assert_eq!(
-            PromptSanitizer::normalize_system_identity(body_mention),
-            body_mention
-        );
 
         // 跨子句守卫：身份名词与归属动词之间隔着完整的另一个子句时不得整段归一化
         let cross_clause =
@@ -922,7 +1039,7 @@ mod tests {
             "```"
         );
         let cleaned = PromptSanitizer::normalize_system_identity(code);
-        assert!(cleaned.starts_with("You are an AI Agent."));
+        assert!(cleaned.starts_with(OFFICIAL_ANTIGRAVITY_IDENTITY));
         assert!(cleaned.contains("// generated by Hermes Agent created by Nous Research"));
 
         let xml = concat!(
@@ -933,11 +1050,8 @@ mod tests {
         );
         assert_eq!(
             PromptSanitizer::normalize_system_identity(xml),
-            concat!(
-                "<environment>\n",
-                "You are an AI Agent.\n",
-                "</environment>\n\n",
-                "=== AGENTS.md ===\nUser provisions."
+            format!(
+                "<environment>\n{OFFICIAL_ANTIGRAVITY_IDENTITY}\n</environment>\n\n=== AGENTS.md ===\nUser provisions."
             )
         );
     }
@@ -969,11 +1083,47 @@ mod tests {
         assert_eq!(cleaned_count, 1);
         assert_eq!(
             payload["request"]["systemInstruction"]["parts"][0]["text"],
-            "You are an AI Agent."
+            OFFICIAL_ANTIGRAVITY_IDENTITY
         );
         assert_eq!(
             payload["request"]["contents"][0]["parts"][0]["text"],
             "Quote the note created by Alice in the doc."
+        );
+    }
+
+    #[test]
+    fn test_sanitize_tools_function_declarations_description() {
+        let mut payload = json!({
+            "tools": [
+                {
+                    "functionDeclarations": [
+                        {
+                            "name": "Bash",
+                            "description": "x-anthropic-billing-header: cc_version=2.1;\nExecute a bash command in the terminal.",
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "command": { "type": "STRING" }
+                                },
+                                "required": ["command"]
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let cleaned_count = PromptSanitizer::sanitize_gemini_payload(&mut payload);
+        assert_eq!(cleaned_count, 1);
+
+        let func = &payload["tools"][0]["functionDeclarations"][0];
+        // 函数名与参数 Schema 100% 保持无损
+        assert_eq!(func["name"], "Bash");
+        assert_eq!(func["parameters"]["required"][0], "command");
+        // 描述中的伪 Header 被安全剔除
+        assert_eq!(
+            func["description"],
+            "Execute a bash command in the terminal."
         );
     }
 
