@@ -5092,6 +5092,112 @@ pub async fn handle_completions(
     (final_status, headers, axum::Json(dual_err)).into_response()
 }
 
+/// Helper to resolve token limits (context length and max output tokens) for any model ID.
+pub fn resolve_model_token_limits(model_id: &str) -> (i64, i64) {
+    if !model_id.is_empty() {
+        if let Some(info) = crate::models::official_model::OfficialModelCatalog::get(model_id) {
+            let max_tokens = info.max_tokens.unwrap_or(1_048_576);
+            let max_output = info.max_output_tokens.unwrap_or(65_536);
+            return (max_tokens, max_output);
+        }
+        let lower = model_id.to_lowercase();
+        if lower.contains("claude") {
+            return (200_000, 8_192);
+        }
+        if lower.contains("gpt") || lower.contains("o1") || lower.contains("o3") {
+            return (128_000, 16_384);
+        }
+    }
+    (1_048_576, 65_536)
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+pub struct PropsQuery {
+    pub model: Option<String>,
+}
+
+/// llama.cpp compatible /props and /v1/props endpoint.
+/// Hermes Agent and local LLM clients probe this to determine runtime n_ctx.
+pub async fn handle_props(
+    query: Result<axum::extract::Query<PropsQuery>, axum::extract::rejection::QueryRejection>,
+) -> impl IntoResponse {
+    let model_id = query.ok().and_then(|q| q.0.model).unwrap_or_default();
+    let (n_ctx, n_predict) = resolve_model_token_limits(&model_id);
+    let alias = if model_id.is_empty() {
+        "default"
+    } else {
+        model_id.as_str()
+    };
+
+    let resp = json!({
+        "default_generation_settings": {
+            "n_ctx": n_ctx,
+            "n_predict": n_predict,
+        },
+        "total_slots": 1,
+        "model_alias": alias
+    });
+
+    (StatusCode::OK, Json(resp))
+}
+
+/// vLLM compatible /version and /v1/version endpoint.
+/// Hermes Agent and vLLM clients probe this to detect server type.
+pub async fn handle_version() -> impl IntoResponse {
+    let resp = json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "app": "antigravity-tools",
+        "name": "antigravity-tools"
+    });
+
+    (StatusCode::OK, Json(resp))
+}
+
+#[cfg(test)]
+mod model_probe_compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_model_token_limits() {
+        let (ctx, out) = resolve_model_token_limits("gemini-3.8-flash-high");
+        assert_eq!(ctx, 1_048_576);
+        assert_eq!(out, 65_536);
+
+        // Aliased model inherits mapped official model limits
+        let (ctx_aliased, out_aliased) = resolve_model_token_limits("gpt-4o");
+        assert_eq!(ctx_aliased, 1_048_576);
+        assert_eq!(out_aliased, 65_536);
+
+        // Uncataloged fallbacks
+        let (ctx_claude, out_claude) = resolve_model_token_limits("custom-claude-unknown");
+        assert_eq!(ctx_claude, 200_000);
+        assert_eq!(out_claude, 8_192);
+
+        let (ctx_gpt, out_gpt) = resolve_model_token_limits("unknown-gpt-custom");
+        assert_eq!(ctx_gpt, 128_000);
+        assert_eq!(out_gpt, 16_384);
+
+        let (ctx_def, out_def) = resolve_model_token_limits("");
+        assert_eq!(ctx_def, 1_048_576);
+        assert_eq!(out_def, 65_536);
+    }
+
+    #[tokio::test]
+    async fn test_handle_version() {
+        let resp = handle_version().await.into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_handle_props() {
+        let query = Ok(axum::extract::Query(PropsQuery {
+            model: Some("gemini-3.8-flash-high".to_string()),
+        }));
+        let resp = handle_props(query).await.into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+}
+
 pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoResponse {
     use crate::proxy::common::model_mapping::{
         get_all_dynamic_models, get_all_dynamic_models_metadata,
@@ -5110,11 +5216,19 @@ pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoRespo
     let data: Vec<_> = model_ids
         .into_iter()
         .map(|id| {
+            let (ctx_len, out_len) = resolve_model_token_limits(&id);
             let mut obj = json!({
                 "id": id,
                 "object": "model",
                 "created": 1706745600,
-                "owned_by": "antigravity"
+                "owned_by": "antigravity",
+                "context_length": ctx_len,
+                "max_context_length": ctx_len,
+                "max_input_tokens": ctx_len,
+                "max_model_len": ctx_len,
+                "max_tokens": ctx_len,
+                "max_completion_tokens": out_len,
+                "max_output_tokens": out_len,
             });
             let meta = metadata_map
                 .get(&id)
@@ -5149,7 +5263,7 @@ pub async fn handle_retrieve_model(
     };
 
     let only_raw = *state.only_raw_quota_models.read().await;
-    if let Some(matched_id) = find_dynamic_model(
+    let resolved_id = if let Some(matched_id) = find_dynamic_model(
         &state.custom_mapping,
         Some(&state.token_manager),
         only_raw,
@@ -5157,6 +5271,15 @@ pub async fn handle_retrieve_model(
     )
     .await
     {
+        Some(matched_id)
+    } else if crate::models::official_model::OfficialModelCatalog::get(&model).is_some() {
+        Some(model.clone())
+    } else {
+        None
+    };
+
+    if let Some(matched_id) = resolved_id {
+        let (ctx_len, out_len) = resolve_model_token_limits(&matched_id);
         let metadata_map = get_all_dynamic_models_metadata(
             &state.custom_mapping,
             Some(&state.token_manager),
@@ -5168,7 +5291,14 @@ pub async fn handle_retrieve_model(
             "id": matched_id,
             "object": "model",
             "created": 1706745600,
-            "owned_by": "antigravity"
+            "owned_by": "antigravity",
+            "context_length": ctx_len,
+            "max_context_length": ctx_len,
+            "max_input_tokens": ctx_len,
+            "max_model_len": ctx_len,
+            "max_tokens": ctx_len,
+            "max_completion_tokens": out_len,
+            "max_output_tokens": out_len,
         });
         let meta = metadata_map
             .get(&matched_id)
