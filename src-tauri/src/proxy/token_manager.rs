@@ -3719,6 +3719,35 @@ impl TokenManager {
         self.rate_limit_tracker.mark_success(&resolved_id);
     }
 
+    /// 标记账号发生短时网络故障或超时，施加短时冷却并将粘性会话即时解绑迁移
+    pub fn mark_account_transient_failure(
+        &self,
+        account_id: &str,
+        cooldown_secs: u64,
+        reason: &str,
+    ) {
+        let resolved_id = self
+            .email_to_account_id(account_id)
+            .unwrap_or_else(|| account_id.to_string());
+        let effective_secs = cooldown_secs.clamp(10, 300);
+        let reset_time =
+            std::time::SystemTime::now() + std::time::Duration::from_secs(effective_secs);
+        self.rate_limit_tracker.set_lockout_until(
+            &resolved_id,
+            reset_time,
+            crate::proxy::rate_limit::RateLimitReason::ServerError,
+            None,
+        );
+        // 主动解除绑定到该故障账号的粘性会话，使后续请求即刻迁移至其他健康账号
+        self.session_accounts.retain(|_, v| *v != resolved_id);
+        tracing::warn!(
+            account_id = %resolved_id,
+            cooldown_secs = %effective_secs,
+            reason = %reason,
+            "Account marked with transient failure cooldown in rate limit tracker and unbound from sticky sessions"
+        );
+    }
+
     /// 检查是否有可用的 Google 账号
     ///
     /// 用于"仅兜底"模式的智能判断:当所有 Google 账号不可用时才使用外部提供商。
@@ -8309,5 +8338,30 @@ mod tests {
         assert_eq!(bare.supports_thinking, Some(true));
         assert_eq!(bare.thinking_budget, Some(2048));
         assert_eq!(bare.max_output_tokens, Some(65536));
+    }
+
+    #[tokio::test]
+    async fn test_mark_account_transient_failure_locks_and_unbinds_session() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+
+        let acc_id = "test_transient_fail_acc";
+        let email = "fail_user@example.com";
+        let mut token = create_test_token(email, Some("PRO"), 1.0, None, Some(100));
+        token.account_id = acc_id.to_string();
+        manager.tokens.insert(acc_id.to_string(), token);
+
+        let sid = "session-test-sticky-123";
+        manager.commit_session(sid, acc_id);
+        assert_eq!(manager.session_accounts.get(sid).unwrap().as_str(), acc_id);
+        assert!(!manager.rate_limit_tracker.is_rate_limited(acc_id, None));
+
+        // 模拟调用短时故障标记
+        manager.mark_account_transient_failure(email, 30, "HTTP timeout");
+
+        // 账号进入限流冷却
+        assert!(manager.rate_limit_tracker.is_rate_limited(acc_id, None));
+        // 粘性绑定立即被解除
+        assert!(manager.session_accounts.get(sid).is_none());
     }
 }

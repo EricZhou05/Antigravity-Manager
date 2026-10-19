@@ -2389,6 +2389,7 @@ pub async fn handle_chat_completions(
                 last_error = e.clone();
                 failure_statuses.record(StatusCode::BAD_GATEWAY);
                 drop(image_permit.take());
+                token_manager.mark_account_transient_failure(&account_id, 30, &e);
                 debug!(
                     "OpenAI Request failed on attempt {}/{}: {}",
                     attempt + 1,
@@ -4251,6 +4252,7 @@ pub async fn handle_completions(
             Err(e) => {
                 last_error = e.clone();
                 failure_statuses.record(StatusCode::BAD_GATEWAY);
+                token_manager.mark_account_transient_failure(&account_id, 30, &e);
                 debug!(
                     "Codex Request failed on attempt {}/{}: {}",
                     attempt + 1,

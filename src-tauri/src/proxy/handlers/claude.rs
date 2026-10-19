@@ -2012,6 +2012,7 @@ pub async fn handle_messages(
             Ok(r) => r,
             Err(e) => {
                 last_error = e.clone();
+                token_manager.mark_account_transient_failure(&account_id, 30, &e);
                 debug!(
                     "Request failed on attempt {}/{}: {}",
                     attempt + 1,

@@ -445,6 +445,7 @@ pub async fn handle_generate(
                 last_error = e.clone();
                 failure_statuses.record(StatusCode::BAD_GATEWAY);
                 drop(image_permit.take());
+                token_manager.mark_account_transient_failure(&account_id, 30, &e);
                 debug!(
                     "Gemini Request failed on attempt {}/{}: {}",
                     attempt + 1,

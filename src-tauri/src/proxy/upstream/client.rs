@@ -153,6 +153,10 @@ pub fn should_try_next_endpoint_for_url(status: StatusCode, endpoint_url: &str) 
     UpstreamClient::should_try_next_endpoint_for_url(status, endpoint_url)
 }
 
+/// 慢端点响应头耗时阈值（秒）：健康流式请求通常在 4~12s 内返回首字响应头。
+/// 若某个端点超过 20s 才返回 200，说明其处于严重拥堵或排队状态，应视为降级并进入冷却期。
+pub const SLOW_ENDPOINT_THRESHOLD_SECS: f64 = 20.0;
+
 /// 端点健康追踪器：记录故障端点与冷却期，动态优化上游端点 Fallback 顺序，避免无状态重复踩坑。
 #[derive(Debug, Clone)]
 pub struct EndpointHealthTracker {
@@ -200,6 +204,28 @@ impl EndpointHealthTracker {
                 endpoint = %endpoint,
                 "Upstream endpoint host recovered and marked healthy"
             );
+        }
+    }
+
+    /// 综合记录端点调用结果与响应耗时。
+    /// - 若调用失败，立即标记为故障；
+    /// - 若调用成功但响应耗时过长 (>= 20s)，说明该端点发生严重排队或拥塞，不解除故障标记并降级进入冷却期；
+    /// - 若调用成功且响应耗时正常 (< 20s)，恢复端点健康状态。
+    pub fn record_endpoint_result(&self, endpoint: &str, is_success: bool, duration_s: f64) {
+        if is_success && duration_s < SLOW_ENDPOINT_THRESHOLD_SECS {
+            self.mark_success(endpoint);
+        } else {
+            self.mark_failure(endpoint);
+            if is_success {
+                let host = extract_endpoint_host(endpoint);
+                tracing::warn!(
+                    host = %host,
+                    endpoint = %endpoint,
+                    duration_s = %duration_s,
+                    threshold_s = %SLOW_ENDPOINT_THRESHOLD_SECS,
+                    "Upstream endpoint succeeded but response header latency exceeded slow threshold, demoting to cooldown"
+                );
+            }
         }
     }
 
@@ -505,16 +531,16 @@ impl UpstreamClient {
 
     /// 计算上游多端点调用的全链路总超时时间预算（秒）
     ///
-    /// 流式请求保底 120s 满足思维链冷启动，总预算上限设定为 base + 30s（例如 150s），
-    /// 既保障主端点具备充足的冷思考与长推理时间，又严格杜绝多端点线性累加至 4~6 分钟。
+    /// 流式请求响应头基准保底 30s（超大 payload 弹性放宽至 45s），备用回退预算 25s，
+    /// 全链路总预算由原先的 150s 大幅收敛至 55~70s，杜绝主端点在排队拥塞时漫长挂起 85s~140s。
     pub fn calculate_total_upstream_budget_secs(method: &str, body_len: usize) -> u64 {
         let base_watchdog = if method == "streamGenerateContent" {
-            std::cmp::max(120, (body_len as u64) / (64 * 1024) + 120)
+            std::cmp::min(45, std::cmp::max(30, (body_len as u64) / (64 * 1024) + 30))
         } else {
-            std::cmp::max(15, (body_len as u64) / (256 * 1024) + 15)
+            std::cmp::min(30, std::cmp::max(15, (body_len as u64) / (256 * 1024) + 15))
         };
         let fallback_margin = if method == "streamGenerateContent" {
-            30
+            25
         } else {
             15
         };
@@ -523,8 +549,9 @@ impl UpstreamClient {
 
     /// 动态计算当前端点尝试的看门狗单次超时时长（秒）
     ///
-    /// 1. 首选端点 (attempt_idx == 0): 分配完整基准看门狗（流式 120s+），但若已确权容量枯竭则收敛至 15s；
-    /// 2. 回退备用端点 (attempt_idx > 0): 采用快探活看门狗（流式上限 30s，非流式 15s，容量枯竭 15s）；
+    /// 1. 首选端点 (attempt_idx == 0): 分配基准响应头看门狗（流式 30s，超大 payload 弹性放宽至 45s），
+    ///    若已确权容量枯竭则极速收敛至 15s；
+    /// 2. 回退备用端点 (attempt_idx > 0): 采用快探活看门狗（流式上限 25s，非流式 15s，容量枯竭 15s）；
     /// 3. 受限于全链路剩余时间预算 `remaining_budget_secs`，并设置 5s 终极保底，防止由于网络开销导致为 0。
     pub fn calculate_endpoint_watchdog_secs(
         method: &str,
@@ -534,9 +561,9 @@ impl UpstreamClient {
         is_capacity_exhausted: bool,
     ) -> u64 {
         let base_watchdog = if method == "streamGenerateContent" {
-            std::cmp::max(120, (body_len as u64) / (64 * 1024) + 120)
+            std::cmp::min(45, std::cmp::max(30, (body_len as u64) / (64 * 1024) + 30))
         } else {
-            std::cmp::max(15, (body_len as u64) / (256 * 1024) + 15)
+            std::cmp::min(30, std::cmp::max(15, (body_len as u64) / (256 * 1024) + 15))
         };
 
         let target_secs = if is_capacity_exhausted {
@@ -544,7 +571,7 @@ impl UpstreamClient {
         } else if attempt_idx == 0 {
             base_watchdog
         } else if method == "streamGenerateContent" {
-            std::cmp::min(base_watchdog, 30)
+            std::cmp::min(base_watchdog, 25)
         } else {
             std::cmp::min(base_watchdog, 15)
         };
@@ -803,7 +830,8 @@ impl UpstreamClient {
                     Ok(resp) => {
                         let status = resp.status();
                         if status.is_success() {
-                            self.endpoint_health.mark_success(base_url);
+                            self.endpoint_health
+                                .record_endpoint_result(base_url, true, duration_s);
                             if idx > 0 || has_triggered_downgrade {
                                 tracing::info!(
                                     "✓ Upstream fallback succeeded | Endpoint: {} | Status: {} | Next endpoints available: {}",
@@ -1189,6 +1217,39 @@ mod tests {
     }
 
     #[test]
+    fn test_endpoint_health_slow_response_demotes_to_cooldown() {
+        let tracker = EndpointHealthTracker::new(Duration::from_secs(60));
+        let endpoints = ["daily", "sandbox", "prod"];
+        // 初始全部健康，保持默认优先级
+        assert_eq!(
+            tracker.get_ordered_endpoints(&endpoints),
+            vec!["daily", "sandbox", "prod"]
+        );
+
+        // daily 响应成功但耗时达到 25s (超过 20s 慢端点阈值)
+        tracker.record_endpoint_result("daily", true, 25.0);
+        // daily 应当被降级至冷却队列后部，sandbox 获得第一优先级
+        assert_eq!(
+            tracker.get_ordered_endpoints(&endpoints),
+            vec!["sandbox", "prod", "daily"]
+        );
+
+        // sandbox 响应成功且耗时仅 8s (快端点)
+        tracker.record_endpoint_result("sandbox", true, 8.0);
+        assert_eq!(
+            tracker.get_ordered_endpoints(&endpoints),
+            vec!["sandbox", "prod", "daily"]
+        );
+
+        // 待 daily 恢复且耗时为 5s 时，重新恢复健康优先级
+        tracker.record_endpoint_result("daily", true, 5.0);
+        assert_eq!(
+            tracker.get_ordered_endpoints(&endpoints),
+            vec!["daily", "sandbox", "prod"]
+        );
+    }
+
+    #[test]
     fn test_endpoint_health_all_failed_preserves_all_endpoints() {
         let tracker = EndpointHealthTracker::new(Duration::from_secs(60));
         let endpoints = ["daily", "sandbox", "prod"];
@@ -1359,36 +1420,36 @@ mod tests {
 
     #[test]
     fn test_calculate_watchdog_and_budget() {
-        // streamGenerateContent primary attempt with ample budget
+        // streamGenerateContent primary attempt with ample budget (recalibrated to 30s base, 55s total)
         let total_budget =
             UpstreamClient::calculate_total_upstream_budget_secs("streamGenerateContent", 1024);
-        assert_eq!(total_budget, 150); // 120 + 30
+        assert_eq!(total_budget, 55); // 30 + 25
 
         let wd_primary = UpstreamClient::calculate_endpoint_watchdog_secs(
             "streamGenerateContent",
             1024,
             0,
-            150,
+            55,
             false,
         );
-        assert_eq!(wd_primary, 120);
+        assert_eq!(wd_primary, 30);
 
-        // Fallback attempt (idx > 0) is capped at 30s instead of 120s
+        // Fallback attempt (idx > 0) is capped at 25s
         let wd_fallback = UpstreamClient::calculate_endpoint_watchdog_secs(
             "streamGenerateContent",
             1024,
             1,
-            30,
+            25,
             false,
         );
-        assert_eq!(wd_fallback, 30);
+        assert_eq!(wd_fallback, 25);
 
         // Capacity exhausted attempt is fast-probed at 15s max
         let wd_exhausted = UpstreamClient::calculate_endpoint_watchdog_secs(
             "streamGenerateContent",
             1024,
             1,
-            30,
+            25,
             true,
         );
         assert_eq!(wd_exhausted, 15);
