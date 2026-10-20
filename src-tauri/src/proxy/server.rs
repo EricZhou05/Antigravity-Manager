@@ -607,6 +607,12 @@ impl AxumServer {
         let proxy_routes = Router::new()
             .route("/health", get(health_check_handler))
             .route("/healthz", get(health_check_handler))
+            // Version endpoints (vLLM / Hermes / Agent compatibility)
+            .route("/version", get(handlers::openai::handle_version))
+            .route("/v1/version", get(handlers::openai::handle_version))
+            // Props endpoints (llama.cpp / Hermes / Local probe compatibility)
+            .route("/props", get(handlers::openai::handle_props))
+            .route("/v1/props", get(handlers::openai::handle_props))
             // OpenAI Protocol (Chat & Universal Models)
             .route("/v1/models", get(handlers::openai::handle_list_models))
             .route(
