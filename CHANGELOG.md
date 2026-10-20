@@ -3,6 +3,14 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v4.9.9-beta.2 (2026-10-20)**:
+        -   **[Hermes Agent / 本地探针端点兼容与 OpenAI 模型上下文元数据增强] (PR #3708, Thanks to @CarlitoDon)**:
+            -   **llama.cpp 与 vLLM 标准探针端点集成**: 新增 `/props`、`/v1/props`（返回 `n_ctx`、`n_predict` 等标准生成配置，支持 `?model=` 查询）与 `/version`、`/v1/version`（返回包版本与应用标识）只读端点，全面消除 Hermes Agent、llama.cpp 工具链及 vLLM 客户端接入时的探测警告与探针 404 错误。(PR #3708, Thanks to @CarlitoDon)
+            -   **OpenAI 模型列表与详情元数据补全**: 在 `/v1/models` 与 `/v1/models/{model}` 响应中注入 `context_length`、`max_context_length`、`max_input_tokens`、`max_model_len`、`max_tokens` 及 `max_completion_tokens` 等权威容量限制，优先通过 `OfficialModelCatalog` 读取权威规格并对未收录模型按家族进行智能降级；单模型详情支持从官方模型目录回退查询，使直接按官方 ID 查询详情更鲁棒。(PR #3708, Thanks to @CarlitoDon)
+            -   **探针请求日志静默与健康检查免检放宽**: 将探针端点纳入 `is_health_check` 白名单，请求日志转为 `trace` 心跳级别彻底杜绝探针在反代流量日志中刷屏，并在 `AllExceptHealth` 模式下保持免密放行，确保本地 Agent 握手探针无阻碍启动。(PR #3708, Thanks to @CarlitoDon)
+        -   **[模型测活与内部预热模型路由对齐修复] (Fixes #3715)**:
+            -   **测活端点（`/internal/warmup`）补齐模型路由归一化**: 修复测活端点直接透传前端派生的裸模型名（如 `gemini-3.8-flash`、`gpt-oss-120b`）作为上游实体构建 Google 请求导致上游返回 404 (`Requested entity was not found.`) 的缺陷；在预热入口接入 `resolve_model_route_with_effort`，自动将裸模型对齐到对应的官方物理实体（如 `gemini-3.8-flash-tiered`），彻底消除连通性测试 404 误报并对齐流量日志映射与响应头。(Fixes #3715)
+
     *   **v4.9.9-beta.1 (2026-10-18)**:
         -   **[代理池安全防泄露、URL 凭据清洗与高延迟节点容灾] (Fixes #3703, Ref #3323, PR #3706, Thanks to @cubelikeplayDaniel)**:
             -   **专属绑定账号防 Direct 泄漏机制**: 重构专属代理路由决策；当绑定的专属代理被判定为不健康时，优先故障转移至可用公用池节点；若无可用公共节点，强制沿用专属代理尝试出站（宁可网络报错也绝不静默回退至直连），彻底杜绝服务器真实源站 IP 泄漏至 Google 授权系统导致的风控封号风险。(Fixes #3703, PR #3706, Thanks to @cubelikeplayDaniel)
