@@ -3,6 +3,7 @@ pub mod account_service;
 pub mod auto_switch;
 pub mod cache;
 pub mod cloudflared;
+pub mod cli_handler;
 pub mod config;
 pub mod db;
 pub mod device;

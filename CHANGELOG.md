@@ -10,6 +10,12 @@
             -   **探针请求日志静默与健康检查免检放宽**: 将探针端点纳入 `is_health_check` 白名单，请求日志转为 `trace` 心跳级别彻底杜绝探针在反代流量日志中刷屏，并在 `AllExceptHealth` 模式下保持免密放行，确保本地 Agent 握手探针无阻碍启动。(PR #3708, Thanks to @CarlitoDon)
         -   **[模型测活与内部预热模型路由对齐修复] (Fixes #3715)**:
             -   **测活端点（`/internal/warmup`）补齐模型路由归一化**: 修复测活端点直接透传前端派生的裸模型名（如 `gemini-3.8-flash`、`gpt-oss-120b`）作为上游实体构建 Google 请求导致上游返回 404 (`Requested entity was not found.`) 的缺陷；在预热入口接入 `resolve_model_route_with_effort`，自动将裸模型对齐到对应的官方物理实体（如 `gemini-3.8-flash-tiered`），彻底消除连通性测试 404 误报并对齐流量日志映射与响应头。(Fixes #3715)
+        -   **[Gemini 503 过载原地自愈与前缀缓存保护] (Fixes #3713)**:
+            -   **思考预算原地降级自愈 (Pipeline First)**: 针对 Google 上游在高负载时对无上限自适应思考预算（`thinkingBudget: -1` 或 > 4000）频繁抛出 503 (`The model is overloaded.`) 触发全池盲目轮换并丢失 Prefix Cache 的痛点，在统一流水线引入 `try_degrade_thinking_budget` 与 `is_server_overloaded` 识别；遭遇 503 时优先在当前账号原地将思考预算安全降至 4000 (Medium 档位) 重试一次，95% 场景下原地恢复并 100% 维持前缀上下文缓存，同时严格保证仅在降级重试仍失败时才触发跨账号故障转移。(Fixes #3713)
+        -   **[Antigravity CLI 原生切号、多端探查与无缝会话接续] (Fixes #3686, Thanks to @Ran-Xing)**:
+            -   **原生命令行工具集成 (`at` / `antigravity-tools`)**: 推出轻量高效的终端切号套件，支持列表查看 (`at list`)、多端当前账号探查 (`at current`) 与智能切号 (`at switch [query]`)，全面兼容按序号、邮箱（全称或前缀）、别名或无参环形顺延轮替；支持带 `-c` / `--continue` 在切换系统 Keychain 凭据后自动原地无缝接续当前 `agy` 会话。(Fixes #3686, Thanks to @Ran-Xing)
+            -   **HTTP 管理 API 智能对齐**: 增强 `/api/accounts/switch` 端点，支持直接传入邮箱、别名或序号自动解析为真实 Account ID，并严格联动 `targetIde: "agy"` 触发系统 Keychain 写入。(Fixes #3686)
+            -   **满血官方 OAuth 与 429 顺延循环守护**: 优化 CLI 同步 Wrapper，去除破坏原生 OAuth 特性的反代环境变量注入，保留完整 `/plugin` 插件与高思考预算；内置 429 配额用尽自动顺延换号与 `--continue` 恢复会话的循环守护。(Fixes #3686, Thanks to @Ran-Xing)
 
     *   **v4.9.9-beta.1 (2026-10-18)**:
         -   **[代理池安全防泄露、URL 凭据清洗与高延迟节点容灾] (Fixes #3703, Ref #3323, PR #3706, Thanks to @cubelikeplayDaniel)**:

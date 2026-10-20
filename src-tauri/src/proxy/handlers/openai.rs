@@ -2132,6 +2132,8 @@ pub async fn handle_chat_completions(
     let mut failure_statuses = FailureStatusTracker::default();
     let mut used_attempts = 0;
     let mut retried_without_thinking = false;
+    let mut retried_with_budget_degraded = false;
+    let mut degraded_gemini_body: Option<Value> = None;
 
     // 2. 模型路由解析 (移到循环外以支持在所有路径返回 X-Mapped-Model)
     let mapped_model = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
@@ -2267,15 +2269,23 @@ pub async fn handle_chat_completions(
         // 4. 转换请求 (返回内容包含 session_id, message_count, prefix_hash)
         let tf_start = std::time::Instant::now();
         let (mut gemini_body, _routed_session, message_count, _prefix_hash) =
-            transform_openai_request_with_session(
-                &openai_req,
-                &project_id,
-                &mapped_model,
-                proxy_token.as_ref(),
-                &affinity_key,
-                None,
-                false,
-            );
+            if let Some(body) = degraded_gemini_body.take() {
+                (body, String::new(), 0, String::new())
+            } else {
+                let (mut b, s, c, p) = transform_openai_request_with_session(
+                    &openai_req,
+                    &project_id,
+                    &mapped_model,
+                    proxy_token.as_ref(),
+                    &affinity_key,
+                    None,
+                    false,
+                );
+                if retried_with_budget_degraded {
+                    crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(&mut b);
+                }
+                (b, s, c, p)
+            };
         let session_id = store_key.clone();
         let tf_micros = tf_start.elapsed().as_micros() as u64;
         let norm_total_micros = norm_start.elapsed().as_micros() as u64;
@@ -2959,6 +2969,24 @@ pub async fn handle_chat_completions(
             &error_text,
             retry_after.as_deref(),
         );
+
+        // [FIX #3713] 503 / 529 服务端过载：思考预算原地降级自愈 (Pipeline First)
+        // 当模型遭遇过载 (503/529 / overloaded)，若当前请求带有 -1 或超大思考预算，优先在当前账号上降级预算原地重试一次，
+        // 杜绝盲目全池轮换导致跨账号缓存丢失 (Prefix Cache Protection)。
+        if crate::proxy::pipeline::UpstreamClassification::is_server_overloaded(status_code, &error_text)
+            && !retried_with_budget_degraded
+            && crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(&mut gemini_body)
+        {
+            retried_with_budget_degraded = true;
+            degraded_gemini_body = Some(gemini_body);
+            force_rotate = false;
+            tracing::warn!(
+                "[{}] Upstream {}/overloaded detected. In-place self-healing: degraded thinking budget to 4000 on account {} (preserving prefix cache)",
+                trace_id, status_code, email
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            continue;
+        }
 
         if classification.is_model_not_found() {
             // [NEW] 针对特定账号记录单模型临时熔断（例如该 PRO 账号未开通 Claude 5.5），绝不连坐其他模型
@@ -4031,6 +4059,8 @@ pub async fn handle_completions(
     }
 
     let mut force_rotate = false;
+    let mut retried_with_budget_degraded = false;
+    let mut degraded_gemini_body: Option<Value> = None;
 
     while let Some(attempt) = next_rotation_attempt(
         &mut used_attempts,
@@ -4113,27 +4143,36 @@ pub async fn handle_completions(
 
         let proxy_token = token_manager.get_token_by_id(&account_id);
         let tf_start = std::time::Instant::now();
-        let (mut gemini_body, _routed_session, message_count, _prefix_hash) = if is_responses_api {
-            transform_openai_request_with_session(
-                &openai_req,
-                &project_id,
-                &mapped_model,
-                proxy_token.as_ref(),
-                &affinity_key,
-                signature_read_key.as_deref(),
-                true, // is_responses_api
-            )
-        } else {
-            transform_openai_request_with_session(
-                &openai_req,
-                &project_id,
-                &mapped_model,
-                proxy_token.as_ref(),
-                &affinity_key,
-                None,
-                false,
-            )
-        };
+        let (mut gemini_body, _routed_session, message_count, _prefix_hash) =
+            if let Some(body) = degraded_gemini_body.take() {
+                (body, String::new(), 0, String::new())
+            } else {
+                let (mut b, r, m, p) = if is_responses_api {
+                    transform_openai_request_with_session(
+                        &openai_req,
+                        &project_id,
+                        &mapped_model,
+                        proxy_token.as_ref(),
+                        &affinity_key,
+                        signature_read_key.as_deref(),
+                        true, // is_responses_api
+                    )
+                } else {
+                    transform_openai_request_with_session(
+                        &openai_req,
+                        &project_id,
+                        &mapped_model,
+                        proxy_token.as_ref(),
+                        &affinity_key,
+                        None,
+                        false,
+                    )
+                };
+                if retried_with_budget_degraded {
+                    crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(&mut b);
+                }
+                (b, r, m, p)
+            };
         let session_id = session_id_str.clone();
         let tf_micros = tf_start.elapsed().as_micros() as u64;
         let norm_total_micros = norm_start.elapsed().as_micros() as u64;
@@ -4989,6 +5028,24 @@ pub async fn handle_completions(
             &error_text,
             retry_after.as_deref(),
         );
+
+        // [FIX #3713] 503 / 529 服务端过载：思考预算原地降级自愈 (Pipeline First)
+        // 当模型遭遇过载 (503/529 / overloaded)，若当前请求带有 -1 或超大思考预算，优先在当前账号上降级预算原地重试一次，
+        // 杜绝盲目全池轮换导致跨账号缓存丢失 (Prefix Cache Protection)。
+        if crate::proxy::pipeline::UpstreamClassification::is_server_overloaded(status_code, &error_text)
+            && !retried_with_budget_degraded
+            && crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(&mut gemini_body)
+        {
+            retried_with_budget_degraded = true;
+            degraded_gemini_body = Some(gemini_body);
+            force_rotate = false;
+            tracing::warn!(
+                "[{}] Upstream {}/overloaded detected. In-place self-healing: degraded thinking budget to 4000 on account {} (preserving prefix cache)",
+                trace_id, status_code, email
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            continue;
+        }
 
         if classification.is_model_not_found() {
             tracing::warn!(

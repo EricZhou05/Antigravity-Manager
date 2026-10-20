@@ -105,6 +105,13 @@ impl UpstreamClassification {
     pub fn is_internal_gateway_message(&self) -> bool {
         matches!(self, UpstreamClassification::InternalGatewayMessage)
     }
+
+    /// 判断是否为上游服务过载（HTTP 503 / 529，或 500/504 等返回 "model is overloaded"）
+    pub fn is_server_overloaded(status: u16, body: &str) -> bool {
+        status == 503
+            || status == 529
+            || ((status >= 500 || status == 408) && body.to_lowercase().contains("overloaded"))
+    }
 }
 
 #[cfg(test)]
@@ -130,5 +137,25 @@ mod tests {
         assert!(unauth.abandons_sticky_account());
         let forbidden = UpstreamClassification::classify(403, "forbidden", None);
         assert!(forbidden.abandons_sticky_account());
+    }
+
+    #[test]
+    fn test_is_server_overloaded() {
+        assert!(UpstreamClassification::is_server_overloaded(503, ""));
+        assert!(UpstreamClassification::is_server_overloaded(529, ""));
+        assert!(UpstreamClassification::is_server_overloaded(
+            500,
+            r#"{"error":{"message":"The model is overloaded."}}"#
+        ));
+        assert!(UpstreamClassification::is_server_overloaded(
+            504,
+            "Gateway Timeout: upstream overloaded"
+        ));
+        assert!(!UpstreamClassification::is_server_overloaded(
+            429,
+            "quota exhausted"
+        ));
+        assert!(!UpstreamClassification::is_server_overloaded(200, "OK"));
+        assert!(!UpstreamClassification::is_server_overloaded(404, "Not Found"));
     }
 }

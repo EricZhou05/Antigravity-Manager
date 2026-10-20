@@ -292,6 +292,19 @@ pub fn run() {
 
     // Check for headless mode
     let args: Vec<String> = std::env::args().collect();
+
+    // Check for CLI subcommands (switch, list, current, etc.)
+    if let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() {
+        match runtime.block_on(modules::cli_handler::try_handle_cli(&args)) {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(e) => {
+                eprintln!("\x1b[31m[Antigravity CLI Error]\x1b[0m {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
     let is_headless = args.iter().any(|arg| arg == "--headless");
 
     // Increase file descriptor limit (macOS only)

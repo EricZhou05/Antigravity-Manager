@@ -1552,6 +1552,117 @@ impl InboundThinkingPipeline {
             .and_then(Value::as_i64)
     }
 
+    /// [FIX #3713] 503/过载自愈：尝试降级请求载荷中的思维链预算（协议无关流水线能力）
+    ///
+    /// 适用场景：
+    /// 当 Gemini 上游返回 503 / 529 (The model is overloaded) 时，
+    /// 通常是因为思考预算处于无上限自适应 (-1) 或超高算力档位 (> 4000)，被上游调度至高算力集群产生并发排队与熔断。
+    ///
+    /// 执行策略：
+    /// 1. 若当前 thinkingBudget 为 -1 (无上限) 或 > 4000，降级为稳妥的 4000 (Medium 档位)；
+    /// 2. 若当前 thinkingLevel 为 "HIGH"，降级为 "MEDIUM"；
+    /// 3. 若仅开启 includeThoughts: true 而无具体预算，注入 4000 避免无上限超载；
+    /// 4. 若模型名显式带有 -high 后缀，替换为 -medium。
+    ///
+    /// 返回值：
+    /// - `true`: 成功执行降级操作（可以在当前账号原地重试以保留 Prefix Cache）；
+    /// - `false`: 请求本身无需降级或已处于低档位/无思考，无需原地重试。
+    pub fn try_degrade_thinking_budget(body: &mut Value) -> bool {
+        let mut degraded = false;
+
+        let degrade_tc = |tc: &mut Value| -> bool {
+            let mut changed = false;
+            if let Some(obj) = tc.as_object_mut() {
+                // 1. thinkingBudget 降级：-1 (无上限自适应) 或 > 4000 降级为稳妥的 4000
+                if let Some(budget_val) = obj.get("thinkingBudget") {
+                    if let Some(budget) = budget_val.as_i64() {
+                        if budget == -1 || budget > 4000 {
+                            obj.insert("thinkingBudget".to_string(), json!(4000));
+                            changed = true;
+                        }
+                    }
+                } else if obj.get("thinkingLevel").is_none()
+                    && obj.get("includeThoughts").and_then(|v| v.as_bool()) == Some(true)
+                {
+                    // 仅有 includeThoughts: true，无具体预算约束：注入 4000 避免无上限超载
+                    obj.insert("thinkingBudget".to_string(), json!(4000));
+                    changed = true;
+                }
+
+                // 2. thinkingLevel 降级：HIGH 降级为 MEDIUM
+                if let Some(level_val) = obj.get("thinkingLevel") {
+                    if let Some(level) = level_val.as_str() {
+                        if level.eq_ignore_ascii_case("HIGH") {
+                            obj.insert("thinkingLevel".to_string(), json!("MEDIUM"));
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            changed
+        };
+
+        let check_gc = |gc: &mut Value| -> bool {
+            let mut gc_degraded = false;
+            if let Some(tc) = gc.get_mut("thinkingConfig") {
+                if degrade_tc(tc) {
+                    gc_degraded = true;
+                }
+            }
+            if let Some(tc) = gc.get_mut("thinking_config") {
+                if degrade_tc(tc) {
+                    gc_degraded = true;
+                }
+            }
+            gc_degraded
+        };
+
+        if let Some(gc) = body.get_mut("generationConfig") {
+            if check_gc(gc) {
+                degraded = true;
+            }
+        }
+        if let Some(gc) = body.get_mut("generation_config") {
+            if check_gc(gc) {
+                degraded = true;
+            }
+        }
+
+        if let Some(req) = body.get_mut("request") {
+            if let Some(gc) = req.get_mut("generationConfig") {
+                if check_gc(gc) {
+                    degraded = true;
+                }
+            }
+            if let Some(gc) = req.get_mut("generation_config") {
+                if check_gc(gc) {
+                    degraded = true;
+                }
+            }
+        }
+
+        // 检查模型名是否带 -high 后缀，替换为 -medium
+        let mut degrade_model_str = |m_val: &mut Value| {
+            if let Some(m_str) = m_val.as_str() {
+                if m_str.ends_with("-high") || m_str.contains("-high") {
+                    *m_val = json!(m_str.replace("-high", "-medium"));
+                    degraded = true;
+                }
+            }
+        };
+
+        if let Some(m) = body.get_mut("model") {
+            degrade_model_str(m);
+        }
+        if let Some(req) = body.get_mut("request") {
+            if let Some(m) = req.get_mut("model") {
+                degrade_model_str(m);
+            }
+        }
+
+        degraded
+    }
+
     /// 统一规范化与对齐四大协议转译后的 Google Request 内部拓扑（Pipeline First 核心归一节点）
     /// 确保 OpenAI Chat, OpenAI Responses, Claude 与 Gemini 在上游呈现 100% 严格对齐官方 Antigravity 的结构：
     /// 1. contents: 上下文历史置于首位
@@ -2166,6 +2277,99 @@ impl InboundThinkingPipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_try_degrade_thinking_budget() {
+        // Case 1: thinkingBudget == -1 in request envelope -> 降级为 4000
+        let mut body1 = json!({
+            "model": "gemini-3.8-flash",
+            "request": {
+                "generationConfig": {
+                    "thinkingConfig": {
+                        "includeThoughts": true,
+                        "thinkingBudget": -1
+                    }
+                }
+            }
+        });
+        assert!(InboundThinkingPipeline::try_degrade_thinking_budget(&mut body1));
+        assert_eq!(
+            body1["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            4000
+        );
+
+        // Case 2: thinkingBudget > 4000 (例如 10000) -> 降级为 4000
+        let mut body2 = json!({
+            "generationConfig": {
+                "thinkingConfig": {
+                    "includeThoughts": true,
+                    "thinkingBudget": 10000
+                }
+            }
+        });
+        assert!(InboundThinkingPipeline::try_degrade_thinking_budget(&mut body2));
+        assert_eq!(
+            body2["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            4000
+        );
+
+        // Case 3: thinkingBudget <= 4000 (例如 2048) -> 不变，返回 false
+        let mut body3 = json!({
+            "generationConfig": {
+                "thinkingConfig": {
+                    "includeThoughts": true,
+                    "thinkingBudget": 2048
+                }
+            }
+        });
+        assert!(!InboundThinkingPipeline::try_degrade_thinking_budget(&mut body3));
+        assert_eq!(
+            body3["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            2048
+        );
+
+        // Case 4: 仅 includeThoughts: true，无具体预算约束 -> 注入 4000
+        let mut body4 = json!({
+            "generationConfig": {
+                "thinkingConfig": {
+                    "includeThoughts": true
+                }
+            }
+        });
+        assert!(InboundThinkingPipeline::try_degrade_thinking_budget(&mut body4));
+        assert_eq!(
+            body4["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            4000
+        );
+
+        // Case 5: thinkingLevel == "HIGH" -> 降级为 "MEDIUM"
+        let mut body5 = json!({
+            "generationConfig": {
+                "thinkingConfig": {
+                    "includeThoughts": true,
+                    "thinkingLevel": "HIGH"
+                }
+            }
+        });
+        assert!(InboundThinkingPipeline::try_degrade_thinking_budget(&mut body5));
+        assert_eq!(
+            body5["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "MEDIUM"
+        );
+
+        // Case 6: 模型名含 -high -> 降级为 -medium
+        let mut body6 = json!({
+            "model": "gemini-3.8-flash-high",
+            "generationConfig": {
+                "thinkingConfig": {
+                    "includeThoughts": true,
+                    "thinkingBudget": 4000
+                }
+            }
+        });
+        assert!(InboundThinkingPipeline::try_degrade_thinking_budget(&mut body6));
+        assert_eq!(body6["model"], "gemini-3.8-flash-medium");
+    }
 
     #[test]
     fn test_preserves_process_commentary_alongside_tool_call() {
