@@ -620,6 +620,8 @@ pub fn run() {
 
             apply_login_launch_policy(app);
 
+            ensure_cli_symlinks();
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -927,3 +929,22 @@ pub fn run() {
             }
         });
 }
+
+#[cfg(unix)]
+fn ensure_cli_symlinks() {
+    if let (Some(home), Ok(current_exe)) = (dirs::home_dir(), std::env::current_exe()) {
+        let local_bin = home.join(".local/bin");
+        if !local_bin.exists() {
+            let _ = std::fs::create_dir_all(&local_bin);
+        }
+        for name in &["antigravity-tools", "at"] {
+            let link = local_bin.join(name);
+            if !link.exists() {
+                let _ = std::os::unix::fs::symlink(&current_exe, &link);
+            }
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn ensure_cli_symlinks() {}
