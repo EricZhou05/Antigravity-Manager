@@ -143,7 +143,10 @@ async fn handle_list_command() -> Result<(), String> {
             "     "
         };
         let email = format!("{:<28}", truncate_str(&acc.email, 28));
-        let name = format!("{:<12}", truncate_str(acc.name.as_deref().unwrap_or("-"), 12));
+        let name = format!(
+            "{:<12}",
+            truncate_str(acc.name.as_deref().unwrap_or("-"), 12)
+        );
         let state = if acc.disabled {
             "\x1b[31m已禁用\x1b[0m"
         } else if acc.proxy_disabled {
@@ -151,7 +154,14 @@ async fn handle_list_command() -> Result<(), String> {
         } else {
             "\x1b[32m正常\x1b[0m"
         };
-        println!("{:<4} |{}| {} | {} | {}", i + 1, is_active, email, name, state);
+        println!(
+            "{:<4} |{}| {} | {} | {}",
+            i + 1,
+            is_active,
+            email,
+            name,
+            state
+        );
     }
 
     println!("\n提示: 运行 `antigravity-tools switch` 自动顺延，或 `antigravity-tools switch <序号/邮箱>`。\n");
@@ -270,7 +280,10 @@ mod tests {
     #[test]
     fn test_truncate_str() {
         assert_eq!(truncate_str("short", 10), "short");
-        assert_eq!(truncate_str("verylongemailaddress@gmail.com", 15), "verylongemai...");
+        assert_eq!(
+            truncate_str("verylongemailaddress@gmail.com", 15),
+            "verylongemai..."
+        );
     }
 
     #[tokio::test]
@@ -278,10 +291,7 @@ mod tests {
         let args = vec!["antigravity-tools".to_string()];
         assert_eq!(try_handle_cli(&args).await.unwrap(), false);
 
-        let args = vec![
-            "antigravity-tools".to_string(),
-            "--headless".to_string(),
-        ];
+        let args = vec!["antigravity-tools".to_string(), "--headless".to_string()];
         assert_eq!(try_handle_cli(&args).await.unwrap(), false);
 
         let args = vec![

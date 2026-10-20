@@ -153,8 +153,8 @@ pub async fn handle_warmup(
     // ===== 步骤 2: 根据模型类型构建请求体 =====
     let is_claude = mapped_model.to_lowercase().contains("claude")
         || req.model.to_lowercase().contains("claude");
-    let is_image = mapped_model.to_lowercase().contains("image")
-        || req.model.to_lowercase().contains("image");
+    let is_image =
+        mapped_model.to_lowercase().contains("image") || req.model.to_lowercase().contains("image");
 
     let body: Value = if is_claude {
         // Claude 模型：使用 transform_claude_request_in 转换

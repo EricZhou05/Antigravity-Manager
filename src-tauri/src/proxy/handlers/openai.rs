@@ -2282,7 +2282,9 @@ pub async fn handle_chat_completions(
                     false,
                 );
                 if retried_with_budget_degraded {
-                    crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(&mut b);
+                    crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(
+                        &mut b,
+                    );
                 }
                 (b, s, c, p)
             };
@@ -2973,9 +2975,13 @@ pub async fn handle_chat_completions(
         // [FIX #3713] 503 / 529 服务端过载：思考预算原地降级自愈 (Pipeline First)
         // 当模型遭遇过载 (503/529 / overloaded)，若当前请求带有 -1 或超大思考预算，优先在当前账号上降级预算原地重试一次，
         // 杜绝盲目全池轮换导致跨账号缓存丢失 (Prefix Cache Protection)。
-        if crate::proxy::pipeline::UpstreamClassification::is_server_overloaded(status_code, &error_text)
-            && !retried_with_budget_degraded
-            && crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(&mut gemini_body)
+        if crate::proxy::pipeline::UpstreamClassification::is_server_overloaded(
+            status_code,
+            &error_text,
+        ) && !retried_with_budget_degraded
+            && crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(
+                &mut gemini_body,
+            )
         {
             retried_with_budget_degraded = true;
             degraded_gemini_body = Some(gemini_body);
@@ -4169,7 +4175,9 @@ pub async fn handle_completions(
                     )
                 };
                 if retried_with_budget_degraded {
-                    crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(&mut b);
+                    crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(
+                        &mut b,
+                    );
                 }
                 (b, r, m, p)
             };
@@ -5032,9 +5040,13 @@ pub async fn handle_completions(
         // [FIX #3713] 503 / 529 服务端过载：思考预算原地降级自愈 (Pipeline First)
         // 当模型遭遇过载 (503/529 / overloaded)，若当前请求带有 -1 或超大思考预算，优先在当前账号上降级预算原地重试一次，
         // 杜绝盲目全池轮换导致跨账号缓存丢失 (Prefix Cache Protection)。
-        if crate::proxy::pipeline::UpstreamClassification::is_server_overloaded(status_code, &error_text)
-            && !retried_with_budget_degraded
-            && crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(&mut gemini_body)
+        if crate::proxy::pipeline::UpstreamClassification::is_server_overloaded(
+            status_code,
+            &error_text,
+        ) && !retried_with_budget_degraded
+            && crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(
+                &mut gemini_body,
+            )
         {
             retried_with_budget_degraded = true;
             degraded_gemini_body = Some(gemini_body);

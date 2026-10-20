@@ -156,6 +156,9 @@ mod tests {
             "quota exhausted"
         ));
         assert!(!UpstreamClassification::is_server_overloaded(200, "OK"));
-        assert!(!UpstreamClassification::is_server_overloaded(404, "Not Found"));
+        assert!(!UpstreamClassification::is_server_overloaded(
+            404,
+            "Not Found"
+        ));
     }
 }

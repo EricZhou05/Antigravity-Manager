@@ -1600,7 +1600,10 @@ async fn admin_switch_account(
 
     match result {
         Ok(()) => {
-            logger::log_info(&format!("[API] Account switch successful: {}", resolved_account_id));
+            logger::log_info(&format!(
+                "[API] Account switch successful: {}",
+                resolved_account_id
+            ));
 
             // [FIX #1166] 账号切换后立即同步内存状态
             state.token_manager.clear_all_sessions();

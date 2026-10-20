@@ -2503,7 +2503,11 @@ pub fn resolve_account_summary_in_index(
         }
 
         // 3. 精确匹配 Email（忽略大小写）
-        if let Some(acc) = index.accounts.iter().find(|a| a.email.eq_ignore_ascii_case(q)) {
+        if let Some(acc) = index
+            .accounts
+            .iter()
+            .find(|a| a.email.eq_ignore_ascii_case(q))
+        {
             return Ok(acc.clone());
         }
 
@@ -2514,12 +2518,21 @@ pub fn resolve_account_summary_in_index(
 
         // 5. 模糊包含匹配 Email
         let q_lower = q.to_lowercase();
-        if let Some(acc) = index.accounts.iter().find(|a| a.email.to_lowercase().contains(&q_lower)) {
+        if let Some(acc) = index
+            .accounts
+            .iter()
+            .find(|a| a.email.to_lowercase().contains(&q_lower))
+        {
             return Ok(acc.clone());
         }
 
         // 6. 模糊包含匹配 Name
-        if let Some(acc) = index.accounts.iter().find(|a| a.name.as_deref().map(|n| n.to_lowercase().contains(&q_lower)).unwrap_or(false)) {
+        if let Some(acc) = index.accounts.iter().find(|a| {
+            a.name
+                .as_deref()
+                .map(|n| n.to_lowercase().contains(&q_lower))
+                .unwrap_or(false)
+        }) {
             return Ok(acc.clone());
         }
 
@@ -2528,9 +2541,18 @@ pub fn resolve_account_summary_in_index(
 
     // 无参时：环形顺延轮换（Round-Robin）
     let current_id = match target_ide {
-        Some("agy") => index.current_agy_account_id.as_deref().or(index.current_account_id.as_deref()),
-        Some("ide") => index.current_ide_account_id.as_deref().or(index.current_account_id.as_deref()),
-        Some("classic") => index.current_classic_account_id.as_deref().or(index.current_account_id.as_deref()),
+        Some("agy") => index
+            .current_agy_account_id
+            .as_deref()
+            .or(index.current_account_id.as_deref()),
+        Some("ide") => index
+            .current_ide_account_id
+            .as_deref()
+            .or(index.current_account_id.as_deref()),
+        Some("classic") => index
+            .current_classic_account_id
+            .as_deref()
+            .or(index.current_account_id.as_deref()),
         _ => index.current_account_id.as_deref(),
     };
 

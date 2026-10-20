@@ -2415,9 +2415,13 @@ mod tests {
                         } else {
                             let json_str = line.trim_start_matches("data: ").trim();
                             if let Ok(json) = serde_json::from_str::<Value>(json_str) {
-                                if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
+                                if let Some(choices) =
+                                    json.get("choices").and_then(|c| c.as_array())
+                                {
                                     for choice in choices {
-                                        if let Some(fr) = choice.get("finish_reason").and_then(|f| f.as_str()) {
+                                        if let Some(fr) =
+                                            choice.get("finish_reason").and_then(|f| f.as_str())
+                                        {
                                             finish_reasons.push(fr.to_string());
                                         }
                                     }

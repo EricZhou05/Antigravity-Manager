@@ -294,7 +294,10 @@ pub fn run() {
     let args: Vec<String> = std::env::args().collect();
 
     // Check for CLI subcommands (switch, list, current, etc.)
-    if let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() {
+    if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
         match runtime.block_on(modules::cli_handler::try_handle_cli(&args)) {
             Ok(true) => return,
             Ok(false) => {}

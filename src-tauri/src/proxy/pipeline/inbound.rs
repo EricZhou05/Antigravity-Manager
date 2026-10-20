@@ -2292,7 +2292,9 @@ mod tests {
                 }
             }
         });
-        assert!(InboundThinkingPipeline::try_degrade_thinking_budget(&mut body1));
+        assert!(InboundThinkingPipeline::try_degrade_thinking_budget(
+            &mut body1
+        ));
         assert_eq!(
             body1["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
             4000
@@ -2307,7 +2309,9 @@ mod tests {
                 }
             }
         });
-        assert!(InboundThinkingPipeline::try_degrade_thinking_budget(&mut body2));
+        assert!(InboundThinkingPipeline::try_degrade_thinking_budget(
+            &mut body2
+        ));
         assert_eq!(
             body2["generationConfig"]["thinkingConfig"]["thinkingBudget"],
             4000
@@ -2322,7 +2326,9 @@ mod tests {
                 }
             }
         });
-        assert!(!InboundThinkingPipeline::try_degrade_thinking_budget(&mut body3));
+        assert!(!InboundThinkingPipeline::try_degrade_thinking_budget(
+            &mut body3
+        ));
         assert_eq!(
             body3["generationConfig"]["thinkingConfig"]["thinkingBudget"],
             2048
@@ -2336,7 +2342,9 @@ mod tests {
                 }
             }
         });
-        assert!(InboundThinkingPipeline::try_degrade_thinking_budget(&mut body4));
+        assert!(InboundThinkingPipeline::try_degrade_thinking_budget(
+            &mut body4
+        ));
         assert_eq!(
             body4["generationConfig"]["thinkingConfig"]["thinkingBudget"],
             4000
@@ -2351,7 +2359,9 @@ mod tests {
                 }
             }
         });
-        assert!(InboundThinkingPipeline::try_degrade_thinking_budget(&mut body5));
+        assert!(InboundThinkingPipeline::try_degrade_thinking_budget(
+            &mut body5
+        ));
         assert_eq!(
             body5["generationConfig"]["thinkingConfig"]["thinkingLevel"],
             "MEDIUM"
@@ -2367,7 +2377,9 @@ mod tests {
                 }
             }
         });
-        assert!(InboundThinkingPipeline::try_degrade_thinking_budget(&mut body6));
+        assert!(InboundThinkingPipeline::try_degrade_thinking_budget(
+            &mut body6
+        ));
         assert_eq!(body6["model"], "gemini-3.8-flash-medium");
     }
 

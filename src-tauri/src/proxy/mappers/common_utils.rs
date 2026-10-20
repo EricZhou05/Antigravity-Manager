@@ -2012,26 +2012,30 @@ pub fn ensure_gemini_payload_ends_with_user(body: &mut Value) -> bool {
             if has_fr {
                 // 1. 工具回执合法结尾：允许保留，绝不追加 user 垫片 (Fixes #3629)
             } else {
-                let is_empty_turn = last_turn
-                    .get("parts")
-                    .and_then(|p| p.as_array())
-                    .map_or(true, |parts| {
-                        parts.is_empty()
-                            || parts.iter().all(|part| {
-                                if part.get("functionCall").is_some()
-                                    || part.get("inlineData").is_some()
-                                    || part.get("fileData").is_some()
-                                {
-                                    return false;
-                                }
-                                if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                                    let t = text.trim();
-                                    t.is_empty() || t == "(no content)" || t == "·" || t == "..."
-                                } else {
-                                    true
-                                }
-                            })
-                    });
+                let is_empty_turn =
+                    last_turn
+                        .get("parts")
+                        .and_then(|p| p.as_array())
+                        .map_or(true, |parts| {
+                            parts.is_empty()
+                                || parts.iter().all(|part| {
+                                    if part.get("functionCall").is_some()
+                                        || part.get("inlineData").is_some()
+                                        || part.get("fileData").is_some()
+                                    {
+                                        return false;
+                                    }
+                                    if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                                        let t = text.trim();
+                                        t.is_empty()
+                                            || t == "(no content)"
+                                            || t == "·"
+                                            || t == "..."
+                                    } else {
+                                        true
+                                    }
+                                })
+                        });
 
                 if is_empty_turn {
                     // 2. 客户端下发的空 model 尾轮（如 OpenCode 在流中断后的空续步）：直接剔除
@@ -2166,7 +2170,10 @@ mod defense_tests {
         assert_eq!(contents.len(), 3);
         assert_eq!(contents[1]["role"], "model");
         assert_eq!(contents[2]["role"], "user");
-        assert_eq!(contents[2]["parts"][0]["text"], TRANSIT_DEFENSE_FALLBACK_TEXT);
+        assert_eq!(
+            contents[2]["parts"][0]["text"],
+            TRANSIT_DEFENSE_FALLBACK_TEXT
+        );
     }
 
     #[test]

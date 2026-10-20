@@ -1865,45 +1865,48 @@ pub async fn handle_messages(
                 crate::proxy::mappers::claude::request::TransformTiming::default(),
             )
         } else {
-            let (mut b, timing) = match crate::proxy::mappers::claude::transform_claude_request_in_timed(
-                &request_with_mapped,
-                &project_id,
-                retried_without_thinking,
-                Some(account_id.as_str()),
-                &store_key,
-                &affinity_key,
-                token_obj.as_ref(),
-            ) {
-                Ok((b, timing)) => {
-                    debug!(
-                        "[{}] Transformed Gemini Body: {}",
-                        trace_id,
-                        serde_json::to_string_pretty(&b).unwrap_or_default()
-                    );
-                    (b, timing)
-                }
-                Err(e) => {
-                    let headers = [
-                        ("X-Mapped-Model", request_with_mapped.model.as_str()),
-                        ("X-Upstream-Model", config.final_model.as_str()),
-                        ("X-Account-Email", email.as_str()),
-                    ];
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        headers,
-                        Json(json!({
-                            "type": "error",
-                            "error": {
-                                "type": "api_error",
-                                "message": format!("Transform error: {}", e)
-                            }
-                        })),
-                    )
-                        .into_response();
-                }
-            };
+            let (mut b, timing) =
+                match crate::proxy::mappers::claude::transform_claude_request_in_timed(
+                    &request_with_mapped,
+                    &project_id,
+                    retried_without_thinking,
+                    Some(account_id.as_str()),
+                    &store_key,
+                    &affinity_key,
+                    token_obj.as_ref(),
+                ) {
+                    Ok((b, timing)) => {
+                        debug!(
+                            "[{}] Transformed Gemini Body: {}",
+                            trace_id,
+                            serde_json::to_string_pretty(&b).unwrap_or_default()
+                        );
+                        (b, timing)
+                    }
+                    Err(e) => {
+                        let headers = [
+                            ("X-Mapped-Model", request_with_mapped.model.as_str()),
+                            ("X-Upstream-Model", config.final_model.as_str()),
+                            ("X-Account-Email", email.as_str()),
+                        ];
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            headers,
+                            Json(json!({
+                                "type": "error",
+                                "error": {
+                                    "type": "api_error",
+                                    "message": format!("Transform error: {}", e)
+                                }
+                            })),
+                        )
+                            .into_response();
+                    }
+                };
             if retried_with_budget_degraded {
-                crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(&mut b);
+                crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(
+                    &mut b,
+                );
             }
             (b, timing)
         };
@@ -2647,9 +2650,13 @@ pub async fn handle_messages(
         // [FIX #3713] 503 / 529 服务端过载：思考预算原地降级自愈 (Pipeline First)
         // 当模型遭遇过载 (503/529 / overloaded)，若当前请求带有 -1 或超大思考预算，优先在当前账号上降级预算原地重试一次，
         // 杜绝盲目全池轮换导致跨账号缓存丢失 (Prefix Cache Protection)。
-        if crate::proxy::pipeline::UpstreamClassification::is_server_overloaded(status_code, &error_text)
-            && !retried_with_budget_degraded
-            && crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(&mut gemini_body)
+        if crate::proxy::pipeline::UpstreamClassification::is_server_overloaded(
+            status_code,
+            &error_text,
+        ) && !retried_with_budget_degraded
+            && crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(
+                &mut gemini_body,
+            )
         {
             retried_with_budget_degraded = true;
             degraded_gemini_body = Some(gemini_body);
