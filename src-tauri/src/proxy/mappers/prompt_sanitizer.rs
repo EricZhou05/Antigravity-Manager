@@ -143,7 +143,7 @@ static RE_KNOWN_CLIENT_DECLARATION: Lazy<Regex> = Lazy::new(|| {
 });
 
 /// 身份声明归一化的快速前置特征（命中任一才进入正则流程，规避 33k 级提示词的全量正则开销）
-const IDENTITY_FAST_MARKERS: [&str; 42] = [
+const IDENTITY_FAST_MARKERS: &[&str] = &[
     // 厂商归属与关系动词
     "created by",
     "built by",
