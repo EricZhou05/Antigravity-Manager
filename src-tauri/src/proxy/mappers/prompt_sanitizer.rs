@@ -107,10 +107,10 @@ static RE_IDENTITY_DECLARATION: Lazy<Regex> = Lazy::new(|| {
         // 英文支：开场白（人称开场及扮演式） + 可选名词短语 + 动词 + 归属对象
         r"(?i:\b(?:you\s+are|you're|i\s+am|i'm|act\s+as)\b[\s,，:：]*)",
         r"(?i:(?:an?\s+)?(?:[\w'\-]+[\s,，]+){0,8}(?:ai[\s,，]+)?(?:agent\b|assistant\b|ai\b|tool\b|cli\b|programmer\b|companion\b|engineer\b|bot\b))?",
-        // 动词前导：支持包含版本号小数点的模型名/名字 (如 Grok 4.6, GPT-5.2)
-        r"(?i:(?:[^\s!?。！？\r\n<>]|\.(?=\d)|[\t ]){0,25}?(?:\b(?:created|built|made|developed|designed|trained|powered|maintained|published|released|provided)\s+(?:by|on|upon|at|for)\s+|based\s+on\s+|running\s+(?:inside|in|within)\s+|integrated\s+(?:into|in)\s+))",
+        // 动词前导：支持包含版本号小数点的模型名/名字 (如 Grok 4.6, GPT-5.2)，避免使用不支持的零宽断言
+        r"(?i:(?:[^\s.!?。！？\r\n<>]|\d+\.\d+|[\t ]){0,25}?(?:\b(?:created|built|made|developed|designed|trained|powered|maintained|published|released|provided)\s+(?:by|on|upon|at|for)\s+|based\s+on\s+|running\s+(?:inside|in|within)\s+|integrated\s+(?:into|in)\s+))",
         // 归属对象：支持跨越数字间的版本号点号 (如 3.8, 4.5) 直到句读边界
-        r"(?:[^\s.,，。!?！？;；\r\n<>]|\.(?=\d)|[\t ])+",
+        r"(?:[^\s.,，。!?！？;；\r\n<>]|\d+\.\d+|[\t ])+",
         r"|",
         // 中文支：你是/我是 + 包含开发/制作/构建/基于/推出 等归属特征，整句收敛到句读
         r"(?:你是|我是)[\s,，:：]*[^.!?。！？\r\n<>]{0,50}?(?:由|开发|制作|构建|训练|推出|基于)[^.!?。！？\r\n<>]{1,60}",
