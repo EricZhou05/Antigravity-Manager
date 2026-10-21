@@ -1975,6 +1975,28 @@ impl InboundThinkingPipeline {
             }
         }
 
+        // [Pipeline First] Claude 协议与强制工具调用 (tool_choice / toolConfig) 冲突保护 (Fixes #3721):
+        // Anthropic 官方规范约束："Thinking may not be enabled when tool_choice forces tool use."
+        // 当客户端显式指定了强制工具调用（mode == "ANY" 或指定特定函数）且目标为 Claude 系列模型时，
+        // 客户端核心意图为本轮必须执行工具（如结构化输出/调用指定函数）。
+        // 自动从 generationConfig 中剔除 thinkingConfig，杜绝上游 Anthropic 抛出不可重试的 400 INVALID_ARGUMENT 导致客户端会话崩溃。
+        let is_forced_tool_choice = canonical_tool_config.as_ref().map_or(false, |tc| {
+            tc.get("functionCallingConfig")
+                .and_then(|fcc| fcc.get("mode"))
+                .and_then(Value::as_str)
+                .map_or(false, |m| m.eq_ignore_ascii_case("any"))
+        });
+
+        let target_is_claude = is_claude || target_model.to_lowercase().contains("claude");
+        if target_is_claude && is_forced_tool_choice {
+            if gc_obj.remove("thinkingConfig").is_some() {
+                tracing::warn!(
+                    "[Pipeline-Defense] Target is Claude model [{}] with forced tool_choice (mode: ANY). Stripped thinkingConfig to prevent upstream 400 conflict.",
+                    target_model
+                );
+            }
+        }
+
         // 官方标准：从官方模型结构体中动态读取 maxOutputTokens
         // 用户规则明确指出："思考预算你不用动" (保持既有 thinkingConfig 预算)
         if let Some(official_max_output) = official_model.max_output_tokens {
@@ -4340,5 +4362,143 @@ mod tests {
         let inner = body.get("request").unwrap();
         assert!(inner.get("safetySettings").is_none());
         assert!(inner.get("contents").is_some());
+    }
+
+    #[test]
+    fn test_claude_forced_tool_choice_strips_thinking_config_issue_3721() {
+        // [FIX #3721] 当目标模型为 Claude 家族且客户端指定 forced tool_choice (mode: ANY) 时，
+        // 门禁必须自动剔除 thinkingConfig，防止触发 Anthropic 400 报错：
+        // "Thinking may not be enabled when tool_choice forces tool use."
+        let mut inner_req = json!({
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": "call required function"}]
+                }
+            ],
+            "tools": [
+                {
+                    "functionDeclarations": [
+                        { "name": "lookup_user", "description": "Lookup user details" }
+                    ]
+                }
+            ],
+            "toolConfig": {
+                "functionCallingConfig": {
+                    "mode": "ANY",
+                    "allowedFunctionNames": ["lookup_user"]
+                }
+            },
+            "generationConfig": {
+                "thinkingConfig": {
+                    "includeThoughts": true,
+                    "thinkingBudget": 4096
+                }
+            }
+        });
+
+        InboundThinkingPipeline::align_google_request_prefix_topology_with_model(
+            &mut inner_req,
+            "claude-sonnet-4-6",
+            None,
+        );
+
+        assert!(
+            inner_req.get("toolConfig").is_some(),
+            "toolConfig 必须保留 mode: ANY 供上游强制调用"
+        );
+        let gc = inner_req.get("generationConfig").expect("generationConfig");
+        assert!(
+            gc.get("thinkingConfig").is_none(),
+            "Claude 目标模型与强制工具调用并存时，thinkingConfig 必须被剔除以避免 400 冲突 (Fixes #3721)"
+        );
+    }
+
+    #[test]
+    fn test_gemini_forced_tool_choice_preserves_thinking_config_issue_3721() {
+        // 针对 Gemini 原生模型，Google 支持在 mode: ANY 下使用思考模型，必须完整保留 thinkingConfig
+        let mut inner_req = json!({
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": "call required function"}]
+                }
+            ],
+            "tools": [
+                {
+                    "functionDeclarations": [
+                        { "name": "lookup_user", "description": "Lookup user details" }
+                    ]
+                }
+            ],
+            "toolConfig": {
+                "functionCallingConfig": {
+                    "mode": "ANY"
+                }
+            },
+            "generationConfig": {
+                "thinkingConfig": {
+                    "includeThoughts": true,
+                    "thinkingBudget": 4000
+                }
+            }
+        });
+
+        InboundThinkingPipeline::align_google_request_prefix_topology_with_model(
+            &mut inner_req,
+            "gemini-3.8-flash-high",
+            None,
+        );
+
+        assert!(inner_req.get("toolConfig").is_some());
+        let gc = inner_req.get("generationConfig").expect("generationConfig");
+        assert!(
+            gc.get("thinkingConfig").is_some(),
+            "Gemini 原生模型支持 mode: ANY 与思考共存，thinkingConfig 必须保留"
+        );
+    }
+
+    #[test]
+    fn test_claude_auto_tool_choice_preserves_thinking_config_issue_3721() {
+        // 针对 Claude 模型，如果 toolConfig 为 AUTO（非强制工具调用），thinkingConfig 必须正常保留
+        let mut inner_req = json!({
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": "solve problem with optional tools"}]
+                }
+            ],
+            "tools": [
+                {
+                    "functionDeclarations": [
+                        { "name": "search", "description": "Search web" }
+                    ]
+                }
+            ],
+            "toolConfig": {
+                "functionCallingConfig": {
+                    "mode": "AUTO"
+                }
+            },
+            "generationConfig": {
+                "thinkingConfig": {
+                    "includeThoughts": true,
+                    "thinkingBudget": 4096
+                }
+            }
+        });
+
+        InboundThinkingPipeline::align_google_request_prefix_topology_with_model(
+            &mut inner_req,
+            "claude-sonnet-4-6",
+            None,
+        );
+
+        assert!(inner_req.get("toolConfig").is_some());
+        let gc = inner_req.get("generationConfig").expect("generationConfig");
+        assert!(
+            gc.get("thinkingConfig").is_some(),
+            "Claude 目标模型当 toolConfig 为 AUTO 时，thinkingConfig 必须正常保留"
+        );
     }
 }

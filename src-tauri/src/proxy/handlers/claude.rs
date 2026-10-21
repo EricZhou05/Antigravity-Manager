@@ -2669,6 +2669,29 @@ pub async fn handle_messages(
             continue;
         }
 
+        // [FIX #3721] 400 强制工具调用与思考冲突：自愈剔除 thinkingConfig 原地重试 (Pipeline First)
+        if crate::proxy::pipeline::UpstreamClassification::is_thinking_tool_choice_conflict(
+            status_code,
+            &error_text,
+        ) && !retried_without_thinking {
+            retried_without_thinking = true;
+            if let Some(req) = gemini_body.get_mut("request").and_then(Value::as_object_mut) {
+                if let Some(gc) = req.get_mut("generationConfig").and_then(Value::as_object_mut) {
+                    gc.remove("thinkingConfig");
+                }
+            } else if let Some(gc) = gemini_body.get_mut("generationConfig").and_then(Value::as_object_mut) {
+                gc.remove("thinkingConfig");
+            }
+            degraded_gemini_body = Some(gemini_body);
+            force_rotate = false;
+            tracing::warn!(
+                "[{}] Upstream 400 tool_choice/thinking conflict detected. In-place self-healing: stripped thinkingConfig on account {}, retrying.",
+                trace_id, email
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            continue;
+        }
+
         // 4. 处理 400 错误 (Thinking 签名失效 或 块顺序错误)
         // [FIX 2026-08-28] Use case-insensitive matching and cover Google's exact phrasing:
         // "Invalid thought signature." / "thoughtSignature" / "thought_signature"

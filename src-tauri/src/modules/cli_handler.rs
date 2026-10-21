@@ -52,6 +52,8 @@ fn print_cli_help() {
           list, ls           List all accounts with active status and quota\n  \
           current, whoami    Show currently active accounts across clients (IDE / agy CLI)\n  \
           help               Show this help message\n\n\
+        Flags:\n  \
+          --headless         Run as a background headless proxy daemon (no GUI / Wayland display required)\n\n\
         Options for `switch`:\n  \
           --target <target>  Target client: 'agy' (default), 'ide', or 'classic'\n  \
           -c, --continue     Automatically resume agy conversation via `agy --continue` after switch\n\n\
@@ -59,7 +61,8 @@ fn print_cli_help() {
           antigravity-tools switch                     # Auto round-robin to next normal account\n  \
           antigravity-tools switch 1                   # Switch to account #1\n  \
           antigravity-tools switch work@gmail.com      # Switch by email or prefix\n  \
-          antigravity-tools switch 2 --continue        # Switch to #2 and resume conversation\n"
+          antigravity-tools switch 2 --continue        # Switch to #2 and resume conversation\n  \
+          antigravity-tools --headless                 # Start headless proxy server (systemd friendly)\n"
     );
 }
 

@@ -112,6 +112,18 @@ impl UpstreamClassification {
             || status == 529
             || ((status >= 500 || status == 408) && body.to_lowercase().contains("overloaded"))
     }
+
+    /// 是否为强制工具调用与思考冲突错误 (400 "Thinking may not be enabled when tool_choice forces tool use", Fixes #3721)
+    pub fn is_thinking_tool_choice_conflict(status: u16, body: &str) -> bool {
+        if status != 400 {
+            return false;
+        }
+        let lower = body.to_lowercase();
+        lower.contains("thinking may not be enabled when tool_choice forces tool use")
+            || (lower.contains("thinking")
+                && lower.contains("tool_choice")
+                && lower.contains("forces tool use"))
+    }
 }
 
 #[cfg(test)]
@@ -160,5 +172,13 @@ mod tests {
             404,
             "Not Found"
         ));
+    }
+
+    #[test]
+    fn test_is_thinking_tool_choice_conflict() {
+        let err_body = r#"{"type":"error","error":{"type":"invalid_request_error","message":"Thinking may not be enabled when tool_choice forces tool use."}}"#;
+        assert!(UpstreamClassification::is_thinking_tool_choice_conflict(400, err_body));
+        assert!(!UpstreamClassification::is_thinking_tool_choice_conflict(200, err_body));
+        assert!(!UpstreamClassification::is_thinking_tool_choice_conflict(400, "Normal 400 bad request"));
     }
 }

@@ -3,6 +3,8 @@ pub mod constants;
 pub mod error;
 #[cfg(target_os = "linux")]
 mod linux_graphics;
+#[cfg(target_os = "linux")]
+pub mod linux_display_guard;
 mod models;
 mod modules;
 mod proxy; // Proxy service module
@@ -140,6 +142,8 @@ fn nvidia_proprietary_loaded() -> bool {
 
 #[cfg(target_os = "linux")]
 fn configure_linux_graphics() {
+    linux_display_guard::init_display_guard();
+
     use linux_graphics::{
         desktop_is_gnome, desktop_is_kde, desktop_is_wlroots_family, should_disable_webkit_dmabuf,
         should_force_x11_backend,
@@ -624,6 +628,33 @@ pub fn run() {
             apply_login_launch_policy(app);
 
             ensure_cli_symlinks();
+
+            #[cfg(target_os = "linux")]
+            {
+                tauri::async_runtime::spawn(async {
+                    use tokio::signal::unix::{signal, SignalKind};
+                    let mut sigterm = signal(SignalKind::terminate()).ok();
+                    let mut sigint = signal(SignalKind::interrupt()).ok();
+                    tokio::select! {
+                        _ = async {
+                            if let Some(ref mut s) = sigterm {
+                                s.recv().await;
+                            } else {
+                                std::future::pending::<()>().await;
+                            }
+                        } => {},
+                        _ = async {
+                            if let Some(ref mut s) = sigint {
+                                s.recv().await;
+                            } else {
+                                std::future::pending::<()>().await;
+                            }
+                        } => {},
+                    }
+                    tracing::info!("[Linux Display Guard] Received termination signal in background mode, shutting down cleanly.");
+                    std::process::exit(0);
+                });
+            }
 
             Ok(())
         })
