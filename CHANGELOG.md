@@ -3,6 +3,12 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v4.9.9-beta.3 (2026-10-21)**:
+        -   **[多客户端身份归一化与提示词特征流控防御升级] (Ref #3720: antigravity 限速调查)**:
+            -   **跨平台主流 AI Agent / CLI 身份归一化广谱纳管**: 结合近期生产环境限速与低优先级降级调查（详见 Issue #3720《antigravity 限速调查》实测报告），针对 Google 上游对非官方 Antigravity Harness（OpenCode、OpenClaw、Grok Build、Cursor、Cascade、Cline、Aider、KiloCode、DSH、Devin 等）加强语义特征流控、在集群容量紧张时加速将账号打入低优先级排队慢速池的问题（排查证实首字延迟从 4s 恶化至 40s~80s+），全面重构 `PromptSanitizer` 身份归一化引擎；扩展识别原生名谓式开场、宿主集成式声明（`running inside / within`, `integrated into`）以及中文自然语序，将其开场白统一收敛对齐为官方原生 Antigravity 身份，彻底抹除外部第三方套壳与竞品生态指纹，享受官方原生 IDE 同等白名单调度与快速通道待遇。(Ref #3720)
+            -   **自适应头部探测窗口与前置插件上下文穿透**: 将系统提示词头部扫描窗口由原先固定的前 4 句扩展为前 8 句或前 1500 字符的弹性双重窗口，能够可靠穿透如 OpenClaw 等插件在开头自动注入的前置元数据/上下文垫片（`--- OpenClaw plugin-injected context ---`），彻底根除因前置垫片消耗句子配额导致真正身份句被挤出扫描范围而漏洗的架构缺陷。(Ref #3720)
+            -   **版本号小数点前瞻识别与主要提示词架构级绝对保护**: 优化归属动词前导与归属对象匹配正则，支持精准跨越模型版本号小数点（如 `Grok 4.6`、`GPT-5.2`），杜绝因小数点被误判为英文句号导致的断句与局部残留；在流水线入口设立最高优先级白名单守卫，确保 `JeikCode` 等核心主要提示词、XML 容器及通用无害提示词 100% 豁免原样透传，实现零误伤与架构级安全闭环。(Ref #3720)
+
     *   **v4.9.9-beta.2 (2026-10-20)**:
         -   **[Hermes Agent / 本地探针端点兼容与 OpenAI 模型上下文元数据增强] (PR #3708, Thanks to @CarlitoDon)**:
             -   **llama.cpp 与 vLLM 标准探针端点集成**: 新增 `/props`、`/v1/props`（返回 `n_ctx`、`n_predict` 等标准生成配置，支持 `?model=` 查询）与 `/version`、`/v1/version`（返回包版本与应用标识）只读端点，全面消除 Hermes Agent、llama.cpp 工具链及 vLLM 客户端接入时的探测警告与探针 404 错误。(PR #3708, Thanks to @CarlitoDon)
