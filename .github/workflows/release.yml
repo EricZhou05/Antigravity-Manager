@@ -466,6 +466,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           artifacts: "release-files/*,updater.json"
           artifactErrorsFailBuild: false
+          removeArtifacts: true
           replacesArtifacts: true
           prerelease: true
           makeLatest: false
