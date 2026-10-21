@@ -806,6 +806,7 @@
         "switch_next": "Switch to Next Account",
         "refresh_current": "Refresh Current Quota",
         "show_window": "Show Main Window",
+        "mini_view": "Mini View",
         "quit": "Quit Application",
         "no_account": "No Account",
         "unknown_quota": "Unknown (Click to Refresh)",

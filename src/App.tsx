@@ -17,6 +17,7 @@ import DebugConsole from './components/debug/DebugConsole';
 import { useEffect, useState } from 'react';
 import { useConfigStore, normalizeLanguageCode } from './stores/useConfigStore';
 import { useAccountStore } from './stores/useAccountStore';
+import { useViewStore } from './stores/useViewStore';
 import { useTranslation } from 'react-i18next';
 import { listen } from '@tauri-apps/api/event';
 import { isTauri } from './utils/env';
@@ -108,6 +109,24 @@ function App() {
         console.log('[App] Tray refresh triggered, refreshing...');
         fetchCurrentAccount();
         fetchAccounts();
+      })
+    );
+
+    // 监听托盘显示主窗口事件（若处于迷你模式则切回完整窗口）
+    unlistenPromises.push(
+      listen('tray://show-window', async () => {
+        if (useViewStore.getState().isMiniView) {
+          const { exitMiniMode } = await import('./utils/windowManager');
+          await exitMiniMode();
+          useViewStore.getState().setMiniView(false);
+        }
+      })
+    );
+
+    // 监听托盘切换至迷你悬浮窗事件
+    unlistenPromises.push(
+      listen('tray://show-mini-view', () => {
+        useViewStore.getState().setMiniView(true);
       })
     );
 

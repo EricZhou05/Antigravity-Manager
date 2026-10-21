@@ -3,6 +3,13 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v4.9.9-beta.4 (2026-10-21)**:
+        -   **[系统托盘分层配额感知与迷你悬浮窗快捷联动] (Fixes #3719, Thanks to @Wiojelt)**:
+            -   **全平台系统托盘悬停配额卡片 (Tooltip)**: 针对跨平台系统托盘底层差异（Windows 任务栏通知区物理不支持图标旁文字，而 macOS 状态栏原生支持），在系统托盘实现富文本悬停卡片；鼠标滑过托盘图标即可立即查看当前账号及 Claude、Gemini Pro、Gemini Flash、Gemini Image 各核心模型的剩余配额百分比；严格适配 Windows `NOTIFYICONDATAW.szTip` 128 字符硬限制，超长邮箱安全收敛，确保全平台零截断与极低交互干扰。(Fixes #3719, Thanks to @Wiojelt)
+            -   **macOS 原生状态栏配额标题 (Title)**: 在 macOS 菜单栏图标旁原生常驻展示核心模型剩余百分比（如 `C:85% G:100%`），紧凑精炼且自适应屏幕刘海空间；异常与未登录态自适应清除或显示预警标识。(Fixes #3719)
+            -   **核心模型智能两阶段匹配 (Pipeline First)**: 重构托盘模型匹配算法，废除过往针对特定版本的硬编码名称限制，优先精准匹配最新主力旗舰模型，并对衍生与未来迭代版本（`gemini-*-pro*`、`gemini-*-flash*`、`*image*`、`*claude*/*sonnet*`）提供弹性通配回退。(Fixes #3719)
+            -   **迷你悬浮窗一键呼出与状态双向联动**: 在托盘右键菜单新增【迷你悬浮窗】快捷入口，打通 `tray://show-mini-view` 与 `tray://show-window` 双向事件；点击可由托盘一键无缝唤起/切换至桌面 Mini HUD 悬浮看板，点击显示主窗口时安全退出 Mini 模式恢复完整主界面；全量覆盖 12 种系统语言并维持单语纯粹性。(Fixes #3719)
+
     *   **v4.9.9-beta.3 (2026-10-21)**:
         -   **[多客户端身份归一化与提示词特征流控防御升级] (Ref #3720: antigravity 限速调查)**:
             -   **跨平台主流 AI Agent / CLI 身份归一化广谱纳管**: 结合近期生产环境限速与低优先级降级调查（详见 Issue #3720《antigravity 限速调查》实测报告），针对 Google 上游对非官方 Antigravity Harness（OpenCode、OpenClaw、Grok Build、Cursor、Cascade、Cline、Aider、KiloCode、DSH、Devin 等）加强语义特征流控、在集群容量紧张时加速将账号打入低优先级排队慢速池的问题（排查证实首字延迟从 4s 恶化至 40s~80s+），全面重构 `PromptSanitizer` 身份归一化引擎；扩展识别原生名谓式开场、宿主集成式声明（`running inside / within`, `integrated into`）以及中文自然语序，将其开场白统一收敛对齐为官方原生 Antigravity 身份，彻底抹除外部第三方套壳与竞品生态指纹，享受官方原生 IDE 同等白名单调度与快速通道待遇。(Ref #3720)

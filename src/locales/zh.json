@@ -800,6 +800,7 @@
         "switch_next": "切换下一个账号",
         "refresh_current": "刷新当前账号额度",
         "show_window": "显示主窗口",
+        "mini_view": "迷你悬浮窗",
         "quit": "退出应用 (Exit)",
         "no_account": "无账号",
         "unknown_quota": "未知 (点击刷新)",
