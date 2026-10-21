@@ -70,8 +70,7 @@ fn is_probe_text(text: &str) -> bool {
 
     matches!(
         clean,
-        "hi"
-            | "hello"
+        "hi" | "hello"
             | "hey"
             | "ping"
             | "pong"
@@ -91,10 +90,7 @@ fn is_probe_text(text: &str) -> bool {
             | "在吗"
             | "测试"
             | "测速"
-    ) || matches!(
-        clean_no_spaces.as_str(),
-        "1+1" | "1+1=2" | "1+2" | "2+2"
-    )
+    ) || matches!(clean_no_spaces.as_str(), "1+1" | "1+1=2" | "1+2" | "2+2")
 }
 
 /// 检测 Gemini 格式负载（包括顶层或位于 "request" 内部）是否为纯粹的探针请求
@@ -134,7 +130,10 @@ fn is_gemini_probe_payload(val: &Value) -> bool {
     }
 
     let first_content = &contents[0];
-    let role = first_content.get("role").and_then(|r| r.as_str()).unwrap_or("");
+    let role = first_content
+        .get("role")
+        .and_then(|r| r.as_str())
+        .unwrap_or("");
     if role != "user" {
         return false;
     }
@@ -235,10 +234,7 @@ fn is_raw_request_probe_payload(val: &Value) -> bool {
 }
 
 /// 综合判断是否为第三方网关探测请求
-fn is_third_party_probe_request(
-    request_body: Option<&str>,
-    upstream_body: Option<&str>,
-) -> bool {
+fn is_third_party_probe_request(request_body: Option<&str>, upstream_body: Option<&str>) -> bool {
     // 优先从转换后的上游 Gemini 报文进行协议无关判定
     if let Some(up_str) = upstream_body {
         if let Ok(json_val) = serde_json::from_str::<Value>(up_str) {
@@ -2154,13 +2150,7 @@ mod tests {
         // 非探针的普通 POST 业务请求始终记录
         for method in ["POST", "PUT", "PATCH", "DELETE", "post"] {
             assert!(
-                !super::should_skip_request_log(
-                    method,
-                    StatusCode::OK,
-                    false,
-                    None,
-                    None,
-                ),
+                !super::should_skip_request_log(method, StatusCode::OK, false, None, None,),
                 "{method} 200 必须记录"
             );
         }
@@ -2259,19 +2249,25 @@ mod tests {
         );
 
         // 各种常见探针测试词汇变体均应被识别
-        for probe_word in ["hello", "ping", "test", "你好", "您好", "在吗", "1+1=?", "1+1", "1 + 1 = 2", "check", "health"] {
+        for probe_word in [
+            "hello",
+            "ping",
+            "test",
+            "你好",
+            "您好",
+            "在吗",
+            "1+1=?",
+            "1+1",
+            "1 + 1 = 2",
+            "check",
+            "health",
+        ] {
             let raw_var = format!(
                 r#"{{"model": "test", "messages": [{{"role": "user", "content": "{}"}}]}}"#,
                 probe_word
             );
             assert!(
-                super::should_skip_request_log(
-                    "POST",
-                    StatusCode::OK,
-                    false,
-                    Some(&raw_var),
-                    None,
-                ),
+                super::should_skip_request_log("POST", StatusCode::OK, false, Some(&raw_var), None,),
                 "探针词 '{probe_word}' 应该被识别并抑制"
             );
         }
@@ -2314,7 +2310,13 @@ mod tests {
             ]
         }"#;
         assert!(
-            !super::should_skip_request_log("POST", StatusCode::OK, false, Some(multi_turn_req), None),
+            !super::should_skip_request_log(
+                "POST",
+                StatusCode::OK,
+                false,
+                Some(multi_turn_req),
+                None
+            ),
             "多轮对话绝不可被误杀"
         );
 
@@ -2325,7 +2327,13 @@ mod tests {
             "messages": [{"role": "user", "content": "hi"}]
         }"#;
         assert!(
-            !super::should_skip_request_log("POST", StatusCode::OK, false, Some(with_system_req), None),
+            !super::should_skip_request_log(
+                "POST",
+                StatusCode::OK,
+                false,
+                Some(with_system_req),
+                None
+            ),
             "带系统提示词的请求绝不可被误杀"
         );
 
@@ -2336,7 +2344,13 @@ mod tests {
             "tools": [{"type": "function", "function": {"name": "calculator"}}]
         }"#;
         assert!(
-            !super::should_skip_request_log("POST", StatusCode::OK, false, Some(with_tools_req), None),
+            !super::should_skip_request_log(
+                "POST",
+                StatusCode::OK,
+                false,
+                Some(with_tools_req),
+                None
+            ),
             "带工具调用的请求绝不可被误杀"
         );
 
@@ -2346,7 +2360,13 @@ mod tests {
             "messages": [{"role": "user", "content": "hi how are you today"}]
         }"#;
         assert!(
-            !super::should_skip_request_log("POST", StatusCode::OK, false, Some(real_question_req), None),
+            !super::should_skip_request_log(
+                "POST",
+                StatusCode::OK,
+                false,
+                Some(real_question_req),
+                None
+            ),
             "真实用户问答绝不可被误杀"
         );
     }

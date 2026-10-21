@@ -2,9 +2,9 @@ mod commands;
 pub mod constants;
 pub mod error;
 #[cfg(target_os = "linux")]
-mod linux_graphics;
-#[cfg(target_os = "linux")]
 pub mod linux_display_guard;
+#[cfg(target_os = "linux")]
+mod linux_graphics;
 mod models;
 mod modules;
 mod proxy; // Proxy service module

@@ -2673,13 +2673,23 @@ pub async fn handle_messages(
         if crate::proxy::pipeline::UpstreamClassification::is_thinking_tool_choice_conflict(
             status_code,
             &error_text,
-        ) && !retried_without_thinking {
+        ) && !retried_without_thinking
+        {
             retried_without_thinking = true;
-            if let Some(req) = gemini_body.get_mut("request").and_then(Value::as_object_mut) {
-                if let Some(gc) = req.get_mut("generationConfig").and_then(Value::as_object_mut) {
+            if let Some(req) = gemini_body
+                .get_mut("request")
+                .and_then(Value::as_object_mut)
+            {
+                if let Some(gc) = req
+                    .get_mut("generationConfig")
+                    .and_then(Value::as_object_mut)
+                {
                     gc.remove("thinkingConfig");
                 }
-            } else if let Some(gc) = gemini_body.get_mut("generationConfig").and_then(Value::as_object_mut) {
+            } else if let Some(gc) = gemini_body
+                .get_mut("generationConfig")
+                .and_then(Value::as_object_mut)
+            {
                 gc.remove("thinkingConfig");
             }
             degraded_gemini_body = Some(gemini_body);

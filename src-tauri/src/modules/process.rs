@@ -1364,7 +1364,10 @@ pub fn start_antigravity(target_ide: Option<&str>) -> Result<(), String> {
 /// 经典版需包含 antigravity 且所有特征都不带 IDE 命名，避免 IDE 实例被误判为经典版
 fn matches_target_client(target_ide: Option<&str>, features: &[&str]) -> bool {
     // 任何匹配 manager/tools 自身的特征，绝对不可被判定为目标 IDE / 客户端
-    if features.iter().any(|f| is_manager_or_tools_process(f, f, f)) {
+    if features
+        .iter()
+        .any(|f| is_manager_or_tools_process(f, f, f))
+    {
         return false;
     }
     let any_ide = features.iter().any(|f| is_antigravity_ide_str(f));
@@ -1773,14 +1776,18 @@ fn check_standard_locations(target_ide: Option<&str>) -> Option<std::path::PathB
                         home.join(format!(".local/share/flatpak/exports/bin/{}", exe_name)),
                     ];
                     for path in user_paths {
-                        if path.exists() && !is_manager_or_tools_process("", &path.to_string_lossy(), "") {
+                        if path.exists()
+                            && !is_manager_or_tools_process("", &path.to_string_lossy(), "")
+                        {
                             return Some(path);
                         }
                     }
                 }
 
                 for path in possible_paths {
-                    if path.exists() && !is_manager_or_tools_process("", &path.to_string_lossy(), "") {
+                    if path.exists()
+                        && !is_manager_or_tools_process("", &path.to_string_lossy(), "")
+                    {
                         return Some(path);
                     }
                 }
@@ -2067,8 +2074,16 @@ mod tests {
         ));
 
         // Real Antigravity IDE and classic client must NOT be flagged as manager
-        assert!(!is_manager_or_tools_process("antigravity", "/usr/bin/antigravity", ""));
-        assert!(!is_manager_or_tools_process("antigravity-ide", "/usr/bin/antigravity-ide", ""));
+        assert!(!is_manager_or_tools_process(
+            "antigravity",
+            "/usr/bin/antigravity",
+            ""
+        ));
+        assert!(!is_manager_or_tools_process(
+            "antigravity-ide",
+            "/usr/bin/antigravity-ide",
+            ""
+        ));
         assert!(!is_manager_or_tools_process(
             "Antigravity",
             "/Applications/Antigravity.app/Contents/MacOS/Antigravity",

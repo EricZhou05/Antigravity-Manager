@@ -1,4 +1,4 @@
-use crate::models::ModelQuota;
+use crate::models::quota::ModelQuota;
 use crate::modules;
 use tauri::{
     image::Image,

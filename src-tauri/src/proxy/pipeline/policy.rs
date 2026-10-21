@@ -177,8 +177,15 @@ mod tests {
     #[test]
     fn test_is_thinking_tool_choice_conflict() {
         let err_body = r#"{"type":"error","error":{"type":"invalid_request_error","message":"Thinking may not be enabled when tool_choice forces tool use."}}"#;
-        assert!(UpstreamClassification::is_thinking_tool_choice_conflict(400, err_body));
-        assert!(!UpstreamClassification::is_thinking_tool_choice_conflict(200, err_body));
-        assert!(!UpstreamClassification::is_thinking_tool_choice_conflict(400, "Normal 400 bad request"));
+        assert!(UpstreamClassification::is_thinking_tool_choice_conflict(
+            400, err_body
+        ));
+        assert!(!UpstreamClassification::is_thinking_tool_choice_conflict(
+            200, err_body
+        ));
+        assert!(!UpstreamClassification::is_thinking_tool_choice_conflict(
+            400,
+            "Normal 400 bad request"
+        ));
     }
 }
