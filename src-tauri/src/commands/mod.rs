@@ -29,16 +29,25 @@ pub async fn list_accounts(
         .await
         .unwrap_or_else(|_| Err("Task panicked".to_string()))?;
 
-    // [FIX] Blend in-memory TokenManager rate limit status and QoS status into the UI
+    // [FIX #3726] 冷启动零等待：优先以 try_read 非阻塞获取 TokenManager 运行时状态
+    // 若服务启动初期持有写锁，绝不阻塞 list_accounts 磁盘列表向前端的毫秒级直出
     let token_manager = {
-        let instance_lock = proxy_state.instance.read().await;
-        if let Some(instance) = instance_lock.as_ref() {
-            Some(instance.token_manager.clone())
-        } else {
-            let admin_lock = proxy_state.admin_server.read().await;
+        if let Ok(instance_lock) = proxy_state.instance.try_read() {
+            if let Some(instance) = instance_lock.as_ref() {
+                Some(instance.token_manager.clone())
+            } else if let Ok(admin_lock) = proxy_state.admin_server.try_read() {
+                admin_lock
+                    .as_ref()
+                    .map(|a| a.axum_server.token_manager.clone())
+            } else {
+                None
+            }
+        } else if let Ok(admin_lock) = proxy_state.admin_server.try_read() {
             admin_lock
                 .as_ref()
                 .map(|a| a.axum_server.token_manager.clone())
+        } else {
+            None
         }
     };
 

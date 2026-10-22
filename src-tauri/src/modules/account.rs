@@ -1380,30 +1380,27 @@ fn load_account_index_in_dir(data_dir: &PathBuf) -> Result<AccountIndex, String>
         return Ok(recovered);
     }
 
-    // [FIX #3726] 检查是否为旧版单文件格式（如包含完整 Token 的 JSON 数组或对象），无缝触发自动分片并创建 -backup
+    // 1. 优先尝试作为新版规范的轻量索引 (AccountIndex) 解析（毫秒级瞬时直出）
+    if let Ok(index) = serde_json::from_str::<AccountIndex>(&sanitized) {
+        crate::modules::logger::log_info(&format!(
+            "Successfully loaded index with {} accounts",
+            index.accounts.len()
+        ));
+        return Ok(index);
+    }
+
+    // 2. 若新版格式未命中，才检查是否为旧版单文件格式，无缝触发自动分片并创建 -backup
     if let Some(migrated) = try_migrate_legacy_single_file(data_dir, &sanitized) {
         return Ok(migrated);
     }
 
-    // Try to parse sanitized content
-    match serde_json::from_str::<AccountIndex>(&sanitized) {
-        Ok(index) => {
-            crate::modules::logger::log_info(&format!(
-                "Successfully loaded index with {} accounts",
-                index.accounts.len()
-            ));
-            Ok(index)
-        }
-        Err(parse_err) => {
-            crate::modules::logger::log_error(&format!(
-                "Failed to parse account index: {}. Attempting recovery from accounts directory",
-                parse_err
-            ));
-            let recovered = rebuild_index_from_accounts_in_dir(data_dir)?;
-            try_save_recovered_index(data_dir, &index_path, &recovered, Some(&raw_content))?;
-            Ok(recovered)
-        }
-    }
+    // 3. 仍无法解析时，执行容灾重建
+    crate::modules::logger::log_error(
+        "Failed to parse account index as new or legacy format. Attempting recovery from accounts directory",
+    );
+    let recovered = rebuild_index_from_accounts_in_dir(data_dir)?;
+    try_save_recovered_index(data_dir, &index_path, &recovered, Some(&raw_content))?;
+    Ok(recovered)
 }
 
 /// Save account index to a specific directory (internal helper)
@@ -3708,14 +3705,27 @@ pub async fn batch_import_accounts_logic(
                     let account_id =
                         existing_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-                    // 4. 构造 TokenData 与 Account（若为既有账号，保留原有偏好与配额数据原地更新，杜绝重复凭据文件！）
+                    // 4. [NEW #3726] 探测 Project ID 与拉取完备配额（满血持久化，确保导入完成后冷启动秒加载！）
+                    let project_id =
+                        crate::proxy::project_resolver::fetch_project_id(&token_res.access_token)
+                            .await
+                            .ok();
+
+                    let quota_res = crate::modules::quota::fetch_quota(
+                        &token_res.access_token,
+                        &real_email,
+                        Some(&account_id),
+                    )
+                    .await;
+
+                    // 5. 构造 TokenData 与 Account（若为既有账号，保留原有偏好与配额数据原地更新，杜绝重复凭据文件！）
                     let mut account = if let Ok(mut existing_acc) = load_account(&account_id) {
                         existing_acc.token = crate::models::TokenData::new(
                             token_res.access_token,
                             rt,
                             token_res.expires_in,
                             Some(real_email.clone()),
-                            existing_acc.token.project_id.clone(),
+                            project_id.or(existing_acc.token.project_id.clone()),
                             None,
                             false,
                             token_res.id_token,
@@ -3724,6 +3734,12 @@ pub async fn batch_import_accounts_logic(
                         existing_acc.name = user_info.get_display_name();
                         existing_acc.email = real_email.clone();
                         existing_acc.update_last_used();
+                        if let Ok((quota_data, new_pid)) = quota_res {
+                            existing_acc.quota = Some(quota_data);
+                            if let Some(pid) = new_pid {
+                                existing_acc.token.project_id = Some(pid);
+                            }
+                        }
                         existing_acc
                     } else {
                         let token_data = crate::models::TokenData::new(
@@ -3731,7 +3747,7 @@ pub async fn batch_import_accounts_logic(
                             rt,
                             token_res.expires_in,
                             Some(real_email.clone()),
-                            None,
+                            project_id,
                             None,
                             false,
                             token_res.id_token,
@@ -3743,10 +3759,16 @@ pub async fn batch_import_accounts_logic(
                             token_data,
                         );
                         new_acc.name = user_info.get_display_name();
+                        if let Ok((quota_data, new_pid)) = quota_res {
+                            new_acc.quota = Some(quota_data);
+                            if let Some(pid) = new_pid {
+                                new_acc.token.project_id = Some(pid);
+                            }
+                        }
                         new_acc
                     };
 
-                    // 5. 单账号独立写入 accounts/{uuid}.json（零全局锁竞争，同时自动清理同邮箱孤儿文件）
+                    // 6. 单账号独立写入 accounts/{uuid}.json（零全局锁竞争，同时自动清理同邮箱孤儿文件）
                     save_account(&account)?;
 
                     let summary = crate::models::AccountSummary {
