@@ -37,9 +37,38 @@ interface AccountState {
     updateAccountPriority: (accountId: string, priority: number) => Promise<void>;
 }
 
+const ACCOUNTS_CACHE_KEY = 'antigravity_accounts_cache';
+const CURRENT_ACCOUNT_CACHE_KEY = 'antigravity_current_account_cache';
+
+const getInitialAccounts = (): Account[] => {
+    try {
+        const saved = localStorage.getItem(ACCOUNTS_CACHE_KEY);
+        if (saved) {
+            const parsed = JSON.parse(saved);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                return parsed;
+            }
+        }
+    } catch (_) {}
+    return [];
+};
+
+const getInitialCurrentAccount = (): Account | null => {
+    try {
+        const saved = localStorage.getItem(CURRENT_ACCOUNT_CACHE_KEY);
+        if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed && typeof parsed === 'object') {
+                return parsed;
+            }
+        }
+    } catch (_) {}
+    return null;
+};
+
 export const useAccountStore = create<AccountState>((set, get) => ({
-    accounts: [],
-    currentAccount: null,
+    accounts: getInitialAccounts(),
+    currentAccount: getInitialCurrentAccount(),
     activeClients: {},
     loading: false,
     error: null,
@@ -52,6 +81,9 @@ export const useAccountStore = create<AccountState>((set, get) => ({
                 accountService.listAccounts(),
                 accountService.getActiveClientsStatus().catch(() => ({} as ActiveClientsStatus))
             ]);
+            try {
+                localStorage.setItem(ACCOUNTS_CACHE_KEY, JSON.stringify(accounts));
+            } catch (_) {}
             set({ accounts, activeClients, loading: false });
         } catch (error) {
             console.error('[Store] Fetch accounts failed:', error);
@@ -66,6 +98,13 @@ export const useAccountStore = create<AccountState>((set, get) => ({
                 accountService.getCurrentAccount(),
                 accountService.getActiveClientsStatus().catch(() => ({} as ActiveClientsStatus))
             ]);
+            try {
+                if (account) {
+                    localStorage.setItem(CURRENT_ACCOUNT_CACHE_KEY, JSON.stringify(account));
+                } else {
+                    localStorage.removeItem(CURRENT_ACCOUNT_CACHE_KEY);
+                }
+            } catch (_) {}
             set({ currentAccount: account, activeClients, loading: false });
         } catch (error) {
             set({ error: String(error), loading: false });
