@@ -29,14 +29,39 @@ pub async fn list_accounts(
         .await
         .unwrap_or_else(|_| Err("Task panicked".to_string()))?;
 
-    // [FIX] Blend in-memory TokenManager rate limit status into the UI quota display
-    let instance_lock = proxy_state.instance.read().await;
-    if let Some(instance) = instance_lock.as_ref() {
+    // [FIX] Blend in-memory TokenManager rate limit status and QoS status into the UI
+    let token_manager = {
+        let instance_lock = proxy_state.instance.read().await;
+        if let Some(instance) = instance_lock.as_ref() {
+            Some(instance.token_manager.clone())
+        } else {
+            let admin_lock = proxy_state.admin_server.read().await;
+            admin_lock
+                .as_ref()
+                .map(|a| a.axum_server.token_manager.clone())
+        }
+    };
+
+    if let Some(tm) = token_manager {
         for account in &mut accounts {
-            if let Some(reset_secs) = instance
-                .token_manager
-                .get_rate_limit_reset_seconds(&account.id)
-            {
+            let qos_state = tm.qos_guardian.get_state(&account.id);
+            account.qos_status = match qos_state {
+                crate::proxy::qos_guardian::AccountQoSState::Suspicious { .. } => {
+                    Some("suspicious".to_string())
+                }
+                crate::proxy::qos_guardian::AccountQoSState::Jailed { .. } => {
+                    Some("jailed".to_string())
+                }
+                crate::proxy::qos_guardian::AccountQoSState::Probing { .. } => {
+                    Some("probing".to_string())
+                }
+                crate::proxy::qos_guardian::AccountQoSState::HalfOpen { .. } => {
+                    Some("half_open".to_string())
+                }
+                crate::proxy::qos_guardian::AccountQoSState::Healthy => None,
+            };
+
+            if let Some(reset_secs) = tm.get_rate_limit_reset_seconds(&account.id) {
                 if reset_secs > 0 {
                     let reset_iso = chrono::DateTime::<chrono::Utc>::from_timestamp(
                         chrono::Utc::now().timestamp() + reset_secs as i64,

@@ -99,6 +99,9 @@ pub struct Account {
     /// 用户自定义标签
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_label: Option<String>,
+    /// [NEW] 运行时 QoS 状态 ("suspicious" | "jailed" | "probing" | "half_open")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qos_status: Option<String>,
 }
 
 impl Account {
@@ -130,6 +133,7 @@ impl Account {
             proxy_id: None,
             proxy_bound_at: None,
             custom_label: None,
+            qos_status: None,
         }
     }
 

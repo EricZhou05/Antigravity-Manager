@@ -224,6 +224,16 @@
         "switch_this_to_target": "一键将此账号切换到 {{target}}"
     },
     "accounts": {
+        "qos": {
+            "suspicious": "疑似被限速",
+            "suspicious_hint": "上游首包延迟出现异常卡顿，已开启只出不进保护并暂缓新会话分流",
+            "jailed": "限速小黑屋中",
+            "jailed_hint": "已触发上游静默降速熔断并强制解绑会话，正在阶梯冷却中，后台探针将自动测速自愈",
+            "probing": "解限探测中",
+            "probing_hint": "正在向该账号发起纯净测速探针，检测上游服务质量是否已满血恢复",
+            "half_open": "观察缓刑中",
+            "half_open_hint": "探针通过，正在进行生产流量单路试探，连续稳定通过后将彻底恢复健康"
+        },
         "account": "账号",
         "search_placeholder": "搜索邮箱...",
         "all": "全部",

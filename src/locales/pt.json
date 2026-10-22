@@ -211,6 +211,16 @@
         "switch_this_to_target": "Alternar esta conta para {{target}}"
     },
     "accounts": {
+        "qos": {
+            "suspicious": "Suspeita de Limitação",
+            "suspicious_hint": "Latência inicial anormal detectada no servidor upstream. Alocação de novas sessões pausada.",
+            "jailed": "Em Isolamento QoS",
+            "jailed_hint": "Limitação silenciosa detectada e sessão desvinculada. Em resfriamento gradual com sondagem automática.",
+            "probing": "Sondando Recuperação",
+            "probing_hint": "Enviando sonda leve para verificar se a qualidade do serviço foi totalmente recuperada.",
+            "half_open": "Em Observação",
+            "half_open_hint": "Sonda aprovada. Testando com tráfego real; será totalmente restaurado após respostas estáveis."
+        },
         "account": "Conta",
         "search_placeholder": "Pesquisar e-mail...",
         "all": "Todas",

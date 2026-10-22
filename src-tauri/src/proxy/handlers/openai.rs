@@ -2509,7 +2509,7 @@ pub async fn handle_chat_completions(
                 let mut openai_stream = create_openai_sse_stream_with_anchor(
                     gemini_stream,
                     openai_req.model.clone(),
-                    session_id,
+                    session_id.clone(),
                     message_count,
                     Some(client_tool_names.clone()),
                     include_usage,
@@ -2576,6 +2576,16 @@ pub async fn handle_chat_completions(
 
                             // We found real data!
                             ttft_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
+                            let is_thinking = effort_hint.is_some()
+                                || openai_req.model.to_lowercase().contains("thinking")
+                                || mapped_model.to_lowercase().contains("thinking");
+                            crate::proxy::handlers::common::report_qos_ttft(
+                                &token_manager,
+                                &account_id,
+                                Some(&session_id),
+                                ttft_ms,
+                                is_thinking,
+                            );
                             if let Some(effective_item) =
                                 fallback_attempts.iter_mut().find(|a| a.is_effective)
                             {
@@ -2821,6 +2831,16 @@ pub async fn handle_chat_completions(
             }
 
             ttft_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
+            let is_thinking = effort_hint.is_some()
+                || openai_req.model.to_lowercase().contains("thinking")
+                || mapped_model.to_lowercase().contains("thinking");
+            crate::proxy::handlers::common::report_qos_ttft(
+                &token_manager,
+                &account_id,
+                Some(&session_id),
+                ttft_ms,
+                is_thinking,
+            );
             if let Some(effective_item) = fallback_attempts.iter_mut().find(|a| a.is_effective) {
                 effective_item.duration_s = ttft_ms / 1000.0;
             }

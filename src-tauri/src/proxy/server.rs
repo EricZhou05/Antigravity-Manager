@@ -300,6 +300,8 @@ struct AccountResponse {
     quota: Option<QuotaResponse>,
     device_bound: bool,
     last_used: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    qos_status: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -410,6 +412,7 @@ fn to_account_response(
         validation_blocked_until: account.validation_blocked_until,
         validation_blocked_reason: account.validation_blocked_reason.clone(),
         validation_url: account.validation_url.clone(),
+        qos_status: account.qos_status.clone(),
     }
 }
 
@@ -1370,6 +1373,23 @@ async fn admin_list_accounts(
                     .map(|groups| groups.iter().map(quota_group_to_dto).collect()),
             });
 
+            let qos_state = state.token_manager.qos_guardian.get_state(&acc.id);
+            let qos_status = match qos_state {
+                crate::proxy::qos_guardian::AccountQoSState::Suspicious { .. } => {
+                    Some("suspicious".to_string())
+                }
+                crate::proxy::qos_guardian::AccountQoSState::Jailed { .. } => {
+                    Some("jailed".to_string())
+                }
+                crate::proxy::qos_guardian::AccountQoSState::Probing { .. } => {
+                    Some("probing".to_string())
+                }
+                crate::proxy::qos_guardian::AccountQoSState::HalfOpen { .. } => {
+                    Some("half_open".to_string())
+                }
+                crate::proxy::qos_guardian::AccountQoSState::Healthy => None,
+            };
+
             AccountResponse {
                 id: acc.id,
                 email: acc.email,
@@ -1391,6 +1411,7 @@ async fn admin_list_accounts(
                 quota,
                 device_bound: acc.device_profile.is_some(),
                 last_used: acc.last_used,
+                qos_status,
             }
         })
         .collect();
@@ -1453,6 +1474,23 @@ async fn admin_get_current_account(
                     .map(|groups| groups.iter().map(quota_group_to_dto).collect()),
             });
 
+            let qos_state = state.token_manager.qos_guardian.get_state(&acc.id);
+            let qos_status = match qos_state {
+                crate::proxy::qos_guardian::AccountQoSState::Suspicious { .. } => {
+                    Some("suspicious".to_string())
+                }
+                crate::proxy::qos_guardian::AccountQoSState::Jailed { .. } => {
+                    Some("jailed".to_string())
+                }
+                crate::proxy::qos_guardian::AccountQoSState::Probing { .. } => {
+                    Some("probing".to_string())
+                }
+                crate::proxy::qos_guardian::AccountQoSState::HalfOpen { .. } => {
+                    Some("half_open".to_string())
+                }
+                crate::proxy::qos_guardian::AccountQoSState::Healthy => None,
+            };
+
             AccountResponse {
                 id: acc.id,
                 email: acc.email,
@@ -1474,6 +1512,7 @@ async fn admin_get_current_account(
                 quota,
                 device_bound: acc.device_profile.is_some(),
                 last_used: acc.last_used,
+                qos_status,
             }
         })
     } else {

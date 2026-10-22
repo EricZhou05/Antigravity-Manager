@@ -210,6 +210,16 @@
         "switch_this_to_target": "Chuyển tài khoản này sang {{target}}"
     },
     "accounts": {
+        "qos": {
+            "suspicious": "Nghi Giới Hạn Tốc Độ",
+            "suspicious_hint": "Phát hiện độ trễ phản hồi ban đầu bất thường. Tạm dừng phân bổ phiên mới.",
+            "jailed": "Trong Phòng Chờ Giới Hạn",
+            "jailed_hint": "Đã phát hiện giảm tốc độ âm thầm và hủy liên kết phiên. Đang làm mát theo nấc, bộ thăm dò nền sẽ tự kiểm tra phục hồi.",
+            "probing": "Đang Thăm Dò Phục Hồi",
+            "probing_hint": "Đang gửi thăm dò nhẹ để kiểm tra xem chất lượng ngược dòng đã phục hồi hoàn toàn hay chưa.",
+            "half_open": "Thử Nghiệm Theo Dõi",
+            "half_open_hint": "Thăm dò thành công. Đang thử nghiệm với lưu lượng thực tế, sẽ phục hồi hoàn toàn sau khi ổn định."
+        },
         "account": "Tài khoản",
         "search_placeholder": "Tìm kiếm email...",
         "all": "Tất cả",

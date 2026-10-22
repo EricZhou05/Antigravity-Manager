@@ -441,6 +441,20 @@ pub fn determine_retry_strategy_adaptive(
     }
 }
 
+/// 上报并评估首包 TTFT 耗时到 QoS 守卫
+pub fn report_qos_ttft(
+    token_manager: &crate::proxy::token_manager::TokenManager,
+    account_id: &str,
+    session_id: Option<&str>,
+    ttft_ms: f64,
+    is_deep_thinking: bool,
+) {
+    let tier = token_manager
+        .get_account_tier(account_id)
+        .unwrap_or_else(|| "PRO".to_string());
+    token_manager.record_qos_ttft(account_id, session_id, &tier, ttft_ms, is_deep_thinking);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
