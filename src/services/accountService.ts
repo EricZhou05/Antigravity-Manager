@@ -1,5 +1,6 @@
 import i18n from '../i18n';
-import { Account, ActiveClientsStatus, DeviceProfile, DeviceProfileVersion, QuotaData } from '../types/account';
+import { Account, ActiveClientsStatus, DeviceProfile, DeviceProfileVersion, QuotaData, ImportAccountEntry, BatchImportResult } from '../types/account';
+export type { ImportAccountEntry, BatchImportResult };
 import { request as invoke } from '../utils/request';
 
 export async function updateAccountPriority(accountId: string, priority: number): Promise<void> {
@@ -132,6 +133,10 @@ export async function setActiveOAuthClient(clientKey: string): Promise<void> {
 }
 
 // 导入
+export async function batchImportAccounts(entries: ImportAccountEntry[]): Promise<BatchImportResult> {
+    return await invoke<BatchImportResult>('batch_import_accounts', { entries });
+}
+
 export async function importV1Accounts(): Promise<Account[]> {
     return await invoke('import_v1_accounts');
 }

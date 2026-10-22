@@ -148,3 +148,23 @@ export function getAccountTier(account: { quota?: QuotaData | null }): 'ultra' |
 export function getTierLabel(tier: 'ultra' | 'pro' | 'free'): string {
     return tier.toUpperCase();
 }
+
+export interface ImportAccountEntry {
+    email?: string;
+    refresh_token: string;
+}
+
+export interface BatchImportProgress {
+    current: number;
+    total: number;
+    success: number;
+    failed: number;
+    current_email?: string;
+}
+
+export interface BatchImportResult {
+    total: number;
+    success: number;
+    failed: number;
+    errors: string[];
+}

@@ -694,6 +694,7 @@ pub fn run() {
             // Account management commands
             commands::list_accounts,
             commands::add_account,
+            commands::batch_import_accounts,
             commands::delete_account,
             commands::delete_accounts,
             commands::reorder_accounts,

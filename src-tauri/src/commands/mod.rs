@@ -109,6 +109,23 @@ pub async fn add_account(
     Ok(account)
 }
 
+/// [NEW #3726] 批量异步高性能导入账号
+#[tauri::command]
+pub async fn batch_import_accounts(
+    app: tauri::AppHandle,
+    entries: Vec<crate::models::ImportAccountEntry>,
+) -> Result<crate::models::BatchImportResult, String> {
+    let result = crate::modules::account::batch_import_accounts_logic(Some(&app), entries).await?;
+
+    // 批量导入完成后，单次重载代理池
+    let _ = crate::commands::proxy::reload_proxy_accounts(
+        app.state::<crate::commands::proxy::ProxyServiceState>(),
+    )
+    .await;
+
+    Ok(result)
+}
+
 /// 删除账号
 /// 删除账号
 #[tauri::command]

@@ -27,6 +27,14 @@ pub async fn try_handle_cli(args: &[String]) -> Result<bool, String> {
             handle_switch_command(&args[2..]).await?;
             Ok(true)
         }
+        "import" | "im" => {
+            handle_import_command(&args[2..]).await?;
+            Ok(true)
+        }
+        "export" | "ex" => {
+            handle_export_command(&args[2..]).await?;
+            Ok(true)
+        }
         "list" | "ls" | "accounts" => {
             handle_list_command().await?;
             Ok(true)
@@ -49,6 +57,8 @@ fn print_cli_help() {
         Usage: antigravity-tools <command> [options]\n\n\
         Commands:\n  \
           switch [account]   Switch current account (supports email, index, name, or auto round-robin)\n  \
+          import <file>      High-performance batch import accounts from JSON (with auto-backup)\n  \
+          export [file]      Fast export all accounts to JSON (default: accounts_export.json)\n  \
           list, ls           List all accounts with active status and quota\n  \
           current, whoami    Show currently active accounts across clients (IDE / agy CLI)\n  \
           help               Show this help message\n\n\
@@ -274,6 +284,89 @@ fn find_agy_executable() -> String {
         }
     }
     "agy".to_string()
+}
+
+/// [NEW #3726] CLI 批量高性能导入命令
+async fn handle_import_command(args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        return Err("用法: antigravity-tools import <file.json>".to_string());
+    }
+
+    let file_path = std::path::PathBuf::from(&args[0]);
+    if !file_path.exists() {
+        return Err(format!("文件不存在: {:?}", file_path));
+    }
+
+    let content =
+        std::fs::read_to_string(&file_path).map_err(|e| format!("读取导入文件失败: {}", e))?;
+
+    // 自动为源文件创建 <filename>-backup 备份文件，确保失败随时可重新导入
+    let backup_path = format!("{}-backup", file_path.to_string_lossy());
+    if let Err(e) = std::fs::write(&backup_path, &content) {
+        eprintln!("\x1b[33m[Warning]\x1b[0m 无法创建源文件备份: {}", e);
+    } else {
+        println!(
+            "\x1b[32m✔\x1b[0m 已自动备份源文件至: \x1b[1m{}\x1b[0m",
+            backup_path
+        );
+    }
+
+    let entries = account::parse_import_entries_from_str(&content);
+    if entries.is_empty() {
+        return Err("未从文件中解析出有效的 refresh_token 凭据".to_string());
+    }
+
+    println!(
+        "\x1b[34m[Antigravity CLI]\x1b[0m 发现 {} 个有效账号凭据，正在以流式并发 (6路) 导入...",
+        entries.len()
+    );
+
+    let start = std::time::Instant::now();
+    let result = account::batch_import_accounts_logic(None, entries).await?;
+    let duration = start.elapsed();
+
+    println!(
+        "\x1b[32m🎉 批量导入完成!\x1b[0m 成功: \x1b[32m{}\x1b[0m | 失败: \x1b[31m{}\x1b[0m | 耗时: {:.2}s",
+        result.success,
+        result.failed,
+        duration.as_secs_f64()
+    );
+
+    if !result.errors.is_empty() {
+        eprintln!("\n\x1b[33m部分失败明细:\x1b[0m");
+        for (i, err) in result.errors.iter().take(5).enumerate() {
+            eprintln!("  {}. {}", i + 1, err);
+        }
+        if result.errors.len() > 5 {
+            eprintln!("  ... 其余 {} 条错误已忽略", result.errors.len() - 5);
+        }
+    }
+
+    Ok(())
+}
+
+/// [NEW #3726] CLI 极速导出所有账号命令
+async fn handle_export_command(args: &[String]) -> Result<(), String> {
+    let out_path = if !args.is_empty() {
+        std::path::PathBuf::from(&args[0])
+    } else {
+        std::path::PathBuf::from("antigravity_accounts_export.json")
+    };
+
+    println!("\x1b[34m[Antigravity CLI]\x1b[0m 正在极速导出所有账号...");
+    let response = account::export_accounts_by_ids(&[])?;
+    let content = serde_json::to_string_pretty(&response.accounts)
+        .map_err(|e| format!("序列化失败: {}", e))?;
+
+    std::fs::write(&out_path, content.as_bytes())
+        .map_err(|e| format!("写入导出文件失败: {}", e))?;
+
+    println!(
+        "\x1b[32m✔ 成功导出 {} 个账号至: \x1b[1m{:?}\x1b[0m",
+        response.accounts.len(),
+        out_path
+    );
+    Ok(())
 }
 
 #[cfg(test)]

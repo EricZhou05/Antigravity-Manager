@@ -946,6 +946,7 @@ impl AxumServer {
                 get(admin_get_token_stats_account_trend_daily),
             )
             .route("/accounts/bulk-delete", post(admin_delete_accounts))
+            .route("/accounts/batch-import", post(admin_batch_import_accounts))
             .route("/accounts/export", post(admin_export_accounts))
             .route("/accounts/reorder", post(admin_reorder_accounts))
             .route("/accounts/:accountId/quota", get(admin_fetch_account_quota))
@@ -2978,6 +2979,26 @@ async fn admin_delete_accounts(
         )
     })?;
     Ok(StatusCode::OK)
+}
+
+async fn admin_batch_import_accounts(
+    State(state): State<AppState>,
+    Json(payload): Json<Vec<crate::models::ImportAccountEntry>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let result = crate::modules::account::batch_import_accounts_logic(None, payload)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
+
+    if let Err(e) = state.token_manager.load_accounts().await {
+        tracing::warn!("[API] Failed to reload accounts after batch import: {}", e);
+    }
+
+    Ok((StatusCode::OK, Json(result)))
 }
 
 #[derive(Deserialize)]

@@ -8,6 +8,7 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'get_current_account': { url: '/api/accounts/current', method: 'GET' },
   'switch_account': { url: '/api/accounts/switch', method: 'POST' },
   'add_account': { url: '/api/accounts', method: 'POST' },
+  'batch_import_accounts': { url: '/api/accounts/batch-import', method: 'POST' },
   'delete_account': { url: '/api/accounts/:accountId', method: 'DELETE' },
   'delete_accounts': { url: '/api/accounts/bulk-delete', method: 'POST' },
   'fetch_account_quota': { url: '/api/accounts/:accountId/quota', method: 'GET' },
