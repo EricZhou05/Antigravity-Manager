@@ -3,6 +3,12 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v4.9.9-beta.7 (2026-10-22)**:
+        -   **[Instant Cold-Start Account Rendering & Full Quota Persistence Fix] (Fixes #3726)**:
+            -   **Restored Full Quota Persistence During Batch Import**: In the 6-way asynchronous pipeline, accounts concurrently resolve Token exchange, UserInfo, Project ID, and detailed Quota payloads during import, ensuring complete quota metadata is 100% persisted on disk. After import completion, subsequent cold starts load locally without delayed online backfilling, completely eliminating incremental loading from 0 to N. (Fixes #3726)
+            -   **Decoupled Cold-Start Startup Locks (Zero-Latency UI Rendering)**: Refactored `commands::list_accounts` to acquire the TokenManager runtime reference via non-blocking `try_read()`, ensuring frontend account list queries are never stalled while the background admin server initializes under an exclusive write lock. (Fixes #3726)
+            -   **Prioritized Direct Modern Index Deserialization**: Streamlined `load_account_index_in_dir` to directly deserialize the modern `AccountIndex` first (~0.5ms), bypassing redundant legacy format probes and file I/O operations during normal restarts. (Fixes #3726)
+
     *   **v4.9.9-beta.6 (2026-10-22)**:
         -   **[Asynchronous High-Performance Batch Import & Index Persistence Overhaul] (Fixes #3726)**:
             -   **Asynchronous Streaming Concurrency & Backpressure**: Introduced the `batch_import_accounts` high-performance pipeline backed by `buffer_unordered(6)` to strictly bound in-flight active tasks, slashing the import duration for 494 accounts from 28 minutes to ~15-20 seconds (>60x speedup) and eradicating memory spikes and kernel OOM terminations caused by unbounded `join_all`. (Fixes #3726)
