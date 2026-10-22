@@ -3,6 +3,12 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v4.9.9-beta.8 (2026-10-22)**:
+        -   **[Local Snapshot Hydration to Eliminate Cold-Start Blank Flash] (Ref #3726)**:
+            -   **Synchronous Snapshot Hydration**: Introduced local storage synchronous snapshot hydration in `useAccountStore` initial state (`getInitialAccounts()` and `getInitialCurrentAccount()`). (Ref #3726)
+            -   **Frame-Zero Instant Full UI Rendering**: Renders the complete account list, username greeting, active account, and quota matrix cards (Image 1) on the very first frame of application cold start, completely eliminating the brief blank flash of Image 2 ("Hello, user", 0 accounts, "no account") during pending IPC requests. (Ref #3726)
+            -   **Silent Background Reconciliation**: Background asynchronous IPC queries silently reconcile against on-disk state without jarring visual interruptions, harmonizing instant perceptual speed with robust data accuracy. (Ref #3726)
+
     *   **v4.9.9-beta.7 (2026-10-22)**:
         -   **[Instant Cold-Start Account Rendering & Full Quota Persistence Fix] (Fixes #3726)**:
             -   **Restored Full Quota Persistence During Batch Import**: In the 6-way asynchronous pipeline, accounts concurrently resolve Token exchange, UserInfo, Project ID, and detailed Quota payloads during import, ensuring complete quota metadata is 100% persisted on disk. After import completion, subsequent cold starts load locally without delayed online backfilling, completely eliminating incremental loading from 0 to N. (Fixes #3726)
