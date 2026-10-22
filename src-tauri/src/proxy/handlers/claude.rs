@@ -2160,6 +2160,13 @@ pub async fn handle_messages(
                 // 这确保下游客户端（Claude Code 等）看门狗持续被心跳保活，绝不会因 Prefill 或推理思考等待触发 5 分钟无响应断连 (CLI error 'Request timed out')。
                 if client_wants_stream {
                     ttft_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
+                    crate::proxy::handlers::common::report_qos_ttft(
+                        &token_manager,
+                        &account_id,
+                        Some(affinity_key.as_str()),
+                        ttft_ms,
+                        request.thinking.is_some(),
+                    );
                     if let Some(effective_item) =
                         fallback_attempts.iter_mut().find(|a| a.is_effective)
                     {
@@ -2284,6 +2291,13 @@ pub async fn handle_messages(
 
                             // We found real data!
                             ttft_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
+                            crate::proxy::handlers::common::report_qos_ttft(
+                                &token_manager,
+                                &account_id,
+                                Some(affinity_key.as_str()),
+                                ttft_ms,
+                                request.thinking.is_some(),
+                            );
                             if let Some(effective_item) =
                                 fallback_attempts.iter_mut().find(|a| a.is_effective)
                             {
@@ -2504,6 +2518,13 @@ pub async fn handle_messages(
                 );
 
                 ttft_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
+                crate::proxy::handlers::common::report_qos_ttft(
+                    &token_manager,
+                    &account_id,
+                    Some(affinity_key.as_str()),
+                    ttft_ms,
+                    request.thinking.is_some(),
+                );
                 if let Some(effective_item) = fallback_attempts.iter_mut().find(|a| a.is_effective)
                 {
                     effective_item.duration_s = ttft_ms / 1000.0;

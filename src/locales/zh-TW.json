@@ -210,6 +210,16 @@
         "switch_this_to_target": "一鍵將此帳號切換到 {{target}}"
     },
     "accounts": {
+        "qos": {
+            "suspicious": "疑似被限速",
+            "suspicious_hint": "上游首包延遲出現異常卡頓，已開啟只出不進保護並暫緩新會話分流",
+            "jailed": "限速小黑屋中",
+            "jailed_hint": "已觸發上游靜默降速熔斷並強制解綁會話，正在階梯冷卻中，後台探針將自動測速自愈",
+            "probing": "解限探測中",
+            "probing_hint": "正在向該帳號發起純淨測速探針，檢測上游服務質量是否已滿血恢復",
+            "half_open": "觀察緩刑中",
+            "half_open_hint": "探針通過，正在進行生產流量單路試探，連續穩定通過後將徹底恢復健康"
+        },
         "account": "帳號",
         "search_placeholder": "搜尋信箱...",
         "all": "全部",

@@ -210,6 +210,16 @@
         "switch_this_to_target": "Bu hesabı {{target}} olarak değiştir"
     },
     "accounts": {
+        "qos": {
+            "suspicious": "Hız Sınırı Şüphesi",
+            "suspicious_hint": "Üst akış ilk yanıt gecikmesinde anormallik tespit edildi. Yeni oturum atamaları duraklatıldı.",
+            "jailed": "QoS Soğutmasında",
+            "jailed_hint": "Sessiz hız kısıtlaması algılandı ve oturum bağlantısı kesildi. Kademeli soğutmada arka plan sondası test yapacak.",
+            "probing": "Kurtarma Sondajı",
+            "probing_hint": "Hizmet kalitesinin tamamen düzelip düzelmediğini doğrulamak için hafif bir sonda gönderiliyor.",
+            "half_open": "Gözetim Altında",
+            "half_open_hint": "Sonda başarılı. Gerçek trafikle tek hat test ediliyor; istikrarlı geçişlerden sonra tamamen geri yüklenecek."
+        },
         "account": "Hesap",
         "search_placeholder": "E-posta ara...",
         "all": "Tümü",

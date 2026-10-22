@@ -56,6 +56,7 @@ import { useConfigStore } from '../../stores/useConfigStore';
 import { GroupQuotaCard } from './GroupQuotaCard';
 import { getGroupQuotaSummaries } from '../../utils/quotaDisplay';
 import { getValidationBlockedStatusLabel } from './accountValidationStatus';
+import { QoSStatusBadge } from './QoSStatusBadge';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
 
 // ============================================================================
@@ -417,6 +418,7 @@ function AccountRowContent({
                                 <span>{validationBlockedLabel}</span>
                             </span>
                         )}
+                        <QoSStatusBadge status={account.qos_status} size="md" />
 
 
                         {/* 订阅类型徽章 */}

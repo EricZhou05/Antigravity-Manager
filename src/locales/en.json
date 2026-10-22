@@ -226,6 +226,16 @@
         "switch_this_to_target": "Switch this account to {{target}}"
     },
     "accounts": {
+        "qos": {
+            "suspicious": "Suspected Throttled",
+            "suspicious_hint": "Abnormal upstream initial latency detected. Drain mode active, new session allocation paused.",
+            "jailed": "In QoS Cooldown",
+            "jailed_hint": "Silent throttling triggered. Session unbound and account isolated in ladder cooldown. Background probe will test recovery automatically.",
+            "probing": "Probing Recovery",
+            "probing_hint": "Sending synthetic heartbeat probe to verify whether upstream quality has fully recovered.",
+            "half_open": "On Probation",
+            "half_open_hint": "Probe succeeded. Single-flight canary traffic in progress. Full health will be restored after stable passes."
+        },
         "account": "Account",
         "search_placeholder": "Search email...",
         "all": "All",

@@ -16,6 +16,7 @@ export interface Account {
     protected_models?: string[];
     live_limited_models?: Record<string, LiveLimitStatus>;
     custom_label?: string;  // 用户自定义标签
+    qos_status?: 'suspicious' | 'jailed' | 'probing' | 'half_open' | null; // 运行时 QoS 状态
     validation_blocked?: boolean;
     validation_blocked_until?: number;
     validation_blocked_reason?: string;

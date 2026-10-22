@@ -583,6 +583,18 @@ pub async fn handle_generate(
                             retry_gemini = true;
                         } else {
                             ttft_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
+                            let is_thinking = body
+                                .get("generationConfig")
+                                .and_then(|g| g.get("thinkingConfig"))
+                                .is_some()
+                                || mapped_model.to_lowercase().contains("thinking");
+                            crate::proxy::handlers::common::report_qos_ttft(
+                                &token_manager,
+                                &account_id,
+                                Some(&affinity_key),
+                                ttft_ms,
+                                is_thinking,
+                            );
                             if let Some(effective_item) =
                                 fallback_attempts.iter_mut().find(|a| a.is_effective)
                             {
@@ -950,6 +962,18 @@ pub async fn handle_generate(
             }
 
             ttft_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
+            let is_thinking = body
+                .get("generationConfig")
+                .and_then(|g| g.get("thinkingConfig"))
+                .is_some()
+                || mapped_model.to_lowercase().contains("thinking");
+            crate::proxy::handlers::common::report_qos_ttft(
+                &token_manager,
+                &account_id,
+                Some(&affinity_key),
+                ttft_ms,
+                is_thinking,
+            );
             if let Some(effective_item) = fallback_attempts.iter_mut().find(|a| a.is_effective) {
                 effective_item.duration_s = ttft_ms / 1000.0;
             }
