@@ -2545,7 +2545,12 @@ pub fn detect_active_clients_status() -> Result<crate::models::ActiveClientsStat
             }
         }
     }
-    if status.ide_email.is_none() {
+    if status.ide_account_id.is_none() {
+        if let Some(ref id) = index.current_ide_account_id {
+            status.ide_account_id = Some(id.clone());
+            status.ide_email = find_email_by_id(id);
+        }
+    } else if status.ide_email.is_none() {
         if let Some(ref id) = status.ide_account_id {
             if let Some(email) = find_email_by_id(id) {
                 status.ide_email = Some(email);
@@ -2594,7 +2599,12 @@ pub fn detect_active_clients_status() -> Result<crate::models::ActiveClientsStat
         status.classic_account_id = Some(db_id.clone());
         status.classic_email = Some(db_email.clone());
     }
-    if status.classic_email.is_none() {
+    if status.classic_account_id.is_none() {
+        if let Some(ref id) = index.current_classic_account_id {
+            status.classic_account_id = Some(id.clone());
+            status.classic_email = find_email_by_id(id);
+        }
+    } else if status.classic_email.is_none() {
         if let Some(ref id) = status.classic_account_id {
             if let Some(email) = find_email_by_id(id) {
                 status.classic_email = Some(email);
@@ -2621,7 +2631,12 @@ pub fn detect_active_clients_status() -> Result<crate::models::ActiveClientsStat
             }
         }
     }
-    if status.agy_email.is_none() {
+    if status.agy_account_id.is_none() {
+        if let Some(ref id) = index.current_agy_account_id {
+            status.agy_account_id = Some(id.clone());
+            status.agy_email = find_email_by_id(id);
+        }
+    } else if status.agy_email.is_none() {
         if let Some(ref id) = status.agy_account_id {
             if let Some(email) = find_email_by_id(id) {
                 status.agy_email = Some(email);
