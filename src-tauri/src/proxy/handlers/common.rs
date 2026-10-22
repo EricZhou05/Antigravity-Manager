@@ -1367,7 +1367,10 @@ mod retry_after_tests {
         let mut all_429_tracker = FailureStatusTracker::default();
         all_429_tracker.record(StatusCode::TOO_MANY_REQUESTS);
         all_429_tracker.record(StatusCode::TOO_MANY_REQUESTS);
-        assert_eq!(all_429_tracker.final_status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            all_429_tracker.final_status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
     }
 
     #[test]
@@ -1399,15 +1402,8 @@ mod retry_after_tests {
         }"#;
 
         // 多账号环境下，明确标记为硬配额枯竭，立即切换下一账号 (50ms)
-        let strategy = determine_retry_strategy_adaptive(
-            429,
-            google_exhausted_body,
-            None,
-            false,
-            true,
-            0,
-            5,
-        );
+        let strategy =
+            determine_retry_strategy_adaptive(429, google_exhausted_body, None, false, true, 0, 5);
         match strategy {
             RetryStrategy::FixedDelay(d) => {
                 assert_eq!(d, Duration::from_millis(50));
