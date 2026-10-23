@@ -371,8 +371,8 @@ function AccountRowContent({
     return (
         <>
             {/* 邮箱列 */}
-            <td className="px-2 py-1 align-middle">
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <td className="px-2 py-1.5 align-middle max-w-[320px]">
+                <div className="flex flex-col gap-1 min-w-0">
                     <span className={cn(
                         "font-medium text-sm break-all transition-colors",
                         isRowActive ? "text-blue-700 dark:text-blue-400" : "text-gray-900 dark:text-base-content"
@@ -380,7 +380,7 @@ function AccountRowContent({
                         {account.email}
                     </span>
 
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                         {isClassic && (
                             <span
                                 className="px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 text-[10px] font-bold shadow-sm border border-blue-200/50 dark:border-blue-800/50"

@@ -615,9 +615,11 @@ pub async fn fetch_quota_with_cache(
                     let has_argon_group = groups.iter().any(|g| {
                         let gname = g.display_name.to_lowercase();
                         gname.contains("argon")
-                            || g.buckets
-                                .iter()
-                                .any(|b| b.bucket_id.to_lowercase().contains("argon"))
+                            || g.buckets.iter().any(|b| {
+                                let bid = b.bucket_id.to_lowercase();
+                                let bname = b.display_name.as_deref().unwrap_or("").to_lowercase();
+                                bid.contains("argon") || bname.contains("argon")
+                            })
                     });
                     if has_argon_group
                         && !quota_data
@@ -626,9 +628,15 @@ pub async fn fetch_quota_with_cache(
                             .any(|m| m.name.to_lowercase().contains("argon"))
                     {
                         let argon_b = groups.iter().find_map(|g| {
-                            g.buckets
-                                .iter()
-                                .find(|b| b.bucket_id.to_lowercase().contains("argon"))
+                            let gname = g.display_name.to_lowercase();
+                            if gname.contains("argon") {
+                                return g.buckets.first();
+                            }
+                            g.buckets.iter().find(|b| {
+                                let bid = b.bucket_id.to_lowercase();
+                                let bname = b.display_name.as_deref().unwrap_or("").to_lowercase();
+                                bid.contains("argon") || bname.contains("argon")
+                            })
                         });
                         let pct = argon_b
                             .map(|b| (b.remaining_fraction * 100.0).round() as i32)

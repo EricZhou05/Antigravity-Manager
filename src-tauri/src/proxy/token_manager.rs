@@ -1314,14 +1314,16 @@ impl TokenManager {
         }
 
         // [NEW] 检查 quota_groups 是否存在 Argon 专属分组，为该账号注入 Argon 授权、配额与限额
-        if let Some(groups) = account
-            .get("quota")
-            .and_then(|q| q.get("quota_groups"))
-            .and_then(|g| g.as_array())
-        {
+        let quota_val = account.get("quota");
+        let groups_val = quota_val
+            .and_then(|q| q.get("quota_groups").or_else(|| q.get("quotaGroups")))
+            .and_then(|g| g.as_array());
+
+        if let Some(groups) = groups_val {
             let argon_bucket = groups.iter().find_map(|g| {
                 let name = g
                     .get("display_name")
+                    .or_else(|| g.get("displayName"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_lowercase();
@@ -1332,16 +1334,24 @@ impl TokenManager {
                 buckets.iter().find(|b| {
                     let b_id = b
                         .get("bucket_id")
+                        .or_else(|| b.get("bucketId"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_lowercase();
-                    b_id.contains("argon")
+                    let b_name = b
+                        .get("display_name")
+                        .or_else(|| b.get("displayName"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    b_id.contains("argon") || b_name.contains("argon")
                 })
             });
 
             if let Some(bucket) = argon_bucket {
                 let frac = bucket
                     .get("remaining_fraction")
+                    .or_else(|| bucket.get("remainingFraction"))
                     .and_then(|v| v.as_f64())
                     .unwrap_or(1.0);
                 let pct = (frac * 100.0) as i32;
@@ -1360,6 +1370,26 @@ impl TokenManager {
                 model_limits.insert("gemini-4-argon-medium".to_string(), 65536);
                 model_limits.insert("gemini-4-argon-low".to_string(), 65536);
             }
+        }
+
+        // 若 model_quotas 中已有 gemini-4-argon（例如通过 models 列表或上游配额注入），确保同步到 available_models 与 limits
+        if model_quotas.contains_key("gemini-4-argon") {
+            available_models.insert("gemini-4-argon".to_string());
+            available_models.insert("gemini-4-argon-high".to_string());
+            available_models.insert("gemini-4-argon-medium".to_string());
+            available_models.insert("gemini-4-argon-low".to_string());
+            model_limits
+                .entry("gemini-4-argon".to_string())
+                .or_insert(65536);
+            model_limits
+                .entry("gemini-4-argon-high".to_string())
+                .or_insert(65536);
+            model_limits
+                .entry("gemini-4-argon-medium".to_string())
+                .or_insert(65536);
+            model_limits
+                .entry("gemini-4-argon-low".to_string())
+                .or_insert(65536);
         }
 
         if let Some(live_limits) = account
@@ -1692,12 +1722,13 @@ impl TokenManager {
         // [NEW] 检查 quota_groups 是否包含 argon 分组
         if let Some(groups) = account
             .get("quota")
-            .and_then(|q| q.get("quota_groups"))
+            .and_then(|q| q.get("quota_groups").or_else(|| q.get("quotaGroups")))
             .and_then(|g| g.as_array())
         {
             let has_argon = groups.iter().any(|g| {
                 let name = g
                     .get("display_name")
+                    .or_else(|| g.get("displayName"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_lowercase();
@@ -1707,11 +1738,13 @@ impl TokenManager {
                         bs.iter().any(|b| {
                             let b_id = b
                                 .get("bucket_id")
+                                .or_else(|| b.get("bucketId"))
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("")
                                 .to_lowercase();
                             let b_name = b
                                 .get("display_name")
+                                .or_else(|| b.get("displayName"))
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("")
                                 .to_lowercase();
@@ -2739,7 +2772,15 @@ impl TokenManager {
                         return true;
                     }
                 }
-                // 已加载 available_models 的账号拥有权威支持清单，严禁退回 t.model_quotas.contains_key("claude") 等宽泛桶导致 5.5 与 4.6 串池！
+                // Step C: 高阶模型与专属独立配额组能力推导（对齐 line 2613 accounts_with_capability 判定，涵盖 Argon 独立配额组）
+                if Self::token_supports_advanced_model(t, target_model) {
+                    return true;
+                }
+                // Step D: 独立计费桶归一化匹配（排除泛化宽泛桶如 claude 避免串池，支持专属桶如 gemini-4-argon 等）
+                if normalized_target != "claude" && t.model_quotas.contains_key(&normalized_target)
+                {
+                    return true;
+                }
                 false
             });
         } else {
@@ -3973,6 +4014,9 @@ impl TokenManager {
                                     || m.starts_with(&format!("{}-", base_name))
                                     || m.starts_with(&format!("{}@", base_name))
                             }))
+                        || Self::token_supports_advanced_model(token, target_model)
+                        || (normalized_target != "claude"
+                            && token.model_quotas.contains_key(&normalized_target))
                 };
                 if !has_cap {
                     tracing::debug!(
@@ -4212,9 +4256,11 @@ impl TokenManager {
                             if name.contains("argon") {
                                 return g.buckets.first();
                             }
-                            g.buckets
-                                .iter()
-                                .find(|b| b.bucket_id.to_lowercase().contains("argon"))
+                            g.buckets.iter().find(|b| {
+                                let bid = b.bucket_id.to_lowercase();
+                                let bname = b.display_name.as_deref().unwrap_or("").to_lowercase();
+                                bid.contains("argon") || bname.contains("argon")
+                            })
                         })
                     });
                     if let Some(bucket) = argon_bucket {
