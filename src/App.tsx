@@ -23,6 +23,8 @@ import { listen } from '@tauri-apps/api/event';
 import { isTauri } from './utils/env';
 import { request as invoke } from './utils/request';
 import { AdminAuthGuard } from './components/common/AdminAuthGuard';
+import MiniView from './components/layout/MiniView';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 const router = createBrowserRouter([
   {
@@ -112,21 +114,12 @@ function App() {
       })
     );
 
-    // 监听托盘显示主窗口事件（若处于迷你模式则切回完整窗口）
+    // 监听托盘显示主窗口事件
     unlistenPromises.push(
       listen('tray://show-window', async () => {
-        if (useViewStore.getState().isMiniView) {
-          const { exitMiniMode } = await import('./utils/windowManager');
-          await exitMiniMode();
+        if (!isTauri() && useViewStore.getState().isMiniView) {
           useViewStore.getState().setMiniView(false);
         }
-      })
-    );
-
-    // 监听托盘切换至迷你悬浮窗事件
-    unlistenPromises.push(
-      listen('tray://show-mini-view', () => {
-        useViewStore.getState().setMiniView(true);
       })
     );
 
@@ -147,13 +140,88 @@ function App() {
       })
     );
 
+    // 监听后端全局配置更新事件
+    unlistenPromises.push(
+      listen('config://updated', async () => {
+        console.log('[App] Received config://updated, syncing latest config...');
+        await useConfigStore.getState().loadConfig();
+        const cfg = useConfigStore.getState().config;
+        if (cfg) {
+          if (cfg.theme) {
+            const isDark = cfg.theme === 'dark' || (cfg.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+            document.documentElement.classList.toggle('dark', isDark);
+            document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+            localStorage.setItem('app-theme-preference', cfg.theme);
+          }
+          if (cfg.language) {
+            const normalized = normalizeLanguageCode(cfg.language);
+            i18n.changeLanguage(normalized);
+            document.documentElement.dir = normalized === 'ar' ? 'rtl' : 'ltr';
+          }
+        }
+      })
+    );
+
+    // 监听托盘唤起 Mini 悬浮窗事件 (每次打开即刻同步最新配置与深浅状态)
+    unlistenPromises.push(
+      listen('tray://show-mini-view', async () => {
+        console.log('[Mini] Tray opened mini view, syncing theme and language...');
+        await useConfigStore.getState().loadConfig();
+        const cfg = useConfigStore.getState().config;
+        if (cfg) {
+          if (cfg.theme) {
+            const isDark = cfg.theme === 'dark' || (cfg.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+            document.documentElement.classList.toggle('dark', isDark);
+            document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+            localStorage.setItem('app-theme-preference', cfg.theme);
+          }
+          if (cfg.language) {
+            const normalized = normalizeLanguageCode(cfg.language);
+            i18n.changeLanguage(normalized);
+            document.documentElement.dir = normalized === 'ar' ? 'rtl' : 'ltr';
+          }
+        }
+      })
+    );
+
+    // 监听跨窗口主题同步事件
+    unlistenPromises.push(
+      listen<{ theme: string }>('app://theme-changed', (event) => {
+        console.log('[App] Received app://theme-changed:', event.payload);
+        const theme = event.payload.theme;
+        localStorage.setItem('app-theme-preference', theme);
+        const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.classList.toggle('dark', isDark);
+        document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+        const current = useConfigStore.getState().config;
+        if (current) {
+          useConfigStore.setState({ config: { ...current, theme } });
+        }
+      })
+    );
+
+    // 监听跨窗口多语言同步事件
+    unlistenPromises.push(
+      listen<{ language: string }>('app://language-changed', (event) => {
+        console.log('[App] Received app://language-changed:', event.payload);
+        const lang = event.payload.language;
+        const normalized = normalizeLanguageCode(lang);
+        i18n.changeLanguage(normalized);
+        document.documentElement.dir = normalized === 'ar' ? 'rtl' : 'ltr';
+        const current = useConfigStore.getState().config;
+        if (current) {
+          useConfigStore.setState({ config: { ...current, language: normalized } });
+        }
+      })
+    );
+
     // Cleanup
     return () => {
       Promise.all(unlistenPromises).then(unlisteners => {
         unlisteners.forEach(unlisten => unlisten());
       });
     };
-  }, [fetchCurrentAccount, fetchAccounts]);
+  }, [fetchCurrentAccount, fetchAccounts, i18n]);
 
   // Update notification state
   const [showUpdateNotification, setShowUpdateNotification] = useState(false);
@@ -182,6 +250,33 @@ function App() {
     const timer = setTimeout(checkUpdates, 2000);
     return () => clearTimeout(timer);
   }, []);
+
+  const isMini = isTauri() && getCurrentWindow().label === 'mini';
+
+  if (isMini) {
+    if (typeof document !== 'undefined') {
+      document.documentElement.classList.add('mini-window');
+      document.documentElement.style.setProperty('background-color', 'transparent', 'important');
+      document.documentElement.style.setProperty('background', 'transparent', 'important');
+      if (document.body) {
+        document.body.classList.add('mini-window');
+        document.body.style.setProperty('background-color', 'transparent', 'important');
+        document.body.style.setProperty('background', 'transparent', 'important');
+      }
+      const rootEl = document.getElementById('root');
+      if (rootEl) {
+        rootEl.classList.add('mini-root');
+        rootEl.style.setProperty('background-color', 'transparent', 'important');
+        rootEl.style.setProperty('background', 'transparent', 'important');
+      }
+    }
+    return (
+      <AdminAuthGuard>
+        <ThemeManager />
+        <MiniView />
+      </AdminAuthGuard>
+    );
+  }
 
   return (
     <AdminAuthGuard>

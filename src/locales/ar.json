@@ -62,7 +62,8 @@
         "selected": "Selected",
         "claude_series": "Claude Series",
         "maximize": "Maximize",
-        "app_name": "Antigravity Tools"
+        "app_name": "Antigravity Tools",
+        "copy_to_clipboard": "نسخ إلى الحافظة"
     },
     "nav": {
         "dashboard": "الرئيسية",
@@ -206,7 +207,11 @@
         "no_client_account": "لا يوجد حساب نشط أو مرتبط بهذا التطبيق",
         "go_switch_account": "الانتقال إلى تبديل الحساب",
         "switch_best_to_target": "تبديل أفضل حساب إلى {{target}}",
-        "switch_this_to_target": "تبديل هذا الحساب إلى {{target}}"
+        "switch_this_to_target": "تبديل هذا الحساب إلى {{target}}",
+        "account_pool": "مجمع الحسابات",
+        "view_mode_title_5h": "عرض النافذة المتداولة لمدة 5 ساعات",
+        "view_mode_title_weekly": "عرض الحصة الأسبوعية لمدة 7 أيام",
+        "view_mode_title_weighted": "عرض مرجح شامل"
     },
     "accounts": {
         "qos": {
@@ -451,7 +456,15 @@
         "quota_group_claude": "نماذج Claude و GPT",
         "weekly_constrained_tooltip": "مقيد بالحد الأسبوعي",
         "weekly_tokens": "توكن الدورة",
-        "weekly_tokens_tooltip": "التوكنات المسجلة بواسطة هذا المثيل في دورة الحصة الحالية (إدخال + إخراج)"
+        "weekly_tokens_tooltip": "التوكنات المسجلة بواسطة هذا المثيل في دورة الحصة الحالية (إدخال + إخراج)",
+        "client_classic": "كلاسيكي",
+        "client_classic_tooltip": "حساب Antigravity Classic المسجل حالياً",
+        "client_ide": "IDE",
+        "client_ide_tooltip": "حساب Antigravity IDE المسجل حالياً",
+        "client_cli": "CLI",
+        "client_cli_tooltip": "حساب Antigravity CLI (agy) المسجل حالياً",
+        "switch_next_short": "التالي",
+        "weekly_exhausted_tooltip": "تم استنفاد الحصة الأسبوعية، تم تفعيل الحماية التلقائية"
     },
     "settings": {
         "save": "حفظ الإعدادات",
@@ -775,7 +788,8 @@
             "open_btn": "Open Console",
             "debug_logging": "Debug Logging",
             "debug_logging_desc": "When enabled, records the complete request and response chain. Recommended to enable only when troubleshooting issues."
-        }
+        },
+        "lightweight_mode_desc": "يحرر ذاكرة WebView بالكامل عند الخروج أو التصغير إلى شريط المهام"
     },
     "tray": {
         "current": "الحالي",
@@ -788,7 +802,10 @@
         "no_account": "لا يوجد حساب",
         "unknown_quota": "مجهول (انقر للتحديث)",
         "forbidden": "الحساب محظور",
-        "lightweight_mode": "الوضع الخفيف (تحرير الذاكرة في شريط المهام)"
+        "lightweight_mode": "الوضع الخفيف (تحرير الذاكرة في شريط المهام)",
+        "open_console": "فتح وحدة التحكم",
+        "pin_desc": "تثبيت على سطح المكتب (عدم الإخفاء عند فقدان التركيز)",
+        "unpin_desc": "مثبت (انقر لإلغاء التثبيت، إخفاء تلقائي عند فقدان التركيز)"
     },
     "proxy": {
         "title": "خدمة وكيل API",

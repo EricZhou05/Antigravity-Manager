@@ -63,7 +63,8 @@
         "selected": "已選擇",
         "claude_series": "Claude 系列",
         "maximize": "最大化",
-        "app_name": "Antigravity Tools"
+        "app_name": "Antigravity Tools",
+        "copy_to_clipboard": "複製到剪貼板"
     },
     "nav": {
         "dashboard": "儀表板",
@@ -207,7 +208,11 @@
         "no_client_account": "該應用當前暫無登錄或綁定的帳號",
         "go_switch_account": "前往切換帳號",
         "switch_best_to_target": "一鍵切換最佳帳號到 {{target}}",
-        "switch_this_to_target": "一鍵將此帳號切換到 {{target}}"
+        "switch_this_to_target": "一鍵將此帳號切換到 {{target}}",
+        "account_pool": "帳號池",
+        "view_mode_title_5h": "5小時滾動視窗檢視",
+        "view_mode_title_weekly": "7天週配額檢視",
+        "view_mode_title_weighted": "綜合加權檢視"
     },
     "accounts": {
         "qos": {
@@ -458,7 +463,9 @@
         "quota_group_claude": "Claude & GPT 模型",
         "weekly_constrained_tooltip": "受到週配額短板壓制",
         "weekly_tokens": "本週期 Token",
-        "weekly_tokens_tooltip": "本實例在此配額週期記錄的 Token 用量（輸入 + 輸出）"
+        "weekly_tokens_tooltip": "本實例在此配額週期記錄的 Token 用量（輸入 + 輸出）",
+        "switch_next_short": "切下一個",
+        "weekly_exhausted_tooltip": "週配額已耗盡，已觸發自動保護"
     },
     "settings": {
         "save": "儲存設定",
@@ -782,7 +789,8 @@
             "placeholder": "輸入全局系統提示詞...\n例如：你是一位資深的全棧開發工程師，擅長 React 和 Rust。請使用繁體中文回复。",
             "char_count": "{{count}} 字符",
             "long_prompt_warning": "提示詞較長（超過 2000 字符），可能會佔用較多的上下文窗口空間。"
-        }
+        },
+        "lightweight_mode_desc": "開啟後退出或最小化到托盤將徹底釋放 WebView 記憶體"
     },
     "tray": {
         "current": "當前",
@@ -795,7 +803,10 @@
         "no_account": "無帳號",
         "unknown_quota": "未知 (點選重新整理)",
         "forbidden": "帳號被封禁",
-        "lightweight_mode": "輕量模式 (退出時釋放記憶體)"
+        "lightweight_mode": "輕量模式 (退出時釋放記憶體)",
+        "open_console": "開啟主控制台",
+        "pin_desc": "固定在桌面（點擊常駐桌面，不隨失焦收起）",
+        "unpin_desc": "已固定常駐（點擊取消固定，失焦自動收起）"
     },
     "proxy": {
         "title": "API 反向代理服務",

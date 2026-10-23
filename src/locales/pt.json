@@ -64,7 +64,8 @@
         "copy_failed": "Copy failed",
         "create": "Create",
         "settings": "Configurações",
-        "saving": "Salvando..."
+        "saving": "Salvando...",
+        "copy_to_clipboard": "Copiar para a área de transferência"
     },
     "nav": {
         "dashboard": "Painel",
@@ -208,7 +209,11 @@
         "no_client_account": "Nenhuma conta ativa ou vinculada para este aplicativo",
         "go_switch_account": "Ir para alternar conta",
         "switch_best_to_target": "Alternar melhor conta para {{target}}",
-        "switch_this_to_target": "Alternar esta conta para {{target}}"
+        "switch_this_to_target": "Alternar esta conta para {{target}}",
+        "account_pool": "Pool de contas",
+        "view_mode_title_5h": "Visualização de janela rolante de 5 horas",
+        "view_mode_title_weekly": "Visualização de cota semanal de 7 dias",
+        "view_mode_title_weighted": "Visualização ponderada abrangente"
     },
     "accounts": {
         "qos": {
@@ -457,7 +462,15 @@
         "quota_group_claude": "Modelos Claude e GPT",
         "weekly_constrained_tooltip": "Limitado pela cota semanal",
         "weekly_tokens": "Tokens do ciclo",
-        "weekly_tokens_tooltip": "Tokens registrados por esta instância neste ciclo de cota (entrada + saída)"
+        "weekly_tokens_tooltip": "Tokens registrados por esta instância neste ciclo de cota (entrada + saída)",
+        "client_classic": "Clássico",
+        "client_classic_tooltip": "Conta conectada no Antigravity Clássico",
+        "client_ide": "IDE",
+        "client_ide_tooltip": "Conta conectada no Antigravity IDE",
+        "client_cli": "CLI",
+        "client_cli_tooltip": "Conta conectada no Antigravity CLI (agy)",
+        "switch_next_short": "Próximo",
+        "weekly_exhausted_tooltip": "Cota semanal esgotada, proteção ativada"
     },
     "settings": {
         "save": "Salvar Configurações",
@@ -794,7 +807,8 @@
             "title": "Personalização da Marca",
             "subtitle": "Ajuste o nome do produto exibido e elementos visuais da interface"
         },
-        "web_mode_limitation": "(Não suportado no modo Web)"
+        "web_mode_limitation": "(Não suportado no modo Web)",
+        "lightweight_mode_desc": "Libera totalmente a memória do WebView ao sair ou minimizar para a bandeja"
     },
     "tray": {
         "current": "Atual",
@@ -807,7 +821,10 @@
         "no_account": "Sem Conta",
         "unknown_quota": "Desconhecido (Clique para Atualizar)",
         "forbidden": "Conta Proibida",
-        "lightweight_mode": "Modo Leve (Liberar memória ao fechar)"
+        "lightweight_mode": "Modo Leve (Liberar memória ao fechar)",
+        "open_console": "Abrir console",
+        "pin_desc": "Fixar na área de trabalho (não ocultar ao perder o foco)",
+        "unpin_desc": "Fixado (clique para desafixar, ocultação automática)"
     },
     "proxy": {
         "title": "Serviço de Proxy da API",

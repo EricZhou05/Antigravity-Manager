@@ -39,6 +39,7 @@ interface AccountState {
 
 const ACCOUNTS_CACHE_KEY = 'antigravity_accounts_cache';
 const CURRENT_ACCOUNT_CACHE_KEY = 'antigravity_current_account_cache';
+const ACTIVE_CLIENTS_CACHE_KEY = 'antigravity_active_clients_cache';
 
 const getInitialAccounts = (): Account[] => {
     try {
@@ -66,10 +67,23 @@ const getInitialCurrentAccount = (): Account | null => {
     return null;
 };
 
+const getInitialActiveClients = (): ActiveClientsStatus => {
+    try {
+        const saved = localStorage.getItem(ACTIVE_CLIENTS_CACHE_KEY);
+        if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed && typeof parsed === 'object') {
+                return parsed;
+            }
+        }
+    } catch (_) {}
+    return {};
+};
+
 export const useAccountStore = create<AccountState>((set, get) => ({
     accounts: getInitialAccounts(),
     currentAccount: getInitialCurrentAccount(),
-    activeClients: {},
+    activeClients: getInitialActiveClients(),
     loading: false,
     error: null,
 
@@ -83,6 +97,7 @@ export const useAccountStore = create<AccountState>((set, get) => ({
             ]);
             try {
                 localStorage.setItem(ACCOUNTS_CACHE_KEY, JSON.stringify(accounts));
+                localStorage.setItem(ACTIVE_CLIENTS_CACHE_KEY, JSON.stringify(activeClients));
             } catch (_) {}
             set({ accounts, activeClients, loading: false });
         } catch (error) {
@@ -104,6 +119,7 @@ export const useAccountStore = create<AccountState>((set, get) => ({
                 } else {
                     localStorage.removeItem(CURRENT_ACCOUNT_CACHE_KEY);
                 }
+                localStorage.setItem(ACTIVE_CLIENTS_CACHE_KEY, JSON.stringify(activeClients));
             } catch (_) {}
             set({ currentAccount: account, activeClients, loading: false });
         } catch (error) {

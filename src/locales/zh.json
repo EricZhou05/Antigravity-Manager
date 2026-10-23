@@ -62,7 +62,8 @@
         "selected": "已选择",
         "claude_series": "Claude 系列",
         "maximize": "最大化",
-        "app_name": "Antigravity Tools"
+        "app_name": "Antigravity Tools",
+        "copy_to_clipboard": "复制到剪贴板"
     },
     "nav": {
         "dashboard": "仪表盘",
@@ -221,7 +222,8 @@
         "no_client_account": "该应用当前暂无登录或绑定的账号",
         "go_switch_account": "前往切换账号",
         "switch_best_to_target": "一键切换最佳账号到 {{target}}",
-        "switch_this_to_target": "一键将此账号切换到 {{target}}"
+        "switch_this_to_target": "一键将此账号切换到 {{target}}",
+        "account_pool": "账号池"
     },
     "accounts": {
         "qos": {
@@ -477,7 +479,8 @@
             "batch_warmup_title": "批量手动预热",
             "batch_warmup_msg": "确定要为选中的 {{count}} 个账号立即触发预热吗？"
         },
-        "switch_to_agy": "Switch to Antigravity CLI (agy)"
+        "switch_to_agy": "Switch to Antigravity CLI (agy)",
+        "switch_next_short": "切下个"
     },
     "settings": {
         "save": "保存设置",
@@ -805,7 +808,8 @@
             "placeholder": "输入全局系统提示词...\n例如：你是一位资深的全栈开发工程师，擅长 React 和 Rust。请使用简体中文回复。",
             "char_count": "{{count}} 字符",
             "long_prompt_warning": "提示词较长（超过 2000 字符），可能会占用较多的上下文窗口空间。"
-        }
+        },
+        "lightweight_mode_desc": "开启后退出或最小化到托盘将彻底释放 WebView 内存"
     },
     "tray": {
         "current": "当前",
@@ -818,7 +822,10 @@
         "no_account": "无账号",
         "unknown_quota": "未知 (点击刷新)",
         "forbidden": "账号被封禁",
-        "lightweight_mode": "轻量模式 (退出时释放内存)"
+        "open_console": "打开主控制台",
+        "lightweight_mode": "轻量模式 (退出时释放内存)",
+        "pin_desc": "固定在桌面（点击常驻桌面，不随失焦收起）",
+        "unpin_desc": "已固定常驻（点击取消固定，失焦自动收起）"
     },
     "proxy": {
         "title": "API 反代服务",
