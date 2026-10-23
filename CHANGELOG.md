@@ -3,6 +3,32 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.0-beta.0 (2026-10-23)**:
+        -   **[上游 fetchAvailableModels 缺少 quotaInfo 架构级解耦与全系模型保活自适应] (Fixes #3737, Thanks to @xiaozhi-xmu, @chenshin166-arch)**:
+            -   **模型可用性与额度解析解耦**: 彻底移除旧逻辑中 `if let Some(quota_info) = info.quota_info` 的强过滤门禁，以官方公开模型目录为基准，对 Google 上游不再为 Gemini 系（`gemini-3.8-flash-*`、`gemini-3.1-flash-lite` 等）下发 `quotaInfo` 的账号无损保留模型可用性，彻底消灭全系模型被误丢弃导致本地秒回 503 的严重缺陷。(Fixes #3737, Thanks to @xiaozhi-xmu, @chenshin166-arch)
+            -   **分组配额预拉取与短板木桶融合**: 先行获取 `retrieveUserQuotaSummary` 分组配额（5h 与周配额双窗口），当模型缺失 `quotaInfo` 时直接从对应的 Gemini 组或第三方模型组中继承配额；Argon 优先匹配独立分组，无独立分组时优雅降级至通用 Gemini 分组。(Fixes #3737)
+            -   **严格保护显式零额度与最晚重置时间**: 模型级明确为 0% 时绝不被正数分组额度覆盖；双窗口额度相同时优先采用较晚的重置时间以保护健康账号。(Fixes #3737)
+            -   **废弃内部代号 gemini-pro-agent 彻底清退**: 在 `variant_mapping.rs` 中将 `gemini-3.1-pro` 家族规范映射由已废弃的内部代号 `gemini-pro-agent` 升级为官方标准物理模型 `gemini-3.1-pro-high`，彻底杜绝请求 3.1 Pro 时因调度器寻找已被基准线过滤淘汰的 `gemini-pro-agent` 导致 503 `No accounts available with quota for model: gemini-pro-agent`。(Fixes #3737)
+            -   **Claude 协议补齐账号级动态模型自适应改写**: 选号后调用 `token_manager.resolve_dynamic_model_for_account`，实现与 OpenAI 及 Gemini 协议处理逻辑严格对称，支持根据具体命中账号的实际授权目录自适应匹配候选物理模型。(Fixes #3737)
+        -   **[Gemini 4 Argon 全系列完整调度闭环与独立配额防穿透隔离] (Fixes #3735)**:
+            -   **调度器高阶模型与专属配额组能力继承对齐**: 在 `TokenManager::get_token_internal`（候选池精炼）与 `find_fallback_account_in_same_family` 中，为候选账号过滤补齐 `token_supports_advanced_model` 与专属计费桶（`normalized_target != "claude" && token.model_quotas.contains_key(...)`）能力判定；彻底解决第一阶段收敛出具备 Argon 配额的账号后在第二阶段被 `available_models` 严格检查误杀、导致抛出 503 `No accounts available with quota for model` 的根本缺陷，同时严格保持 Claude 5.5 / 4.6 跨代隔离不串池。(Fixes #3735)
+            -   **全链路健壮识别配额组与能力持久化**: 在 `load_single_account`、`get_available_models_from_json`、`refresh_quota` 以及 `modules/quota.rs` 中全面支持 camelCase 与 snake_case 双字段形态，只要分组或桶的 `display_name` 或 `bucket_id` 包含 `argon` 均健壮捕获其计费配额；当账号已具备 `gemini-4-argon` 时，自动双向补齐内存中的 `available_models` 与限额定义。(Fixes #3735)
+            -   **优化账号表格邮箱列排版与徽章防溢出**: 重构 `AccountTable.tsx` 邮箱列布局为垂直弹性容器，将多徽章列表设为 `flex-wrap` 并移除 `shrink-0`，使 `Argon`、`Claude 5.5`、`GPT-120B` 等多标签在邮箱下方自然换行，杜绝横向穿透遮挡相邻“模型配额”列胶囊条。(Fixes #3735)
+        -   **[Mini 桌面悬浮视窗 macOS 原生真透明、双向毫秒级跨窗口同步与 Claude 拓扑防御增强] (Fixes #3733, Ref #3718, #3721, PR #3738, Thanks to @lbjlaq)**:
+            -   **Mini 桌面悬浮视窗 macOS 原生真透明与拖拽权限健全**: 引入 Tauri `macos-private-api` 特性与原生 `macOSPrivateApi: true` 配置，彻底消除 macOS WebKit 内核强制绘制底色导致的圆角黑边/白矩形；首帧注入透明脚本与 URL 标识，并在能力清单中补齐 mini 窗口拖拽及置顶操作权限。(Fixes #3733, Ref #3718, PR #3738, Thanks to @lbjlaq)
+            -   **深浅模式自适应与跨窗口多语言毫秒级同步**: Mini 悬浮窗自适应继承主控制台与操作系统的暗黑/浅色主题；接入 `app://theme-changed` 与 `app://language-changed` 跨窗口事件监听，保证主控制台与 Mini 悬浮窗无论切换语言还是主题均毫秒级双向无感同步，并补全全部 12 国语言字典。(Fixes #3733, PR #3738)
+            -   **Claude 出站门禁防御性哨兵清理与思考预算下限保护**: 对目标为 Claude 模型的请求执行严格的防御性哨兵清理（Purge），彻底剥离历史会话或跨模型切换遗留的任何哨兵；出站阶段增加 Claude 思考预算下限动态保护（`Clamp thinkingBudget >= 1024`），防止因客户端默认值触发 Anthropic 上游 400 校验异常。(Ref #3721, PR #3738)
+            -   **无签名孤儿思考块安全降级与配额卡片底部细线进度点缀**: 跨模型切换或历史无合法 Claude 签名时，安全丢弃思考块或平滑降级为普通正文；将 `GroupQuotaCard` 进度条融合为底部精致细线点缀，兼顾多徽章与动态标签展示，并保留满额度高对比度变色逻辑。(PR #3738)
+        -   **[官方权威模型全景升级、分级思考传输与大上下文自适应 QoS 调度] (Fixes #3735, Ref #3720)**:
+            -   **官方权威模型提取与过时模型全面下线**: 基于官方 `fetchAvailableModels`（`agentModelSorts` 推荐列表、`imageGenerationModelIds`、`tieredModelIds`）动态提取每个账号真实支持的旗舰模型；在代码库与配置文件（`model_specs.json`, `model_mapping.rs`, `cli_sync.rs`, `opencode_sync.rs`, `modelConfig.ts` 等）中彻底清除历史遗留的硬编码过时模型（如 `gemini-2.0/2.5`、`claude-3-5/3-7`、`chat_*`、`tab_*` 等），仅保留官方权威模型及后缀派生裸模型。(Fixes #3735)
+            -   **全协议端点上下文窗口与最大输出参数标准化**: 在 OpenAI（`/v1/models`）、Claude（`/v1/models`）与 Gemini（`/v1beta/models`）元数据端点中引入并标准化 `context_length`、`max_tokens`、`max_output_tokens` 等字段；严格依据官方规格动态返回真实限制（Gemini 4 Argon / 3.8 Flash 为 `1,048,576 / 65,536`，Claude 5.5 为 `1,000,000 / 128,000`，Claude 4.6 为 `200,000 / 64,000`，GPT-OSS 为 `131,072 / 32,768`）。(Fixes #3735)
+            -   **思考预算与思考等级分类模型传输 (Thinking Budget vs Thinking Level)**: 新一代分级模型（Gemini 4 Argon、Claude 5.5 系列）受控于 `thinkingLevel`（`"LOW"`, `"MEDIUM"`, `"HIGH"`），严格下发思考等级，严禁输出数字预算；传统预算模型（Gemini 3.8 Flash、Gemini 3.1 Pro、Claude 4.6 等）走 `thinkingBudget` 通道，杜绝双字段冲突 400 报错。(Fixes #3735)
+            -   **未缓存 Token 动态耗时补偿与冷启动隔离**: 在 `QoSGuardian` 中引入会话上下文水位跟踪，自动识别超长上下文（如 340k+ 零缓存）冷启动 Prefill 阶段，按每 100K 未缓存 Token 补偿 +7.0s 判定阈值，并放宽平反首字基准阈值至 18.5s。(Ref #3720)
+            -   **QoS 小黑屋一键解除与状态倒计时透明化**: 账号管理卡片与表格视图展示 QoS 小黑屋实时剩余时长，并提供一键解除小黑屋限制按钮及后台接口（`release_account_qos_jail`）。(Ref #3720)
+        -   **[多语言单语纯粹性治理与导航排版对齐]**:
+            -   **导航结构与多语言规范**: 将多协议支持更新为“模型大全与协议”并调换至第三个导航位，12 种系统语言全面对齐单语纯粹性，清除中英混杂。(Ref #3733)
+            -   **配额卡片与提示全量国际化**: `GroupQuotaCard` 悬浮提示卡片完整接入多语言字典，并清理能力徽章上的冗余悬停文案。
+
     *   **v4.9.9-beta.10 (2026-10-23)**:
         -   **[跨模型切换签名逆向重构：对齐官方 Antigravity 哨兵规范，根治 Claude 并发工具 400 签名崩溃]**:
             -   **官方 Base64 哨兵全局对齐**: 逆向分析官方 Antigravity 客户端的 Proto3 JSON 报文规范，将全局哨兵常量从纯文本明文 `skip_thought_signature_validator` 升级为官方原生标准的 44 字节 Base64 密文 `c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=`；同时保留旧明文哨兵兼容识别（`LEGACY_SENTINEL_SIGNATURE`），确保历史缓存零兼容性断裂。
