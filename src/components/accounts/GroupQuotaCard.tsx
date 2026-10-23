@@ -21,11 +21,16 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
     const showLiveIssue = liveState.shouldShow || summary.isWeeklyConstrained;
     const isUnavailable = liveState.isActive || summary.isWeeklyExhausted;
 
-    const label = summary.key === 'gemini'
-        ? 'Gemini'
-        : summary.key === 'argon'
-            ? (fullWidth ? 'Gemini 4 Argon' : 'G4 Argon')
-            : 'Claude / GPT';
+    const label = summary.dynamicLabel || (
+        summary.key === 'gemini'
+            ? 'Gemini'
+            : summary.key === 'argon'
+                ? (fullWidth ? 'Gemini 4 Argon' : 'G4 Argon')
+                : 'Claude / GPT'
+    );
+    const supportedModelsTooltip = summary.supportedModels && summary.supportedModels.length > 0
+        ? `\n支持模型: ${summary.supportedModels.join(', ')}`
+        : '';
     const Icon = summary.key === 'gemini' || summary.key === 'argon' ? Gemini.Color : Sparkles;
 
     const fiveHour = summary.fiveHour;
@@ -74,7 +79,7 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
                         showLiveIssue && "border-amber-400/70 dark:border-amber-500/70 bg-amber-50/80 dark:bg-amber-950/30 ring-1 ring-amber-400/30",
                         isUnavailable && "border-rose-400/70 dark:border-rose-500/70 bg-rose-50/80 dark:bg-rose-950/30 ring-rose-400/30"
                     )}
-                    title={summary.isWeeklyExhausted ? t('accounts.weekly_exhausted_tooltip') : `${label} (5H)`}
+                    title={`${summary.isWeeklyExhausted ? t('accounts.weekly_exhausted_tooltip') : `${label} (5H)`}${supportedModelsTooltip}`}
                 >
                     {/* Background Progress Bar */}
                     <div
@@ -135,7 +140,7 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
                         fiveHour === undefined && showLiveIssue && "border-amber-400/70 dark:border-amber-500/70 bg-amber-50/80 dark:bg-amber-950/30 ring-1 ring-amber-400/30",
                         fiveHour === undefined && isUnavailable && "border-rose-400/70 dark:border-rose-500/70 bg-rose-50/80 dark:bg-rose-950/30 ring-rose-400/30"
                     )}
-                    title={summary.key === 'argon' ? 'Gemini 4 Argon (Weekly Limit)' : t('accounts.quota_window_weekly')}
+                    title={`${summary.key === 'argon' ? 'Gemini 4 Argon (Weekly Limit)' : t('accounts.quota_window_weekly')}${supportedModelsTooltip}`}
                 >
                     {/* Background Progress Bar */}
                     <div

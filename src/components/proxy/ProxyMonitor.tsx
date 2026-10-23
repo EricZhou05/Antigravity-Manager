@@ -715,6 +715,7 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
             ]) as ProxyStats;
 
             if (currentStats) setStats(currentStats);
+            fetchAccounts();
         } catch (e: any) {
             console.error("Failed to load proxy data", e);
             if (e.message === 'Request timeout') {
@@ -830,11 +831,12 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                             return merged.slice(0, 100);
                         });
 
-                        // Fetch stats and total count from backend instead of local calculation
+                        // Fetch stats, total count and latest account QoS states from backend
                         try {
                             const [currentStats, count] = await Promise.all([
                                 invoke<ProxyStats>('get_proxy_stats'),
-                                invoke<number>('get_proxy_logs_count_filtered', { filter: '', errorsOnly: false })
+                                invoke<number>('get_proxy_logs_count_filtered', { filter: '', errorsOnly: false }),
+                                fetchAccounts()
                             ]);
                             if (isMountedRef.current) {
                                 if (currentStats) setStats(currentStats);

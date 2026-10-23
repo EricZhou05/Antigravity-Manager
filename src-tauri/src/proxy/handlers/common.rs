@@ -448,11 +448,19 @@ pub fn report_qos_ttft(
     session_id: Option<&str>,
     ttft_ms: f64,
     is_deep_thinking: bool,
+    input_tokens: Option<u32>,
 ) {
     let tier = token_manager
         .get_account_tier(account_id)
         .unwrap_or_else(|| "PRO".to_string());
-    token_manager.record_qos_ttft(account_id, session_id, &tier, ttft_ms, is_deep_thinking);
+    token_manager.record_qos_ttft(
+        account_id,
+        session_id,
+        &tier,
+        ttft_ms,
+        is_deep_thinking,
+        input_tokens,
+    );
 }
 
 #[cfg(test)]

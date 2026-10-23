@@ -1047,8 +1047,17 @@ pub async fn handle_messages(
         } else if is_client_control {
             // [CRITICAL FIX] 客户端控制模式下，客户端未传数字预算（全缺省或仅传等级）
             // 严禁保留 apply_variant 内部赋予的 spec.thinking_budget (4000)！保持真实客户端状态
+            // 必须保留客户端传来的 effort_hint 思考等级提示，避免进入下游 Pipeline 时因双空丢失导致上游静默抑制
             if let Some(ref mut t) = request.thinking {
                 t.budget_tokens = None;
+                t.effort = effort_hint.clone();
+            }
+        } else {
+            // 网关权威控制模式下，若客户端携带了 effort_hint，保留其思考等级提示供下游 Pipeline 精准感知
+            if let Some(ref mut t) = request.thinking {
+                if t.effort.is_none() && effort_hint.is_some() {
+                    t.effort = effort_hint.clone();
+                }
             }
         }
         tracing::info!(
@@ -2166,6 +2175,7 @@ pub async fn handle_messages(
                         Some(affinity_key.as_str()),
                         ttft_ms,
                         request.thinking.is_some(),
+                        Some(raw_estimated as u32),
                     );
                     if let Some(effective_item) =
                         fallback_attempts.iter_mut().find(|a| a.is_effective)
@@ -2297,6 +2307,7 @@ pub async fn handle_messages(
                                 Some(affinity_key.as_str()),
                                 ttft_ms,
                                 request.thinking.is_some(),
+                                Some(raw_estimated as u32),
                             );
                             if let Some(effective_item) =
                                 fallback_attempts.iter_mut().find(|a| a.is_effective)
@@ -2524,6 +2535,7 @@ pub async fn handle_messages(
                     Some(affinity_key.as_str()),
                     ttft_ms,
                     request.thinking.is_some(),
+                    Some(raw_estimated as u32),
                 );
                 if let Some(effective_item) = fallback_attempts.iter_mut().find(|a| a.is_effective)
                 {
@@ -2972,15 +2984,34 @@ pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoRespo
     let data: Vec<_> = model_ids
         .into_iter()
         .map(|id| {
+            let (fallback_ctx, fallback_out) =
+                crate::proxy::handlers::openai::resolve_model_token_limits(&id);
+            let meta = metadata_map
+                .get(&id)
+                .or_else(|| metadata_map.get(&id.to_lowercase()));
+            let ctx_len = meta
+                .and_then(|m| m.max_tokens)
+                .map(|v| v as i64)
+                .unwrap_or(fallback_ctx);
+            let out_len = meta
+                .and_then(|m| m.max_output_tokens)
+                .map(|v| v as i64)
+                .unwrap_or(fallback_out);
             let mut obj = json!({
                 "id": id,
                 "object": "model",
                 "created": 1706745600,
-                "owned_by": "antigravity"
+                "owned_by": "antigravity",
+                "context_length": ctx_len,
+                "max_context_length": ctx_len,
+                "max_input_tokens": ctx_len,
+                "max_model_len": ctx_len,
+                "max_tokens": ctx_len,
+                "input_token_limit": ctx_len,
+                "max_completion_tokens": out_len,
+                "max_output_tokens": out_len,
+                "output_token_limit": out_len,
             });
-            let meta = metadata_map
-                .get(&id)
-                .or_else(|| metadata_map.get(&id.to_lowercase()));
             if let Some(m) = meta {
                 if let Ok(serde_json::Value::Object(map)) = serde_json::to_value(m) {
                     if let Some(target) = obj.as_object_mut() {
@@ -3026,18 +3057,37 @@ pub async fn handle_retrieve_model(
         )
         .await;
 
+        let (fallback_ctx, fallback_out) =
+            crate::proxy::handlers::openai::resolve_model_token_limits(&matched_id);
         let meta = metadata_map
             .get(&matched_id)
             .or_else(|| metadata_map.get(&matched_id.to_lowercase()));
         let display_name = meta
             .and_then(|m| m.display_name.clone())
             .unwrap_or_else(|| matched_id.clone());
+        let ctx_len = meta
+            .and_then(|m| m.max_tokens)
+            .map(|v| v as i64)
+            .unwrap_or(fallback_ctx);
+        let out_len = meta
+            .and_then(|m| m.max_output_tokens)
+            .map(|v| v as i64)
+            .unwrap_or(fallback_out);
 
         let mut obj = json!({
             "type": "model",
             "id": matched_id.clone(),
             "display_name": display_name,
-            "created_at": "2024-10-22T00:00:00Z"
+            "created_at": "2024-10-22T00:00:00Z",
+            "context_length": ctx_len,
+            "max_context_length": ctx_len,
+            "max_input_tokens": ctx_len,
+            "max_model_len": ctx_len,
+            "max_tokens": ctx_len,
+            "input_token_limit": ctx_len,
+            "max_completion_tokens": out_len,
+            "max_output_tokens": out_len,
+            "output_token_limit": out_len,
         });
 
         if let Some(m) = meta {

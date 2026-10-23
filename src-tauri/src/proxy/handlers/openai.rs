@@ -2302,6 +2302,7 @@ pub async fn handle_chat_completions(
             &mut gemini_body,
         );
         crate::proxy::mappers::common_utils::ensure_gemini_payload_ends_with_user(&mut gemini_body);
+        let estimated_input_tokens = crate::proxy::pipeline::estimate_tokens(&gemini_body);
         if let Some(ref recorder) = upstream_recorder {
             recorder.set_value(&gemini_body);
         }
@@ -2585,6 +2586,7 @@ pub async fn handle_chat_completions(
                                 Some(&session_id),
                                 ttft_ms,
                                 is_thinking,
+                                Some(estimated_input_tokens),
                             );
                             if let Some(effective_item) =
                                 fallback_attempts.iter_mut().find(|a| a.is_effective)
@@ -2840,6 +2842,7 @@ pub async fn handle_chat_completions(
                 Some(&session_id),
                 ttft_ms,
                 is_thinking,
+                Some(estimated_input_tokens),
             );
             if let Some(effective_item) = fallback_attempts.iter_mut().find(|a| a.is_effective) {
                 effective_item.duration_s = ttft_ms / 1000.0;
@@ -5289,10 +5292,13 @@ pub fn resolve_model_token_limits(model_id: &str) -> (i64, i64) {
         }
         let lower = model_id.to_lowercase();
         if lower.contains("claude") {
-            return (200_000, 8_192);
+            if lower.contains("5-5") || lower.contains("5.5") {
+                return (1_000_000, 128_000);
+            }
+            return (200_000, 64_000);
         }
         if lower.contains("gpt") || lower.contains("o1") || lower.contains("o3") {
-            return (128_000, 16_384);
+            return (131_072, 32_768);
         }
     }
     (1_048_576, 65_536)
@@ -5358,11 +5364,11 @@ mod model_probe_compatibility_tests {
         // Uncataloged fallbacks
         let (ctx_claude, out_claude) = resolve_model_token_limits("custom-claude-unknown");
         assert_eq!(ctx_claude, 200_000);
-        assert_eq!(out_claude, 8_192);
+        assert_eq!(out_claude, 64_000);
 
         let (ctx_gpt, out_gpt) = resolve_model_token_limits("unknown-gpt-custom");
-        assert_eq!(ctx_gpt, 128_000);
-        assert_eq!(out_gpt, 16_384);
+        assert_eq!(ctx_gpt, 131_072);
+        assert_eq!(out_gpt, 32_768);
 
         let (ctx_def, out_def) = resolve_model_token_limits("");
         assert_eq!(ctx_def, 1_048_576);
@@ -5403,7 +5409,18 @@ pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoRespo
     let data: Vec<_> = model_ids
         .into_iter()
         .map(|id| {
-            let (ctx_len, out_len) = resolve_model_token_limits(&id);
+            let (fallback_ctx, fallback_out) = resolve_model_token_limits(&id);
+            let meta = metadata_map
+                .get(&id)
+                .or_else(|| metadata_map.get(&id.to_lowercase()));
+            let ctx_len = meta
+                .and_then(|m| m.max_tokens)
+                .map(|v| v as i64)
+                .unwrap_or(fallback_ctx);
+            let out_len = meta
+                .and_then(|m| m.max_output_tokens)
+                .map(|v| v as i64)
+                .unwrap_or(fallback_out);
             let mut obj = json!({
                 "id": id,
                 "object": "model",
@@ -5414,12 +5431,11 @@ pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoRespo
                 "max_input_tokens": ctx_len,
                 "max_model_len": ctx_len,
                 "max_tokens": ctx_len,
+                "input_token_limit": ctx_len,
                 "max_completion_tokens": out_len,
                 "max_output_tokens": out_len,
+                "output_token_limit": out_len,
             });
-            let meta = metadata_map
-                .get(&id)
-                .or_else(|| metadata_map.get(&id.to_lowercase()));
             if let Some(m) = meta {
                 if let Ok(serde_json::Value::Object(map)) = serde_json::to_value(m) {
                     if let Some(target) = obj.as_object_mut() {
@@ -5466,13 +5482,25 @@ pub async fn handle_retrieve_model(
     };
 
     if let Some(matched_id) = resolved_id {
-        let (ctx_len, out_len) = resolve_model_token_limits(&matched_id);
+        let (fallback_ctx, fallback_out) = resolve_model_token_limits(&matched_id);
         let metadata_map = get_all_dynamic_models_metadata(
             &state.custom_mapping,
             Some(&state.token_manager),
             only_raw,
         )
         .await;
+
+        let meta = metadata_map
+            .get(&matched_id)
+            .or_else(|| metadata_map.get(&matched_id.to_lowercase()));
+        let ctx_len = meta
+            .and_then(|m| m.max_tokens)
+            .map(|v| v as i64)
+            .unwrap_or(fallback_ctx);
+        let out_len = meta
+            .and_then(|m| m.max_output_tokens)
+            .map(|v| v as i64)
+            .unwrap_or(fallback_out);
 
         let mut obj = json!({
             "id": matched_id,
@@ -5484,12 +5512,11 @@ pub async fn handle_retrieve_model(
             "max_input_tokens": ctx_len,
             "max_model_len": ctx_len,
             "max_tokens": ctx_len,
+            "input_token_limit": ctx_len,
             "max_completion_tokens": out_len,
             "max_output_tokens": out_len,
+            "output_token_limit": out_len,
         });
-        let meta = metadata_map
-            .get(&matched_id)
-            .or_else(|| metadata_map.get(&matched_id.to_lowercase()));
         if let Some(m) = meta {
             if let Ok(serde_json::Value::Object(map)) = serde_json::to_value(m) {
                 if let Some(target) = obj.as_object_mut() {

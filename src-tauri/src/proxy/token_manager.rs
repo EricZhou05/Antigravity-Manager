@@ -1717,11 +1717,6 @@ impl TokenManager {
         account_id: &str,
         mapped_model: &str,
     ) -> String {
-        let candidates = match Self::build_dynamic_model_candidates(mapped_model) {
-            Some(c) => c,
-            None => return mapped_model.to_string(),
-        };
-
         let account_path = match self.tokens.get(account_id) {
             Some(token) => token.account_path.clone(),
             None => return mapped_model.to_string(),
@@ -1732,16 +1727,38 @@ impl TokenManager {
             _ => return mapped_model.to_string(),
         };
 
-        for candidate in candidates {
-            if available_models.contains(&candidate) {
-                if candidate != mapped_model.to_lowercase() {
-                    tracing::info!(
-                        "[Dynamic-Model-Rewrite] account={} {} -> {}",
-                        account_id,
-                        mapped_model,
-                        candidate
-                    );
+        let mapped_lower = mapped_model.trim().to_lowercase();
+        if available_models.contains(&mapped_lower) {
+            return mapped_model.to_string();
+        }
+
+        if let Some(candidates) = Self::build_dynamic_model_candidates(mapped_model) {
+            for candidate in candidates {
+                if available_models.contains(&candidate) {
+                    if candidate != mapped_lower {
+                        tracing::info!(
+                            "[Dynamic-Model-Rewrite] account={} {} -> {}",
+                            account_id,
+                            mapped_model,
+                            candidate
+                        );
+                    }
+                    return candidate;
                 }
+            }
+        }
+
+        // 若传入的是无后缀派生裸模型（如 claude-opus-5-5, gemini-4-argon, claude-opus-4-6 等），
+        // 严格在该账号实际支持的同基底档位变体中选择（绝不跨代串池）
+        for suffix in ["tiered", "medium", "high", "low", "thinking"] {
+            let candidate = format!("{}-{}", mapped_lower, suffix);
+            if available_models.contains(&candidate) {
+                tracing::info!(
+                    "[Dynamic-Model-Rewrite] account={} bare model {} -> {}",
+                    account_id,
+                    mapped_model,
+                    candidate
+                );
                 return candidate;
             }
         }
@@ -2606,35 +2623,33 @@ impl TokenManager {
         let candidate_count_before = tokens_snapshot.len();
 
         if any_loaded {
-            // 至少有一个账号已刷新配额目录 → 启用精确过滤
+            // 至少有一个账号已刷新配额目录 → 严格按账号实际支持的 available_models 过滤（严禁跨世代/跨家族串池，如 5.5 串到 4.6 账号池或反之）
             tokens_snapshot.retain(|t| {
                 if t.available_models.is_empty() {
-                    // 该账号尚未刷新 available_models，暂时保守放行（上游会最终鉴权）
-                    // 仅当池中完全没有已刷新账号时才会走到这里（矛盾条件，理论不可达）
-                    return false;
+                    // 该账号尚未刷新 available_models（冷启动未刷新的账号）：退回 model_quotas 归一化桶兜底
+                    return t.model_quotas.contains_key(&normalized_target);
                 }
-                // Step A: 精确匹配（含档位后缀的完整名，如 gemini-4-argon-high）
+                // Step A: 精确匹配（含档位后缀的完整名，如 gemini-4-argon-high / claude-opus-5-5-high / claude-opus-4-6-thinking）
                 if t.available_models.contains(&target_lower) {
                     return true;
                 }
-                // Step B: 基名匹配（剥离档位后缀，如 gemini-4-argon-high → gemini-4-argon）
-                if !base_name.is_empty() && base_name != target_lower {
+                // Step B: 基名匹配（剥离档位后缀，如 gemini-4-argon-high → gemini-4-argon，或 claude-opus-4-6 → claude-opus-4-6-thinking）
+                if !base_name.is_empty() {
                     if t.available_models.contains(&base_name) {
                         return true;
                     }
-                    // 额外兼容：账号持有任意该基名的档位变体（如账号有 gemini-4-argon-high，
-                    // 请求为 gemini-4-argon），通过前缀检测处理
                     if t.available_models.iter().any(|m| {
+                        let m_base = crate::proxy::common::model_mapping::strip_tier_suffix(m);
                         m == &base_name
+                            || m_base == base_name
                             || m.starts_with(&format!("{}-", base_name))
                             || m.starts_with(&format!("{}@", base_name))
                     }) {
                         return true;
                     }
                 }
-                // Step C: 归一化桶兜底（处理上游将多个变体合并到同一 quota key 的经典模型）
-                // 仅当 available_models 中不含任何该系列痕迹时才降级（避免误放未授权账号）
-                t.model_quotas.contains_key(&normalized_target)
+                // 已加载 available_models 的账号拥有权威支持清单，严禁退回 t.model_quotas.contains_key("claude") 等宽泛桶导致 5.5 与 4.6 串池！
+                false
             });
         } else {
             // 冷启动：所有账号均未刷新 available_models
@@ -3841,11 +3856,23 @@ impl TokenManager {
                 continue;
             }
 
-            // 3. 检查模型能力支持
+            // 3. 检查模型能力支持（严格按 available_models 实际支持列表隔离，严禁跨代串池）
             if any_loaded {
-                let has_cap = token.available_models.contains(&target_lower)
-                    || (!base_name.is_empty() && token.available_models.contains(&base_name))
-                    || token.model_quotas.contains_key(&normalized_target);
+                let has_cap = if token.available_models.is_empty() {
+                    token.model_quotas.contains_key(&normalized_target)
+                } else {
+                    token.available_models.contains(&target_lower)
+                        || (!base_name.is_empty() && token.available_models.contains(&base_name))
+                        || (!base_name.is_empty()
+                            && token.available_models.iter().any(|m| {
+                                let m_base =
+                                    crate::proxy::common::model_mapping::strip_tier_suffix(m);
+                                m == &base_name
+                                    || m_base == base_name
+                                    || m.starts_with(&format!("{}-", base_name))
+                                    || m.starts_with(&format!("{}@", base_name))
+                            }))
+                };
                 if !has_cap {
                     tracing::debug!(
                         "[Fallback Check] Account {} lacks capability for model {}, skipping",
@@ -4062,8 +4089,11 @@ impl TokenManager {
         tracing::info!("账号 {} 正在实时刷新配额...", email);
         match crate::modules::quota::fetch_quota(&access_token, email, Some(&account_id)).await {
             Ok((quota_data, _project_id)) => {
-                // [NEW] 实时刷新成功后，立即同步最新配额数据至内存 token.model_quotas 缓存
+                // [NEW] 实时刷新成功后，立即同步最新配额数据与 available_models 至内存缓存
                 if let Some(mut token) = self.tokens.get_mut(&account_id) {
+                    if !quota_data.models.is_empty() {
+                        token.available_models.clear();
+                    }
                     for m in &quota_data.models {
                         let norm_name =
                             crate::proxy::common::model_mapping::normalize_to_standard_id(&m.name)
@@ -4072,6 +4102,7 @@ impl TokenManager {
                         token
                             .model_quotas
                             .insert(m.name.clone(), m.percentage as i32);
+                        token.available_models.insert(m.name.to_lowercase());
                     }
                 }
 
@@ -4845,6 +4876,7 @@ impl TokenManager {
         tier: &str,
         ttft_ms: f64,
         is_deep_thinking: bool,
+        input_tokens: Option<u32>,
     ) {
         let all_tokens: Vec<ProxyToken> = self
             .tokens
@@ -4855,9 +4887,11 @@ impl TokenManager {
 
         let action = self.qos_guardian.record_and_evaluate(
             account_id,
+            session_id,
             tier,
             ttft_ms,
             is_deep_thinking,
+            input_tokens,
             &all_tokens,
             |acc_id| rate_limiter.is_rate_limited(acc_id, None),
         );
@@ -5345,6 +5379,10 @@ impl TokenManager {
         let mut all_models = std::collections::HashSet::new();
         for entry in self.tokens.iter() {
             let token = entry.value();
+
+            for model_id in &token.available_models {
+                all_models.insert(model_id.clone());
+            }
 
             // Keep the raw quota model IDs for /v1/models discovery. `model_quotas`
             // intentionally stores normalized protection buckets (e.g. gemini-3-flash),

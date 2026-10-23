@@ -47,6 +47,26 @@ struct QuotaResponse {
     models: std::collections::HashMap<String, crate::models::OfficialModelInfo>,
     #[serde(rename = "deprecatedModelIds")]
     deprecated_model_ids: Option<std::collections::HashMap<String, DeprecatedModelInfo>>,
+    #[serde(rename = "agentModelSorts", default)]
+    agent_model_sorts: Vec<AgentModelSort>,
+    #[serde(rename = "imageGenerationModelIds", default)]
+    image_generation_model_ids: Vec<String>,
+    #[serde(rename = "tieredModelIds", default)]
+    tiered_model_ids: Option<std::collections::HashMap<String, Vec<String>>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct AgentModelSort {
+    #[serde(rename = "displayName")]
+    display_name: Option<String>,
+    #[serde(default)]
+    groups: Vec<AgentModelSortGroup>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct AgentModelSortGroup {
+    #[serde(rename = "modelIds", default)]
+    model_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -425,6 +445,32 @@ pub async fn fetch_quota_with_cache(
                 // 动态更新官方全量模型结构体目录缓存
                 crate::models::OfficialModelCatalog::update(quota_response.models.clone());
 
+                // 提取该账号在官方 fetchAvailableModels 中真实披露支持的推荐/专用模型集合：
+                // 1. agentModelSorts (Recommended 核心模型列表，如 gemini-4-argon-*, gemini-3.8-flash-*, claude-opus-5-5-*, claude-sonnet-5-5-* 或 claude-*-4-6, gpt-oss-120b-medium)
+                // 2. imageGenerationModelIds (图像生成模型，如 gemini-3.1-flash-image)
+                // 3. tieredModelIds (自适应分层模型，如 gemini-3.8-flash-tiered, gemini-3.5-flash-lite)
+                let mut official_supported_ids = std::collections::HashSet::new();
+                for sort in &quota_response.agent_model_sorts {
+                    for group in &sort.groups {
+                        for id in &group.model_ids {
+                            official_supported_ids.insert(id.trim().to_lowercase());
+                        }
+                    }
+                }
+                for id in &quota_response.image_generation_model_ids {
+                    official_supported_ids.insert(id.trim().to_lowercase());
+                }
+                if let Some(ref tiered_map) = quota_response.tiered_model_ids {
+                    for ids in tiered_map.values() {
+                        for id in ids {
+                            official_supported_ids.insert(id.trim().to_lowercase());
+                        }
+                    }
+                }
+                if !official_supported_ids.is_empty() {
+                    official_supported_ids.insert("gemini-3.1-flash-lite".to_string());
+                }
+
                 for (name, info) in quota_response.models {
                     if let Some(quota_info) = info.quota_info {
                         let percentage = quota_info
@@ -433,13 +479,16 @@ pub async fn fetch_quota_with_cache(
                             .unwrap_or(0);
 
                         let reset_time = quota_info.reset_time.clone().unwrap_or_default();
+                        let name_lower = name.trim().to_lowercase();
 
-                        // Only keep models we care about (exclude internal chat models)
-                        if name.starts_with("gemini")
-                            || name.starts_with("claude")
-                            || name.starts_with("gpt")
-                            || name.starts_with("image")
-                            || name.starts_with("imagen")
+                        let in_official_sort = official_supported_ids.is_empty()
+                            || official_supported_ids.contains(&name_lower);
+
+                        // 仅保留当前账号官方实际支持且符合旗舰基准线的模型（彻底剔除 2.5、3.5-flash-low、3-flash-agent、chat_* 等遗留内部条目）
+                        if in_official_sort
+                            && crate::proxy::common::model_mapping::is_model_compliant_with_baseline(
+                                &name,
+                            )
                         {
                             let model_quota = crate::models::quota::ModelQuota {
                                 name,

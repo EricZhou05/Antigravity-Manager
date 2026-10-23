@@ -40,6 +40,7 @@ pub struct TtftSample {
     pub ttft_ms: f64,
     pub timestamp: Instant,
     pub is_thinking: bool,
+    pub is_cold_start: bool,
 }
 
 /// 裁决动作
@@ -65,6 +66,8 @@ pub struct QoSGuardian {
     pub states: Arc<DashMap<String, AccountQoSState>>,
     /// 账号最近有效 TTFT 滑动窗口采样: account_id -> Vec<TtftSample> (保留最近 15 分钟)
     pub samples: Arc<DashMap<String, Vec<TtftSample>>>,
+    /// 会话上下文水位跟踪: (account_id, session_id) -> (last_input_tokens, last_seen_at)
+    pub session_watermarks: Arc<DashMap<(String, String), (u32, Instant)>>,
     /// 惩罚历史记忆: account_id -> (last_level, updated_at)，保留 30 分钟防短时高频复发
     pub penalty_memory: Arc<DashMap<String, (usize, Instant)>>,
     /// 阶梯冷却时间表
@@ -87,6 +90,7 @@ impl QoSGuardian {
         Self {
             states: Arc::new(DashMap::new()),
             samples: Arc::new(DashMap::new()),
+            session_watermarks: Arc::new(DashMap::new()),
             penalty_memory: Arc::new(DashMap::new()),
             ladder_intervals: ladder,
         }
@@ -174,11 +178,15 @@ impl QoSGuardian {
                 }
             }
 
-            // 提取该纯净同行近 15 分钟内的非思考样本均值
+            // 提取该纯净同行近 15 分钟内的非思考、非冷启动样本均值
             if let Some(samples) = self.samples.get(&acc.account_id) {
                 let fresh_samples: Vec<f64> = samples
                     .iter()
-                    .filter(|s| now.duration_since(s.timestamp) <= sample_ttl && !s.is_thinking)
+                    .filter(|s| {
+                        now.duration_since(s.timestamp) <= sample_ttl
+                            && !s.is_thinking
+                            && !s.is_cold_start
+                    })
                     .map(|s| s.ttft_ms)
                     .collect();
 
@@ -200,9 +208,11 @@ impl QoSGuardian {
     pub fn record_and_evaluate<F>(
         &self,
         account_id: &str,
+        session_id: Option<&str>,
         tier: &str,
         ttft_ms: f64,
         is_deep_thinking: bool,
+        input_tokens: Option<u32>,
         all_accounts: &[ProxyToken],
         is_unhealthy_or_limited: F,
     ) -> QoSAction
@@ -212,15 +222,57 @@ impl QoSGuardian {
         let ttft_secs = ttft_ms / 1000.0;
         let now = Instant::now();
 
-        // 思考模型动态预算补偿阈值：非深度思考为 20.0s，深度思考上浮至 35.0s
-        let threshold_secs = if is_deep_thinking { 35.0 } else { 20.0 };
+        // 1. 未缓存 Token 规模计算 (Uncached Tokens)
+        // 区分大 Token 冷启动 (Cold Start Prefill) 与 热缓存交互 (Hot Cache Turn)
+        let uncached_tokens = if let Some(sid) = session_id.filter(|s| !s.is_empty()) {
+            let key = (account_id.to_string(), sid.to_string());
+            let uncached = match self.session_watermarks.get(&key) {
+                Some(prev) => {
+                    let (prev_toks, prev_time) = *prev.value();
+                    // 若距离上次请求超过 5 分钟，上游 KV Cache 大概率已失效淘汰，按全量冷启动计算
+                    if now.duration_since(prev_time) > Duration::from_secs(5 * 60) {
+                        input_tokens.unwrap_or(0)
+                    } else {
+                        input_tokens.unwrap_or(0).saturating_sub(prev_toks)
+                    }
+                }
+                None => {
+                    // 该会话在该账号上的首次请求 (冷启动 Prefill)
+                    input_tokens.unwrap_or(0)
+                }
+            };
+            if let Some(tokens) = input_tokens {
+                self.session_watermarks.insert(key, (tokens, now));
+            }
+            uncached
+        } else {
+            input_tokens.unwrap_or(0)
+        };
 
-        // 1. 提取纯净同侪均值 (秒)
+        if self.session_watermarks.len() > 2000 {
+            self.session_watermarks
+                .retain(|_, (_, ts)| now.duration_since(*ts).as_secs() < 15 * 60);
+        }
+
+        // 2. 动态预算补偿算法：
+        // - 每 100K 未缓存 Token 额外补偿 +7.0s 物理 Prefill 计算耗时
+        // - 基础阈值：非深度思考为 20.0s，深度思考上浮至 35.0s
+        let uncached_bonus_secs = (uncached_tokens as f64 / 100_000.0) * 7.0;
+        let base_threshold_secs = if is_deep_thinking { 35.0 } else { 20.0 };
+        let threshold_secs = base_threshold_secs + uncached_bonus_secs;
+
+        // 宽限平反阈值：基础为 18.5s，同比例支持未缓存增量补偿
+        let vindicate_threshold_secs = 18.5 + uncached_bonus_secs;
+
+        // 标记是否为大 Token 冷启动 (未缓存 >= 80K)
+        let is_cold_start = uncached_tokens >= 80_000;
+
+        // 3. 提取纯净同侪均值 (秒)
         let peer_avg_secs = self
             .calculate_pure_peer_avg(account_id, tier, all_accounts, &is_unhealthy_or_limited)
             .map(|ms| ms / 1000.0);
 
-        // 2. 检查全局雪崩防护：若纯净同行均值本身也 >= 20s，说明上游机房大面积拥堵，刹车不触发单号惩罚
+        // 4. 检查全局雪崩防护：若纯净同行均值本身也 >= 20s，说明上游机房大面积拥堵，刹车不触发单号惩罚
         if let Some(peer_avg) = peer_avg_secs {
             if peer_avg >= threshold_secs {
                 tracing::warn!(
@@ -228,16 +280,16 @@ impl QoSGuardian {
                     peer_avg, threshold_secs, account_id
                 );
                 // 记录采样后退出
-                self.push_sample(account_id, ttft_ms, is_deep_thinking);
+                self.push_sample(account_id, ttft_ms, is_deep_thinking, is_cold_start);
                 return QoSAction::None;
             }
         }
 
-        // 3. 判定是否构成一次卡顿打击 (Strike)
+        // 5. 判定是否构成一次卡顿打击 (Strike)
         let is_strike = match peer_avg_secs {
             // 同行健康 (<20s)，唯独当前账号超标
             Some(_) => ttft_secs > threshold_secs,
-            // 纯净同行不足时，退化为绝对阈值防护 (非思考 > 30s，思考 > 45s)
+            // 纯净同行不足时，退化为绝对阈值防护 (额外 +10.0s 兜底)
             None => ttft_secs > (threshold_secs + 10.0),
         };
 
@@ -251,10 +303,12 @@ impl QoSGuardian {
                 if is_strike {
                     // 第 1 次超标：打上瞬态可疑标记！
                     tracing::warn!(
-                        "⚠️ [QoS Guardian] Account {} tagged as SUSPICIOUS (TTFT={:.2}s > {:.2}s)",
+                        "⚠️ [QoS Guardian] Account {} tagged as SUSPICIOUS (TTFT={:.2}s > {:.2}s, uncached_tokens={}, bonus=+{:.2}s)",
                         account_id,
                         ttft_secs,
-                        threshold_secs
+                        threshold_secs,
+                        uncached_tokens,
+                        uncached_bonus_secs
                     );
                     *current_state = AccountQoSState::Suspicious {
                         first_strike_at: now,
@@ -314,8 +368,8 @@ impl QoSGuardian {
                         };
                         QoSAction::TaggedSuspicious
                     }
-                } else if ttft_secs < 8.0 {
-                    // 表现优异 (TTFT < 8s)：双重确认平反
+                } else if ttft_secs < vindicate_threshold_secs {
+                    // 表现良好 (TTFT < 宽限线)：双重确认平反
                     consecutive_healthy += 1;
                     if consecutive_healthy >= 2 || !window_valid {
                         tracing::info!(
@@ -333,7 +387,7 @@ impl QoSGuardian {
                         QoSAction::None
                     }
                 } else {
-                    // 8s ~ 20s 处于迟滞死区 (Deadband)：不惩罚也不平反，保持原状态
+                    // vindicate_threshold_secs ~ threshold_secs 处于迟滞死区 (Deadband)：不惩罚也不平反，保持原状态
                     if !window_valid {
                         // 超过 5 分钟无再次违规，TTL 衰减平反
                         tracing::info!(
@@ -375,8 +429,8 @@ impl QoSGuardian {
                         escalated_level: next_level,
                         wait_duration: next_wait,
                     }
-                } else if ttft_secs < 8.0 {
-                    // 缓刑期间真实请求达标 (<8s)
+                } else if ttft_secs < vindicate_threshold_secs {
+                    // 缓刑期间真实请求达标 (< vindicate_threshold_secs)
                     consecutive_healthy += 1;
                     if consecutive_healthy >= 2 {
                         tracing::info!(
@@ -394,7 +448,7 @@ impl QoSGuardian {
                         QoSAction::None
                     }
                 } else {
-                    // 死区 (8s~20s)：不记通过，也不算失败
+                    // 死区：不记通过，也不算失败
                     QoSAction::None
                 }
             }
@@ -404,8 +458,8 @@ impl QoSGuardian {
             }
         };
 
-        // 记录采样
-        self.push_sample(account_id, ttft_ms, is_deep_thinking);
+        // 记录采样 (大 Token 冷启动样本在基线计算中隔离)
+        self.push_sample(account_id, ttft_ms, is_deep_thinking, is_cold_start);
 
         action
     }
@@ -428,12 +482,19 @@ impl QoSGuardian {
     }
 
     /// 记录历史滑动采样 (保留最近 15 分钟)
-    fn push_sample(&self, account_id: &str, ttft_ms: f64, is_thinking: bool) {
+    pub fn push_sample(
+        &self,
+        account_id: &str,
+        ttft_ms: f64,
+        is_thinking: bool,
+        is_cold_start: bool,
+    ) {
         let mut entry = self.samples.entry(account_id.to_string()).or_default();
         entry.push(TtftSample {
             ttft_ms,
             timestamp: Instant::now(),
             is_thinking,
+            is_cold_start,
         });
         let ttl = Duration::from_secs(15 * 60);
         entry.retain(|s| s.timestamp.elapsed() <= ttl);
@@ -489,6 +550,8 @@ impl QoSGuardian {
             .insert(account_id.to_string(), AccountQoSState::Healthy);
         self.samples.remove(account_id);
         self.penalty_memory.remove(account_id);
+        self.session_watermarks
+            .retain(|(acc, _), _| acc != account_id);
     }
 }
 
@@ -540,9 +603,9 @@ mod tests {
         ];
 
         // 注入采样数据
-        guardian.push_sample("acc_b", 4000.0, false); // 4.0s
-        guardian.push_sample("acc_c", 6000.0, false); // 6.0s
-        guardian.push_sample("acc_ultra", 2000.0, false); // ULTRA 不计入 PRO
+        guardian.push_sample("acc_b", 4000.0, false, false); // 4.0s
+        guardian.push_sample("acc_c", 6000.0, false, false); // 6.0s
+        guardian.push_sample("acc_ultra", 2000.0, false, false); // ULTRA 不计入 PRO
 
         // 正常情况下，计算 acc_a 的同类 (PRO) 纯净基线应为 (4000 + 6000) / 2 = 5000ms
         let avg = guardian.calculate_pure_peer_avg("acc_a", "PRO", &all_accounts, |_| false);
@@ -582,14 +645,16 @@ mod tests {
         let all = vec![acc_a.clone(), acc_b.clone()];
 
         // 注入同行基线 4.0s
-        guardian.push_sample("acc_b", 4000.0, false);
+        guardian.push_sample("acc_b", 4000.0, false, false);
 
         // 深度思考模型，TTFT = 25s (25000ms)，由于阈值上浮至 35s，不触发 Strike
         let action = guardian.record_and_evaluate(
             "acc_a",
+            None,
             "PRO",
             25000.0,
             true, // is_deep_thinking = true
+            None,
             &all,
             |_| false,
         );
@@ -598,7 +663,8 @@ mod tests {
 
         // 深度思考模型，TTFT = 40s (40000ms) > 35s，此时触发 Strike
         let action_strike =
-            guardian.record_and_evaluate("acc_a", "PRO", 40000.0, true, &all, |_| false);
+            guardian
+                .record_and_evaluate("acc_a", None, "PRO", 40000.0, true, None, &all, |_| false);
         assert_eq!(action_strike, QoSAction::TaggedSuspicious);
         assert!(guardian.is_suspicious("acc_a"));
     }
@@ -611,10 +677,12 @@ mod tests {
         let all = vec![acc_a.clone(), acc_b.clone()];
 
         // 同行均值已经达到 25s (25000ms >= 20s)，说明上游全局拥堵
-        guardian.push_sample("acc_b", 25000.0, false);
+        guardian.push_sample("acc_b", 25000.0, false, false);
 
         // 此时 acc_a 即使耗时 26s，也触发全局制动刹车，不误判 Strike
-        let action = guardian.record_and_evaluate("acc_a", "PRO", 26000.0, false, &all, |_| false);
+        let action =
+            guardian
+                .record_and_evaluate("acc_a", None, "PRO", 26000.0, false, None, &all, |_| false);
         assert_eq!(action, QoSAction::None);
         assert_eq!(guardian.get_state("acc_a"), AccountQoSState::Healthy);
     }
@@ -625,14 +693,16 @@ mod tests {
         let acc_a = create_test_token("acc_a", "PRO");
         let acc_b = create_test_token("acc_b", "PRO");
         let all = vec![acc_a.clone(), acc_b.clone()];
-        guardian.push_sample("acc_b", 4000.0, false);
+        guardian.push_sample("acc_b", 4000.0, false, false);
 
         // 第 1 次超标打成 Suspicious
-        guardian.record_and_evaluate("acc_a", "PRO", 22000.0, false, &all, |_| false);
+        guardian.record_and_evaluate("acc_a", None, "PRO", 22000.0, false, None, &all, |_| false);
         assert!(guardian.is_suspicious("acc_a"));
 
-        // 下一次耗时 12s（处于 8s ~ 20s 迟滞死区），保持状态不变，不加重也不平反
-        let action = guardian.record_and_evaluate("acc_a", "PRO", 12000.0, false, &all, |_| false);
+        // 下一次耗时 19s（处于 18.5s ~ 20s 迟滞死区），保持状态不变，不加重也不平反
+        let action =
+            guardian
+                .record_and_evaluate("acc_a", None, "PRO", 19000.0, false, None, &all, |_| false);
         assert_eq!(action, QoSAction::None);
         assert!(guardian.is_suspicious("acc_a"));
     }
@@ -643,15 +713,19 @@ mod tests {
         let acc_a = create_test_token("acc_a", "PRO");
         let acc_b = create_test_token("acc_b", "PRO");
         let all = vec![acc_a.clone(), acc_b.clone()];
-        guardian.push_sample("acc_b", 4000.0, false);
+        guardian.push_sample("acc_b", 4000.0, false, false);
 
         // 第一次超标 -> TaggedSuspicious
-        let action1 = guardian.record_and_evaluate("acc_a", "PRO", 22000.0, false, &all, |_| false);
+        let action1 =
+            guardian
+                .record_and_evaluate("acc_a", None, "PRO", 22000.0, false, None, &all, |_| false);
         assert_eq!(action1, QoSAction::TaggedSuspicious);
         assert!(guardian.is_suspicious("acc_a"));
 
         // 第二次超标 -> TriggerJailedAndUnbind
-        let action2 = guardian.record_and_evaluate("acc_a", "PRO", 25000.0, false, &all, |_| false);
+        let action2 =
+            guardian
+                .record_and_evaluate("acc_a", None, "PRO", 25000.0, false, None, &all, |_| false);
         assert_eq!(
             action2,
             QoSAction::TriggerJailedAndUnbind {
@@ -668,11 +742,11 @@ mod tests {
         let acc_a = create_test_token("acc_a", "PRO");
         let acc_b = create_test_token("acc_b", "PRO");
         let all = vec![acc_a.clone(), acc_b.clone()];
-        guardian.push_sample("acc_b", 4000.0, false);
+        guardian.push_sample("acc_b", 4000.0, false, false);
 
         // 触发入狱 Level 0 (2m)
-        guardian.record_and_evaluate("acc_a", "PRO", 22000.0, false, &all, |_| false);
-        guardian.record_and_evaluate("acc_a", "PRO", 22000.0, false, &all, |_| false);
+        guardian.record_and_evaluate("acc_a", None, "PRO", 22000.0, false, None, &all, |_| false);
+        guardian.record_and_evaluate("acc_a", None, "PRO", 22000.0, false, None, &all, |_| false);
         assert!(guardian.is_jailed_or_probing("acc_a"));
 
         // 探针失败 -> 升级为 Level 1 (5m)，时间从 0 重新计时
@@ -685,11 +759,15 @@ mod tests {
         assert!(guardian.is_half_open("acc_a"));
 
         // 缓刑期间真实业务请求连续 2 次通过 (<8s) -> 正式满血出狱
-        let act1 = guardian.record_and_evaluate("acc_a", "PRO", 5000.0, false, &all, |_| false);
+        let act1 =
+            guardian
+                .record_and_evaluate("acc_a", None, "PRO", 5000.0, false, None, &all, |_| false);
         assert_eq!(act1, QoSAction::None);
         assert!(guardian.is_half_open("acc_a"));
 
-        let act2 = guardian.record_and_evaluate("acc_a", "PRO", 4000.0, false, &all, |_| false);
+        let act2 =
+            guardian
+                .record_and_evaluate("acc_a", None, "PRO", 4000.0, false, None, &all, |_| false);
         assert_eq!(act2, QoSAction::HalfOpenPassed);
         assert_eq!(guardian.get_state("acc_a"), AccountQoSState::Healthy);
     }
@@ -700,7 +778,7 @@ mod tests {
         let acc_a = create_test_token("acc_a", "PRO");
         let acc_b = create_test_token("acc_b", "PRO");
         let all = vec![acc_a.clone(), acc_b.clone()];
-        guardian.push_sample("acc_b", 4000.0, false);
+        guardian.push_sample("acc_b", 4000.0, false, false);
 
         // 模拟前次已被关押到 Level 2 (10分钟) 并刚康复
         guardian
@@ -708,8 +786,10 @@ mod tests {
             .insert("acc_a".to_string(), (2, Instant::now()));
 
         // 短期内再次复发违规 2 次
-        guardian.record_and_evaluate("acc_a", "PRO", 22000.0, false, &all, |_| false);
-        let action = guardian.record_and_evaluate("acc_a", "PRO", 22000.0, false, &all, |_| false);
+        guardian.record_and_evaluate("acc_a", None, "PRO", 22000.0, false, None, &all, |_| false);
+        let action =
+            guardian
+                .record_and_evaluate("acc_a", None, "PRO", 22000.0, false, None, &all, |_| false);
 
         // 验证：直接继承并升级至 Level 3 (15分钟)，而不是又从 Level 0 重新来
         assert_eq!(
@@ -719,5 +799,55 @@ mod tests {
                 wait_duration: Duration::from_secs(15 * 60),
             }
         );
+    }
+
+    #[test]
+    fn test_cold_start_uncached_tokens_bonus_and_isolation() {
+        let guardian = QoSGuardian::new();
+        let acc_a = create_test_token("acc_a", "PRO");
+        let acc_b = create_test_token("acc_b", "PRO");
+        let all = vec![acc_a.clone(), acc_b.clone()];
+
+        // 注入同行基线 4.0s
+        guardian.push_sample("acc_b", 4000.0, false, false);
+
+        // 模拟场景：346K 零缓存冷启动 (大 Token Prefill)
+        // 按照用户规则：每 100K 未缓存 Token 补偿 +7.0s
+        // 346K tokens 补偿 = 3.46 * 7.0s = 24.22s
+        // 深度思考基础阈值 35.0s -> 提升至 35.0 + 24.22 = 59.22s
+        // 若实际首字为 55.0s (55000ms)，未超过 59.22s，应当豁免，不触发 Strike
+        let act = guardian.record_and_evaluate(
+            "acc_a",
+            Some("session_large_1"),
+            "PRO",
+            55000.0,
+            true, // is_deep_thinking
+            Some(346_000),
+            &all,
+            |_| false,
+        );
+        assert_eq!(act, QoSAction::None);
+        assert_eq!(guardian.get_state("acc_a"), AccountQoSState::Healthy);
+
+        // 验证冷启动样本隔离：acc_a 的该 55s 冷启动样本不应该污染同行基准计算
+        // 只有 acc_b 的 4.0s 参与计算，基线仍然是 4.0s (4000ms)
+        let peer_avg = guardian.calculate_pure_peer_avg("acc_b", "PRO", &all, |_| false);
+        assert_eq!(peer_avg, None); // acc_a 只有一个冷启动样本，被过滤后无有效热样本
+
+        // 紧接着第二轮连续交互 (热缓存)：总 Token 350K，上一轮 346K
+        // 未缓存增量仅为 4K tokens，补偿 = 0.04 * 7s = 0.28s
+        // 阈值恢复为 35.28s。如果此时再次耗时 40s (超标)，则判定为真卡顿，打上 Suspicious
+        let act2 = guardian.record_and_evaluate(
+            "acc_a",
+            Some("session_large_1"),
+            "PRO",
+            40000.0,
+            true,
+            Some(350_000),
+            &all,
+            |_| false,
+        );
+        assert_eq!(act2, QoSAction::TaggedSuspicious);
+        assert!(guardian.is_suspicious("acc_a"));
     }
 }

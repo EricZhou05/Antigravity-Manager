@@ -386,6 +386,7 @@ pub async fn handle_generate(
         crate::proxy::mappers::common_utils::ensure_gemini_payload_ends_with_user(
             &mut wrapped_body,
         );
+        let estimated_input_tokens = crate::proxy::pipeline::estimate_tokens(&wrapped_body);
 
         if let Some(ref recorder) = upstream_recorder {
             recorder.set_value(&wrapped_body);
@@ -594,6 +595,7 @@ pub async fn handle_generate(
                                 Some(&affinity_key),
                                 ttft_ms,
                                 is_thinking,
+                                Some(estimated_input_tokens),
                             );
                             if let Some(effective_item) =
                                 fallback_attempts.iter_mut().find(|a| a.is_effective)
@@ -973,6 +975,7 @@ pub async fn handle_generate(
                 Some(&affinity_key),
                 ttft_ms,
                 is_thinking,
+                Some(estimated_input_tokens),
             );
             if let Some(effective_item) = fallback_attempts.iter_mut().find(|a| a.is_effective) {
                 effective_item.duration_s = ttft_ms / 1000.0;
@@ -1377,14 +1380,22 @@ pub async fn handle_list_models(
     let models: Vec<_> = model_ids
         .into_iter()
         .map(|id| {
+            let (fallback_in, fallback_out) =
+                crate::proxy::handlers::openai::resolve_model_token_limits(&id);
             let meta = metadata_map
                 .get(&id)
                 .or_else(|| metadata_map.get(&id.to_lowercase()));
             let display_name = meta
                 .and_then(|m| m.display_name.clone())
                 .unwrap_or_else(|| id.clone());
-            let input_limit = meta.and_then(|m| m.max_tokens).unwrap_or(128000);
-            let output_limit = meta.and_then(|m| m.max_output_tokens).unwrap_or(8192);
+            let input_limit = meta
+                .and_then(|m| m.max_tokens)
+                .map(|v| v as i64)
+                .unwrap_or(fallback_in);
+            let output_limit = meta
+                .and_then(|m| m.max_output_tokens)
+                .map(|v| v as i64)
+                .unwrap_or(fallback_out);
 
             json!({
                 "name": format!("models/{}", id),
@@ -1393,6 +1404,8 @@ pub async fn handle_list_models(
                 "description": "",
                 "inputTokenLimit": input_limit,
                 "outputTokenLimit": output_limit,
+                "maxTokens": input_limit,
+                "maxOutputTokens": output_limit,
                 "supportedGenerationMethods": ["generateContent", "countTokens"],
                 "temperature": 1.0,
                 "topP": 0.95,
@@ -1428,14 +1441,22 @@ pub async fn handle_get_model(
         )
         .await;
 
+        let (fallback_in, fallback_out) =
+            crate::proxy::handlers::openai::resolve_model_token_limits(&matched_id);
         let meta = metadata_map
             .get(&matched_id)
             .or_else(|| metadata_map.get(&matched_id.to_lowercase()));
         let display_name = meta
             .and_then(|m| m.display_name.clone())
             .unwrap_or_else(|| matched_id.clone());
-        let input_limit = meta.and_then(|m| m.max_tokens).unwrap_or(128000);
-        let output_limit = meta.and_then(|m| m.max_output_tokens).unwrap_or(8192);
+        let input_limit = meta
+            .and_then(|m| m.max_tokens)
+            .map(|v| v as i64)
+            .unwrap_or(fallback_in);
+        let output_limit = meta
+            .and_then(|m| m.max_output_tokens)
+            .map(|v| v as i64)
+            .unwrap_or(fallback_out);
 
         (
             StatusCode::OK,
@@ -1446,6 +1467,8 @@ pub async fn handle_get_model(
                 "description": "",
                 "inputTokenLimit": input_limit,
                 "outputTokenLimit": output_limit,
+                "maxTokens": input_limit,
+                "maxOutputTokens": output_limit,
                 "supportedGenerationMethods": ["generateContent", "countTokens"],
                 "temperature": 1.0,
                 "topP": 0.95,

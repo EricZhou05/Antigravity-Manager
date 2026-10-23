@@ -1346,16 +1346,91 @@ impl InboundThinkingPipeline {
             }
         }
 
+        // 判定该模型在 Google 官方接口中是采用思考等级 (thinkingLevel) 还是思考预算 (thinkingBudget)：
+        // 判定标准（完全通用数据驱动，基于 fetchAvailableModels 官方结构体与分档模型特征，涵盖当下与未来所有模型变体）：
+        // 1. official_info 显式含有 thinking_level 字段；
+        // 2. 或基底模型的所有已知变体中存在声明了 thinking_level 的变体；
+        // 3. 或属于未在官方目录中静态收录但遵循思考等级规则的新一代高阶模型变体（Gemini >= 4 或 Claude >= 5.0，且官方未显式声明支持数字预算）；
+        // 4. 传统模型（如 Gemini 3.8 Flash, Gemini 3.1 Pro, Claude 4.6 等）官方声明使用 thinkingBudget，继续走数字预算通道。
+        let is_thinking_level_model = {
+            if let Some(ref info) = official_info {
+                if info.thinking_level.is_some() {
+                    true
+                } else if info.thinking_budget.is_some() {
+                    false
+                } else {
+                    let base = crate::proxy::common::model_mapping::strip_tier_suffix(target_model);
+                    let tiers = crate::models::OfficialModelCatalog::collect_tiers_for_base(&base);
+                    tiers.iter().any(|t| {
+                        crate::models::OfficialModelCatalog::get(&format!("{}-{}", base, t))
+                            .map_or(false, |ti| ti.thinking_level.is_some())
+                    }) || crate::proxy::model_specs::is_gemini_v4_or_above(target_model)
+                        || crate::proxy::model_specs::is_claude_v5_or_above(target_model)
+                }
+            } else {
+                let base = crate::proxy::common::model_mapping::strip_tier_suffix(target_model);
+                let tiers = crate::models::OfficialModelCatalog::collect_tiers_for_base(&base);
+                let any_variant_has_level = tiers.iter().any(|t| {
+                    crate::models::OfficialModelCatalog::get(&format!("{}-{}", base, t))
+                        .map_or(false, |ti| ti.thinking_level.is_some())
+                });
+                any_variant_has_level
+                    || crate::proxy::model_specs::is_gemini_v4_or_above(target_model)
+                    || crate::proxy::model_specs::is_claude_v5_or_above(target_model)
+            }
+        };
+
         let tb_config = crate::proxy::config::get_thinking_budget_config();
+
+        let resolve_level_for_model = |raw_effort: Option<&str>| -> String {
+            if let Some(eff) =
+                raw_effort.and_then(crate::proxy::model_specs::normalize_client_thinking_level)
+            {
+                return eff.to_string();
+            }
+            if let Some(eff) = tb_config
+                .effort
+                .as_deref()
+                .and_then(crate::proxy::model_specs::normalize_client_thinking_level)
+            {
+                return eff.to_string();
+            }
+            let lower = target_model.to_lowercase();
+            if lower.ends_with("-low")
+                || lower.ends_with("-extra-low")
+                || lower.ends_with("-minimal")
+                || lower.ends_with("-lite")
+            {
+                "LOW".to_string()
+            } else if lower.ends_with("-high")
+                || lower.ends_with("-xhigh")
+                || lower.ends_with("-max")
+                || lower.ends_with("-extreme")
+            {
+                "HIGH".to_string()
+            } else if lower.ends_with("-medium")
+                || lower.ends_with("-default")
+                || lower.ends_with("-normal")
+            {
+                "MEDIUM".to_string()
+            } else if let Some(ref info) = official_info {
+                match info.thinking_level.as_deref() {
+                    Some("1") | Some("low") | Some("LOW") => "LOW".to_string(),
+                    Some("3") | Some("high") | Some("HIGH") => "HIGH".to_string(),
+                    _ => "MEDIUM".to_string(),
+                }
+            } else {
+                "MEDIUM".to_string()
+            }
+        };
 
         // ════════════════════════════════════════════════════════════════════
         // 模式分流 1: 客户端自填控制模式（Client Direct Control）
-        // 遵循最高指令：思考开关 > 思考等级 > 思考预算，缺省默认开，上游自适应
         // ════════════════════════════════════════════════════════════════════
         if tb_config.control_source == crate::proxy::config::ThinkingControlSource::Client {
             match client_switch {
                 ClientThinkingSwitch::Disabled => {
-                    // 1. 思考开关显式关闭（一票否决）：彻底不带 thinkingConfig，不填预算
+                    // 1. 思考开关显式关闭（一票否决）：彻底不带 thinkingConfig
                     if let Some(obj) = generation_config.as_object_mut() {
                         obj.remove("thinkingConfig");
                         obj.remove("thinking_config");
@@ -1363,85 +1438,91 @@ impl InboundThinkingPipeline {
                     return None;
                 }
                 ClientThinkingSwitch::Enabled | ClientThinkingSwitch::Default => {
-                    // 2. 允许思考（显式开 OR 缺省默认开）
-                    // 2.1 预算显式 (> 0)：忠实透传预算数字，绝不脑补等级（防止 Google 400 双字段冲突），必须带上 includeThoughts: true
-                    if let Some(budget) = client_budget.filter(|&b| b > 0) {
+                    if is_thinking_level_model {
+                        // thinkingLevel 模型：严格输出 thinkingLevel，严禁携带 thinkingBudget
+                        let level = resolve_level_for_model(client_effort);
                         generation_config["thinkingConfig"] = json!({
                             "includeThoughts": true,
-                            "thinkingBudget": budget
+                            "thinkingLevel": level
                         });
-                    } else if let Some(raw_effort) =
-                        client_effort.map(str::trim).filter(|s| !s.is_empty())
-                    {
-                        // 2.2 预算缺省，但客户端携带了思考等级（包括 low / medium / high 以及任何客户自定义的思考等级）：
-                        // 核心铁律：坚决不填预算！忠实透传等级，并且必须带上 includeThoughts: true 核心开关！
-                        let lower_effort = raw_effort.to_lowercase().replace('_', "-");
-                        if lower_effort != "default"
-                            && lower_effort != "none"
-                            && lower_effort != "off"
-                            && lower_effort != "disabled"
-                        {
-                            let final_level = match lower_effort.as_str() {
-                                "low" | "extra-low" | "min" | "minimal" | "lite" => {
-                                    "LOW".to_string()
-                                }
-                                "medium" | "normal" | "standard" => {
-                                    if target_model.to_lowercase().contains("pro") {
-                                        "HIGH".to_string()
-                                    } else {
-                                        "MEDIUM".to_string()
-                                    }
-                                }
-                                "high" | "xhigh" | "x-high" | "max" | "extreme" => {
-                                    "HIGH".to_string()
-                                }
-                                // 客户带了任何自定义等级，直接忠实透传，绝不硬编码限制！
-                                _ => raw_effort.to_uppercase(),
-                            };
+                    } else {
+                        // thinkingBudget 模型：严格输出 thinkingBudget，严禁携带 thinkingLevel
+                        if let Some(budget) = client_budget.filter(|&b| b > 0) {
                             generation_config["thinkingConfig"] = json!({
                                 "includeThoughts": true,
-                                "thinkingLevel": final_level
+                                "thinkingBudget": budget
+                            });
+                        } else if let Some(raw_effort) =
+                            client_effort.map(str::trim).filter(|s| !s.is_empty())
+                        {
+                            let lower_effort = raw_effort.to_lowercase().replace('_', "-");
+                            if lower_effort != "default"
+                                && lower_effort != "none"
+                                && lower_effort != "off"
+                                && lower_effort != "disabled"
+                            {
+                                let final_level = match lower_effort.as_str() {
+                                    "low" | "extra-low" | "min" | "minimal" | "lite" => {
+                                        "LOW".to_string()
+                                    }
+                                    "medium" | "normal" | "standard" => {
+                                        if target_model.to_lowercase().contains("pro") {
+                                            "HIGH".to_string()
+                                        } else {
+                                            "MEDIUM".to_string()
+                                        }
+                                    }
+                                    "high" | "xhigh" | "x-high" | "max" | "extreme" => {
+                                        "HIGH".to_string()
+                                    }
+                                    _ => raw_effort.to_uppercase(),
+                                };
+                                generation_config["thinkingConfig"] = json!({
+                                    "includeThoughts": true,
+                                    "thinkingLevel": final_level
+                                });
+                            }
+                        } else {
+                            generation_config["thinkingConfig"] = json!({
+                                "includeThoughts": true
                             });
                         }
-                    } else {
-                        // 2.3 等级与预算均缺省（或 default）：全部预算不传递，默认上游处理（上游自适应）
-                        // ★ 绝对不塞 4000/Medium 预算，仅带 includeThoughts: true
-                        generation_config["thinkingConfig"] = json!({
-                            "includeThoughts": true
-                        });
                     }
                 }
             }
         } else {
             // ════════════════════════════════════════════════════════════════════
             // 模式分流 2: 网关权威控制模式（Gateway Authority，99% 用户）
-            // 100% 保持原有权威逻辑不变：档位锁死、flash_low/med/high 映射、防 429 注入
             // ════════════════════════════════════════════════════════════════════
-            let resolved_budget = crate::proxy::model_specs::resolve_custom_budget(
-                target_model,
-                client_effort,
-                client_budget,
-                &tb_config,
-                token,
-            );
+            if is_thinking_level_model {
+                // 官方新一代分级模型（如 Gemini 4 Argon / Claude 5.5 系列及未来任何分级模型变体）：
+                // 官方完全受控于 thinkingLevel（"LOW", "MEDIUM", "HIGH"），严禁输出 thinkingBudget！
+                let level = resolve_level_for_model(client_effort);
+                generation_config["thinkingConfig"] = json!({
+                    "includeThoughts": true,
+                    "thinkingLevel": level
+                });
+            } else {
+                // 官方传统预算模型（如 Gemini 3.8 Flash / Gemini 3.1 Pro / Claude 4.6 系列）：
+                // 官方使用 thinkingBudget（支持 -1 官方自适应与具体数值），严禁输出 thinkingLevel！
+                let resolved_budget = crate::proxy::model_specs::resolve_custom_budget(
+                    target_model,
+                    client_effort,
+                    client_budget,
+                    &tb_config,
+                    token,
+                );
 
-            let is_tiered = crate::proxy::model_specs::is_tiered_flash_model(target_model)
-                || target_model.to_lowercase().contains("tiered");
+                let is_tiered = crate::proxy::model_specs::is_tiered_flash_model(target_model)
+                    || target_model.to_lowercase().contains("tiered");
 
-            let mut tc = json!({
-                "includeThoughts": true
-            });
+                let mut tc = json!({
+                    "includeThoughts": true
+                });
 
-            // 用户核心要求：
-            // "如果我网关模式的思考预算填-1 我的策略是不填模型预算。其实是不对的
-            // 应该是如果网关模式都填了-1 应该默认走官方模型结构体的默认值"
-            let final_budget = match resolved_budget {
-                Some(b) => Some(b),
-                None => {
-                    // 网关模式下未显式配置自定义预算（Default 默认模式）：
-                    // 默认走官方模型结构体的默认值 (official_model.thinking_budget)；
-                    // 若官方模型结构体无记录（如非官方目录或旧版别名），Claude 思考模型回落到标准限额
-                    official_info
+                let final_budget = match resolved_budget {
+                    Some(b) => Some(b),
+                    None => official_info
                         .as_ref()
                         .and_then(|info| info.thinking_budget)
                         .or_else(|| {
@@ -1453,37 +1534,26 @@ impl InboundThinkingPipeline {
                             } else {
                                 None
                             }
-                        })
-                }
-            };
+                        }),
+                };
 
-            if let Some(budget) = final_budget {
-                if budget == 0 {
+                if let Some(budget) = final_budget {
+                    if budget == 0 {
+                        tc = json!({
+                            "includeThoughts": false,
+                            "thinkingBudget": 0
+                        });
+                    } else {
+                        tc["thinkingBudget"] = json!(budget);
+                    }
+                } else if is_tiered {
                     tc = json!({
-                        "includeThoughts": false,
-                        "thinkingBudget": 0
+                        "includeThoughts": true
                     });
-                } else {
-                    let effective_budget =
-                        if (crate::proxy::model_specs::is_gemini_v4_or_above(target_model)
-                            || target_model.to_lowercase().contains("argon"))
-                            && budget > 0
-                            && budget < 1024
-                        {
-                            1024
-                        } else {
-                            budget
-                        };
-                    tc["thinkingBudget"] = json!(effective_budget);
                 }
-            } else if is_tiered {
-                // Tiered 模型未指定具体数字 budget 且官方结构体无 thinking_budget 时：纯自适应模式
-                tc = json!({
-                    "includeThoughts": true
-                });
-            }
 
-            generation_config["thinkingConfig"] = tc;
+                generation_config["thinkingConfig"] = tc;
+            }
         }
 
         // 终审上限保护与不变量协调状态机：

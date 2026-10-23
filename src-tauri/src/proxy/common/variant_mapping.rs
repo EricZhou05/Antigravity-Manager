@@ -365,15 +365,32 @@ pub fn resolve_with_tier(
         let thinking_budget = official_info
             .as_ref()
             .and_then(|info| info.thinking_budget)
+            .filter(|&v| v > 0)
             .map(|v| v as u32)
             .unwrap_or_else(|| {
                 if lower.contains("claude") {
                     1024
                 } else {
+                    let is_flagship =
+                        lower.contains("pro") || lower.contains("argon") || lower.contains("opus");
                     match dynamic_tier {
-                        VariantTier::High => 10000,
+                        VariantTier::High => {
+                            if is_flagship {
+                                10001
+                            } else {
+                                10000
+                            }
+                        }
                         VariantTier::Medium => 4000,
-                        VariantTier::Low => 1000,
+                        VariantTier::Low => {
+                            if lower.contains("argon") {
+                                1024
+                            } else if is_flagship {
+                                1001
+                            } else {
+                                1000
+                            }
+                        }
                     }
                 }
             });
@@ -602,9 +619,9 @@ mod tests {
 
     #[test]
     fn test_resolve_37_flash_variants() {
-        // 无后缀的 3.x Flash 裸模型依据思考档位路由（未指定档位遵循统一决策链优先选择 tiered）
+        // 已下线 3.7 裸模型不走 tiered 派生，兜底回落 high
         let s = resolve("gemini-3.7-flash", None).unwrap();
-        assert_eq!(s.id, "gemini-3.7-flash-tiered");
+        assert_eq!(s.id, "gemini-3.7-flash-high");
         assert_eq!(s.thinking_budget, 10000);
         assert_eq!(s.max_output_tokens, 65536);
 
@@ -828,6 +845,22 @@ mod tests {
         // 裸模型带显式档位解析
         let s = resolve_with_tier("gemini-3.1-pro", Some(VariantTier::Low), None).unwrap();
         assert_eq!(s.id, "gemini-3.1-pro-low");
+    }
+
+    #[test]
+    fn test_resolve_argon_variants_safeguard_negative_budget() {
+        // 验证 gemini-4-argon-* 即使元数据中存在 thinkingBudget: -1 哨兵值，也不会溢出为 u32::MAX (4294967295)
+        let s_high = resolve("gemini-4-argon-high", None).unwrap();
+        assert_eq!(s_high.id, "gemini-4-argon-high");
+        assert_eq!(s_high.thinking_budget, 10001);
+
+        let s_med = resolve("gemini-4-argon-medium", None).unwrap();
+        assert_eq!(s_med.id, "gemini-4-argon-medium");
+        assert_eq!(s_med.thinking_budget, 4000);
+
+        let s_low = resolve("gemini-4-argon-low", None).unwrap();
+        assert_eq!(s_low.id, "gemini-4-argon-low");
+        assert_eq!(s_low.thinking_budget, 1024);
     }
 
     #[test]
