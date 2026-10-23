@@ -3,6 +3,15 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v4.9.9-beta.10 (2026-10-23)**:
+        -   **[跨模型切换签名逆向重构：对齐官方 Antigravity 哨兵规范，根治 Claude 并发工具 400 签名崩溃]**:
+            -   **官方 Base64 哨兵全局对齐**: 逆向分析官方 Antigravity 客户端的 Proto3 JSON 报文规范，将全局哨兵常量从纯文本明文 `skip_thought_signature_validator` 升级为官方原生标准的 44 字节 Base64 密文 `c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=`；同时保留旧明文哨兵兼容识别（`LEGACY_SENTINEL_SIGNATURE`），确保历史缓存零兼容性断裂。
+            -   **Claude 全链路 0 哨兵 + 并发工具严格留空**: 根据官方 Anthropic 验签引擎行为分析，彻底废除向 Claude 模型注入任何哨兵的逻辑；并发工具调用场景中，签名唯一落点为首个非思考部件（首个工具或首个正文），后续所有并发工具严格留空无 `thoughtSignature` 字段，彻底消除 `Invalid signature in thinking block` 400 拦截。
+            -   **Claude ➔ Gemini 切换异构工具免检通行证**: 当请求从 Claude 切回 Gemini 时，进站门禁（Gatekeeper）自动识别历史中携带 `toolu_` 前缀的异构 Claude 工具调用，为每一个异构 `functionCall`（含并发后续工具）统一赋予 Base64 哨兵通行证，让 Gemini 引擎完全绕过对异构工具的签名校验；正文文本部件严格保持纯净，绝对不附带哨兵。
+            -   **Gemini ➔ Claude 切换历史清洁**: 切换至 Claude 时，进站流水线彻底剥除历史轮次上的 Gemini 短签名与旧哨兵，历史工具与历史正文以纯净无签名形态发往 Anthropic，严禁异构签名污染 Claude 请求。
+            -   **哨兵零落库保护**: 贯彻“哨兵仅内存按需动态填入”原则，在 `normalize_and_heal_signature` 中增加两种哨兵形态的硬拦截门，确保任何形态的哨兵值均不会写入 SQLite 持久化存储，消除缓存污染风险。
+            -   **新增跨模型切换集成断言测试**: 新增 `test_gatekeeper_foreign_claude_tools_switched_to_gemini_get_base64_sentinel`，全面覆盖异构工具切回 Gemini 时的正文留空与工具全量 Base64 哨兵核心逻辑，防止未来回归。
+
     *   **v4.9.9-beta.9 (2026-10-23)**:
         -   **[Linux 窗口抢占置顶与自动拉起根治，并隔离 CLI 凭证同步] (Fixes #3728, Thanks to @bkspi)**:
             -   **彻底禁止动态进程执行探测版本**: 在 Linux 环境下移除对外部可执行文件执行 `Command::new(exe_path).arg("--version")` 的兜底逻辑；针对 Electron 桌面应用在接收到 `--version` 参数时不会静默退出，而是触发 `single-instance` 机制向正在运行的主实例发送 IPC 消息导致主窗口每数秒被强制恢复并置于最前台抢占焦点、或在客户端关闭时意外启动新实例的致命缺陷，全面改为安全的静态文件与元数据检测。(Fixes #3728, Thanks to @bkspi)
