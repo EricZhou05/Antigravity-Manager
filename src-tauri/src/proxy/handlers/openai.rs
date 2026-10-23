@@ -859,11 +859,7 @@ pub(crate) fn is_request_structured_output(req: &OpenAIRequest) -> bool {
     req.response_format
         .as_ref()
         .is_some_and(|f| f.r#type == "json_schema" || f.r#type == "json_object")
-        || req
-            .text
-            .as_ref()
-            .and_then(|t| t.get("format"))
-            .is_some()
+        || req.text.as_ref().and_then(|t| t.get("format")).is_some()
 }
 
 fn convert_chat_response_to_responses(

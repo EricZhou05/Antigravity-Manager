@@ -1951,7 +1951,7 @@ impl InboundThinkingPipeline {
         };
 
         // 3. tools: 规范化 parameters，拆成单函数独立对象，保持客户端声明顺序
-        let canonical_tools = if let Some(tools) = req_obj.remove("tools") {
+        let mut canonical_tools = if let Some(tools) = req_obj.remove("tools") {
             if let Some(tools_arr) = tools.as_array() {
                 let mut expanded_tools: Vec<Value> = Vec::new();
 
@@ -2015,7 +2015,7 @@ impl InboundThinkingPipeline {
         // 提取客户端显式指定的 toolConfig（如由 Claude / OpenAI 适配器根据 tool_choice 翻译而来，或 Gemini 客户端显式指定）。
         // 若客户端未传，绝不主动伪造或注入任何默认配置（与官方 IDE 原生报文保持 100% 干净拓扑同构）；
         // 若客户端显式指定了有效配置（如 mode == ANY 或包含 allowedFunctionNames），必须予以完整保留并发送给上游！
-        let canonical_tool_config = req_obj
+        let mut canonical_tool_config = req_obj
             .remove("toolConfig")
             .or_else(|| req_obj.remove("tool_config"))
             .filter(|v| {
