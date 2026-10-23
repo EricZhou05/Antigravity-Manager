@@ -276,20 +276,20 @@ impl InboundThinkingPipeline {
                                         obj.insert("thoughtSignature".to_string(), sig);
                                     }
                                 }
-                                if let Some(sig_str) =
-                                    obj.get("thoughtSignature").and_then(|s| s.as_str())
-                                {
+                                let sig_owned = obj
+                                    .get("thoughtSignature")
+                                    .and_then(|s| s.as_str())
+                                    .map(|s| s.to_string());
+                                if let Some(sig_str) = sig_owned.as_deref() {
                                     if is_claude {
                                         // 黄金法则（官方抓包对齐）：Claude 模型严禁携带 Gemini 签名或哨兵，只保留合法的 Claude 签名
-                                        if sig_str
-                                            != crate::proxy::thinking_store::SENTINEL_SIGNATURE
-                                            && crate::proxy::thinking_store::is_real_signature(
-                                                sig_str,
-                                            )
-                                            && crate::proxy::thinking_store::is_claude_signature(
-                                                sig_str,
-                                            )
-                                        {
+                                        if !crate::proxy::thinking_store::is_sentinel_signature(
+                                            sig_str,
+                                        ) && crate::proxy::thinking_store::is_real_signature(
+                                            sig_str,
+                                        ) && crate::proxy::thinking_store::is_claude_signature(
+                                            sig_str,
+                                        ) {
                                             let final_sig = crate::proxy::thinking_store::ensure_google_claude_thought_signature(sig_str);
                                             obj.insert(
                                                 "thoughtSignature".to_string(),
@@ -322,8 +322,8 @@ impl InboundThinkingPipeline {
                                             obj.remove("thoughtSignature");
                                         }
                                     } else if target_model.to_lowercase().contains("gemini") {
-                                        if sig_str == crate::proxy::thinking_store::SENTINEL_SIGNATURE {
-                                            // 官方跳过验签哨兵 (skip_thought_signature_validator)：客户端自带的合法哨兵，予以保留
+                                        if crate::proxy::thinking_store::is_sentinel_signature(sig_str) {
+                                            // 官方跳过验签哨兵 (Base64 或历史明文)：客户端自带的合法哨兵，予以保留
                                         } else if crate::proxy::thinking_store::is_real_signature(sig_str)
                                             && crate::proxy::thinking_store::is_likely_gemini_signature(sig_str)
                                         {
