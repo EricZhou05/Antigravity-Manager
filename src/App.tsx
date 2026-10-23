@@ -1,4 +1,4 @@
-import { createBrowserRouter, RouterProvider } from 'react-router-dom';
+import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom';
 
 import Layout from './components/layout/Layout';
 import Dashboard from './pages/Dashboard';
@@ -30,10 +30,15 @@ const router = createBrowserRouter([
   {
     path: '/',
     element: <Layout />,
+    errorElement: <Navigate to="/" replace />,
     children: [
       {
         index: true,
         element: <Dashboard />,
+      },
+      {
+        path: 'index.html',
+        element: <Navigate to="/" replace />,
       },
       {
         path: 'accounts',
@@ -66,6 +71,10 @@ const router = createBrowserRouter([
       {
         path: 'settings',
         element: <Settings />,
+      },
+      {
+        path: '*',
+        element: <Navigate to="/" replace />,
       },
     ],
   },
@@ -251,7 +260,18 @@ function App() {
     return () => clearTimeout(timer);
   }, []);
 
-  const isMini = isTauri() && getCurrentWindow().label === 'mini';
+  const isMini =
+    (typeof window !== 'undefined' && window.location.search.includes('mini')) ||
+    (typeof window !== 'undefined' &&
+      (window as any).__TAURI_INTERNALS__?.metadata?.currentWindow?.label === 'mini') ||
+    (isTauri() &&
+      (() => {
+        try {
+          return getCurrentWindow().label === 'mini';
+        } catch {
+          return false;
+        }
+      })());
 
   if (isMini) {
     if (typeof document !== 'undefined') {
