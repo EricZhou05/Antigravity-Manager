@@ -281,14 +281,24 @@ impl InboundThinkingPipeline {
                                 {
                                     if is_claude {
                                         // 黄金法则（官方抓包对齐）：Claude 模型严禁携带 Gemini 签名或哨兵，只保留合法的 Claude 签名
-                                        if sig_str != crate::proxy::thinking_store::SENTINEL_SIGNATURE
-                                            && crate::proxy::thinking_store::is_real_signature(sig_str)
-                                            && crate::proxy::thinking_store::is_claude_signature(sig_str)
+                                        if sig_str
+                                            != crate::proxy::thinking_store::SENTINEL_SIGNATURE
+                                            && crate::proxy::thinking_store::is_real_signature(
+                                                sig_str,
+                                            )
+                                            && crate::proxy::thinking_store::is_claude_signature(
+                                                sig_str,
+                                            )
                                         {
                                             let final_sig = crate::proxy::thinking_store::ensure_google_claude_thought_signature(sig_str);
-                                            obj.insert("thoughtSignature".to_string(), json!(final_sig));
+                                            obj.insert(
+                                                "thoughtSignature".to_string(),
+                                                json!(final_sig),
+                                            );
                                             if let Some(fc) = obj.get("functionCall") {
-                                                if let Some(id) = fc.get("id").and_then(|v| v.as_str()) {
+                                                if let Some(id) =
+                                                    fc.get("id").and_then(|v| v.as_str())
+                                                {
                                                     if let Some(sid) = session_id {
                                                         crate::proxy::SignatureCache::global()
                                                             .cache_tool_signature(
@@ -301,7 +311,11 @@ impl InboundThinkingPipeline {
                                             }
                                             if let Some(sid) = session_id {
                                                 crate::proxy::SignatureCache::global()
-                                                    .cache_session_signature(sid, sig_str.to_string(), msg_idx);
+                                                    .cache_session_signature(
+                                                        sid,
+                                                        sig_str.to_string(),
+                                                        msg_idx,
+                                                    );
                                             }
                                         } else {
                                             // 异构签名（如从 Gemini 切到 Claude 时遗留的短签名或哨兵）：全量清理剥除，对齐官方形态！
@@ -1785,7 +1799,9 @@ impl InboundThinkingPipeline {
                                     .map_or(false, |s| !s.trim().is_empty())
                             });
                             if !turn_has_signature {
-                                if let Some(first_fc) = parts.iter_mut().find(|p| p.get("functionCall").is_some()) {
+                                if let Some(first_fc) =
+                                    parts.iter_mut().find(|p| p.get("functionCall").is_some())
+                                {
                                     tracing::warn!(
                                         "[Gatekeeper] Found Gemini turn missing tool signature, injecting sentinel to first functionCall!"
                                     );

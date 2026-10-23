@@ -2008,23 +2008,21 @@ pub fn finalize_gemini_contents_thinking_with_session(
                 };
 
             let is_last_model_turn = last_model_idx == Some(msg_idx);
-            let cached_session_sig: Option<String> = if is_last_model_turn
-                && turn_real_sig.is_none()
-                && cached_tool_sig.is_none()
-            {
-                initial_session_sig
-                    .clone()
-                    .filter(|s| is_valid_family_sig(s))
-                    .map(|s| {
-                        if is_claude_turn {
-                            ensure_google_claude_thought_signature(&s)
-                        } else {
-                            s
-                        }
-                    })
-            } else {
-                None
-            };
+            let cached_session_sig: Option<String> =
+                if is_last_model_turn && turn_real_sig.is_none() && cached_tool_sig.is_none() {
+                    initial_session_sig
+                        .clone()
+                        .filter(|s| is_valid_family_sig(s))
+                        .map(|s| {
+                            if is_claude_turn {
+                                ensure_google_claude_thought_signature(&s)
+                            } else {
+                                s
+                            }
+                        })
+                } else {
+                    None
+                };
 
             // 2. 签名归位（终审出站门禁 Gatekeeper）：
             // 签名只写在该轮第一个非思考 part 上。Gemini 与 Claude 桌面端都是这个落点。
