@@ -1413,7 +1413,7 @@
             "original_placeholder": "원본 (예: gpt-4 또는 gpt-4*)"
         },
         "multi_protocol": {
-            "title": "다중 프로토콜 지원",
+            "title": "모델 카탈로그 및 프로토콜",
             "subtitle": "즐겨 사용하는 AI 도구 및 CLI와 원활하게 통합",
             "description": "로컬 프록시는 OpenAI, Anthropic 및 Gemini 프로토콜을 지원하여 광범위한 애플리케이션과의 호환성을 보장합니다.",
             "openai_label": "OpenAI 프로토콜",

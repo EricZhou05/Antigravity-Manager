@@ -1413,7 +1413,7 @@
             "original_placeholder": "Оригинал (например, gpt-4 или gpt-4*)"
         },
         "multi_protocol": {
-            "title": "Поддержка протоколов",
+            "title": "Каталог моделей и протоколы",
             "subtitle": "Синхронизируйте API и ключи с вашими инструментами",
             "description": "Прокси поддерживает протоколы OpenAI, Anthropic и Gemini для легкой интеграции.",
             "openai_label": "OpenAI",

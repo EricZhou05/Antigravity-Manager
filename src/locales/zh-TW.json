@@ -1405,7 +1405,7 @@
             "title": "使用示例"
         },
         "multi_protocol": {
-            "title": "多協定支援",
+            "title": "模型大全與協定",
             "subtitle": "快速同步 API 地址與金鑰到本地 AI 工具",
             "description": "反代服務支援 OpenAI、Anthropic 和 Gemini 協定，滿足不同工具的整合需求",
             "openai_label": "OpenAI 協定",

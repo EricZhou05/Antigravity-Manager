@@ -1449,7 +1449,7 @@
             "wildcard_only_gemini_3x": "Only wildcard gemini-3.x-flash (x > 8) is supported, please specify exact model ID for others"
         },
         "multi_protocol": {
-            "title": "Multi-Protocol Support",
+            "title": "Model Catalog & Protocols",
             "subtitle": "Seamlessly integrate with your favorite AI tools and CLIs",
             "description": "The local proxy supports OpenAI, Anthropic, and Gemini protocols, ensuring compatibility with a wide range of applications.",
             "openai_label": "OpenAI Protocol",

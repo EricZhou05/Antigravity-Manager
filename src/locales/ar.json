@@ -1404,7 +1404,7 @@
             "gemini3_option_flash": "gemini-3-flash (Fast)"
         },
         "multi_protocol": {
-            "title": "دعم متعدد البروتوكولات",
+            "title": "دليل النماذج والبروتوكولات",
             "subtitle": "تكامل بسلاسة مع أدوات AI المفضلة لديك و CLIs",
             "description": "يدعم الوكيل المحلي بروتوكولات OpenAI، Anthropic، و Gemini، مما يضمن التوافق مع مجموعة واسعة من التطبيقات.",
             "openai_label": "بروتوكول OpenAI",

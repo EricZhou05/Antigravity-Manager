@@ -1407,7 +1407,7 @@
             "gemini3_option_flash": "gemini-3-flash (Fast)"
         },
         "multi_protocol": {
-            "title": "Hỗ trợ đa giao thức",
+            "title": "Danh mục mô hình và giao thức",
             "subtitle": "Đồng bộ API và Key với công cụ của bạn",
             "description": "Proxy hỗ trợ các giao thức OpenAI, Anthropic và Gemini để dễ dàng tích hợp.",
             "openai_label": "OpenAI",

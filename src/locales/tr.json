@@ -1409,7 +1409,7 @@
             "gemini3_option_flash": "gemini-3-flash (Fast)"
         },
         "multi_protocol": {
-            "title": "Çoklu Protokol Desteği",
+            "title": "Model Kataloğu ve Protokoller",
             "subtitle": "Protokolleri ve anahtarları araçlarınızla senkronize edin",
             "description": "Proxy, kolay entegrasyon için OpenAI, Anthropic ve Gemini protokollerini destekler.",
             "openai_label": "OpenAI",

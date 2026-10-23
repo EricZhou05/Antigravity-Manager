@@ -1426,7 +1426,7 @@
             "original_placeholder": "Original (ex: gpt-4 ou gpt-4*)"
         },
         "multi_protocol": {
-            "title": "Suporte Multi-Protocolo",
+            "title": "Catálogo de Modelos e Protocolos",
             "subtitle": "Sincronize API e chaves com suas ferramentas",
             "description": "O proxy suporta protocolos OpenAI, Anthropic e Gemini para fácil integração.",
             "openai_label": "OpenAI",

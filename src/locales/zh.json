@@ -1440,7 +1440,7 @@
             "title": "使用示例"
         },
         "multi_protocol": {
-            "title": "多协议支持",
+            "title": "模型大全与协议",
             "subtitle": "快速同步 API 地址与密钥到本地 AI 工具",
             "description": "反代服务支持 OpenAI、Anthropic 和 Gemini 协议，满足不同工具的集成需求",
             "openai_label": "OpenAI 协议",

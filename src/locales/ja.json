@@ -1413,7 +1413,7 @@
             "original_placeholder": "元の名称 (例: gpt-4 または gpt-4*)"
         },
         "multi_protocol": {
-            "title": "マルチプロトコルサポート",
+            "title": "モデルカタログとプロトコル",
             "subtitle": "お気に入りの AI ツールや CLI とシームレスに統合",
             "description": "ローカルプロキシは OpenAI、Anthropic、および Gemini プロトコルをサポートしており、幅広いアプリケーションとの互換性を確保しています。",
             "openai_label": "OpenAI プロトコル",

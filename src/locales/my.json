@@ -1395,7 +1395,7 @@
             "gemini3_option_flash": "gemini-3-flash (Fast)"
         },
         "multi_protocol": {
-            "title": "Sokongan Pelbagai Protokol",
+            "title": "Katalog Model & Protokol",
             "subtitle": "Integrasi lancar dengan alat dan CLI AI kegemaran anda",
             "description": "Proksi tempatan menyokong protokol OpenAI, Anthropic, dan Gemini, memastikan keserasian dengan pelbagai aplikasi.",
             "openai_label": "Protokol OpenAI",

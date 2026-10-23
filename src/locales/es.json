@@ -1413,7 +1413,7 @@
             "original_placeholder": "Original (ej. gpt-4 o gpt-4*)"
         },
         "multi_protocol": {
-            "title": "Soporte Multi-Protocolo",
+            "title": "Catálogo de Modelos y Protocolos",
             "subtitle": "Integración perfecta con sus herramientas y CLIs de IA favoritas",
             "description": "El proxy local soporta protocolos OpenAI, Anthropic y Gemini, asegurando compatibilidad con una amplia gama de aplicaciones.",
             "openai_label": "Protocolo OpenAI",
