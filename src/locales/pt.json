@@ -353,6 +353,9 @@
         "quota_window_weekly": "Cota Semanal",
         "quota_window_weekly_short": "Semanal",
         "quota_protected": "Protegido",
+        "remaining_quota": "Cota restante: {{percentage}}%",
+        "reset_in": "Redefinição: {{time}}",
+        "supported_official_models": "Modelos oficiais suportados ({{count}}):",
         "details": {
             "title": "Detalhes da Cota",
             "model_quota": "Cotas de modelos individuais",

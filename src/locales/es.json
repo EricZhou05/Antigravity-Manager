@@ -350,6 +350,9 @@
         "quota_window_weekly": "Cuota semanal de 7 días",
         "quota_window_weekly_short": "Semanal",
         "quota_protected": "Protegida",
+        "remaining_quota": "Cuota restante: {{percentage}}%",
+        "reset_in": "Reinicio: {{time}}",
+        "supported_official_models": "Modelos oficiales soportados ({{count}}):",
         "details": {
             "title": "Detalles de Cuota",
             "model_quota": "Cuotas individuales de modelos",

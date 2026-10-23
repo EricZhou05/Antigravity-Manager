@@ -319,6 +319,9 @@
             "storage_json_not_found": "storage.json bulunamadı, lütfen Antigravity'nin yapılandırma dosyasını oluşturmak için çalıştırıldığından emin olun"
         },
         "quota_protected": "Korumalı",
+        "remaining_quota": "Kalan Kota: %{{percentage}}",
+        "reset_in": "Sıfırlama: {{time}}",
+        "supported_official_models": "Desteklenen Resmi Modeller ({{count}}):",
         "details": {
             "title": "Kota Detayları",
             "model_quota": "Bireysel model kotaları",

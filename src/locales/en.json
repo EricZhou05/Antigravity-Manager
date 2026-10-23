@@ -384,6 +384,9 @@
         "weekly_tokens": "Cycle tokens",
         "weekly_tokens_tooltip": "Tokens recorded by this instance in this quota cycle (input + output)",
         "quota_protected": "Protected",
+        "remaining_quota": "Remaining: {{percentage}}%",
+        "reset_in": "Reset: {{time}}",
+        "supported_official_models": "Supported Official Models ({{count}}):",
         "details": {
             "title": "Quota Details",
             "model_quota": "Individual Model Quotas",

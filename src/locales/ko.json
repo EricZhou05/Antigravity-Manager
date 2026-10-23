@@ -350,6 +350,9 @@
         "quota_window_weekly": "7일 주간 할당량",
         "quota_window_weekly_short": "주간",
         "quota_protected": "보호됨",
+        "remaining_quota": "남은 할당량: {{percentage}}%",
+        "reset_in": "재설정: {{time}}",
+        "supported_official_models": "지원 공식 모델 ({{count}}개):",
         "details": {
             "title": "할당량 상세",
             "model_quota": "개별 모델 할당량",

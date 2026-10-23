@@ -324,6 +324,9 @@
         "warmup_now": "Làm nóng Ngay",
         "warmup_batch_triggered": "Đã kích hoạt làm nóng cho {{count}} tài khoản",
         "quota_protected": "Được bảo vệ",
+        "remaining_quota": "Hạn ngạch còn lại: {{percentage}}%",
+        "reset_in": "Đặt lại: {{time}}",
+        "supported_official_models": "Mô hình chính thức được hỗ trợ ({{count}}):",
         "details": {
             "title": "Chi tiết Hạn mức",
             "model_quota": "Hạn mức từng mô hình",

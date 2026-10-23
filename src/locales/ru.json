@@ -350,6 +350,9 @@
         "quota_window_weekly": "7-дневная еженедельная квота",
         "quota_window_weekly_short": "Еженедельная",
         "quota_protected": "Защищено",
+        "remaining_quota": "Остаток квоты: {{percentage}}%",
+        "reset_in": "Сброс: {{time}}",
+        "supported_official_models": "Поддерживаемые официальные модели ({{count}}):",
         "details": {
             "title": "Детали квоты",
             "model_quota": "Квоты отдельных моделей",

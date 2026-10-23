@@ -350,6 +350,9 @@
         "quota_window_weekly": "7-Day Weekly Quota",
         "quota_window_weekly_short": "Weekly",
         "quota_protected": "保護中",
+        "remaining_quota": "残余クォータ: {{percentage}}%",
+        "reset_in": "リセット: {{time}}",
+        "supported_official_models": "対応公式モデル ({{count}}件):",
         "details": {
             "title": "クォータ詳細",
             "model_quota": "個別モデルクォータ",

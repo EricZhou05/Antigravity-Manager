@@ -327,6 +327,9 @@
         "warmup_now": "Pemanasan Sekarang",
         "warmup_batch_triggered": "Tugas pemanasan dicetuskan untuk {{count}} akaun",
         "quota_protected": "Dilindungi",
+        "remaining_quota": "Baki Kuota: {{percentage}}%",
+        "reset_in": "Set Semula: {{time}}",
+        "supported_official_models": "Model Rasmi Disokong ({{count}}):",
         "details": {
             "title": "Butiran Kuota",
             "model_quota": "Kuota model individu",

@@ -327,6 +327,9 @@
         "warmup_now": "تنشيط الآن",
         "warmup_batch_triggered": "تم إطلاق مهام التنشيط لـ {{count}} حساب",
         "quota_protected": "محمي",
+        "remaining_quota": "الحصة المتبقية: {{percentage}}%",
+        "reset_in": "إعادة التعيين: {{time}}",
+        "supported_official_models": "النماذج الرسمية المدعومة ({{count}}):",
         "details": {
             "title": "تفاصيل الحصة",
             "model_quota": "حصص النماذج الفردية",

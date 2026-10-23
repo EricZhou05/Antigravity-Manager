@@ -489,7 +489,6 @@ function AccountRowContent({
                         {modelCapabilities.hasArgon && (
                             <span
                                 className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-gradient-to-r from-purple-500/15 to-indigo-500/15 text-purple-700 dark:text-purple-300 text-[10px] font-bold shadow-2xs border border-purple-200/60 dark:border-purple-800/50 cursor-default"
-                                title="此账号已支持 Gemini 4 Argon 系列旗舰推理模型 (High / Medium / Low)"
                             >
                                 <Sparkles className="w-2.5 h-2.5 text-purple-500" />
                                 Argon
@@ -498,7 +497,6 @@ function AccountRowContent({
                         {modelCapabilities.hasClaude55 && (
                             <span
                                 className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[10px] font-bold shadow-2xs border border-amber-200/60 dark:border-amber-800/50 cursor-default"
-                                title="此账号已支持 Claude 5.5 系列新一代模型 (Opus / Sonnet)"
                             >
                                 Claude 5.5
                             </span>
@@ -506,7 +504,6 @@ function AccountRowContent({
                         {modelCapabilities.hasClaude46 && !modelCapabilities.hasClaude55 && (
                             <span
                                 className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-600/90 dark:text-amber-400/90 text-[10px] font-bold shadow-2xs border border-amber-200/40 dark:border-amber-800/30 cursor-default"
-                                title="此账号已支持 Claude 4.6 模型"
                             >
                                 Claude 4.6
                             </span>
@@ -514,7 +511,6 @@ function AccountRowContent({
                         {modelCapabilities.hasGpt && (
                             <span
                                 className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold shadow-2xs border border-emerald-200/60 dark:border-emerald-800/50 cursor-default"
-                                title="此账号已支持 GPT-OSS-120B 旗舰开源模型"
                             >
                                 GPT-120B
                             </span>

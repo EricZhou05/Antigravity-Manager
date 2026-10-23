@@ -38,14 +38,17 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
         ? (summary.key === 'gemini' ? 'Gemini' : summary.key === 'claude' ? 'Claude' : label)
         : label;
 
-    const formatTooltip = (windowType: '5H' | '周配额') => {
-        const titleLine = `${label} (${windowType})`;
-        const pctLine = `剩余配额: ${windowType === '5H' ? fiveHourPercentage : weeklyPercentage}%`;
-        const timeLine = windowType === '5H'
-            ? (fiveHour?.resetTime ? `重置: ${formatTimeRemaining(fiveHour.resetTime)}` : '')
-            : (weekly?.resetTime ? `重置: ${formatTimeRemaining(weekly.resetTime)}` : '');
+    const formatTooltip = (windowType: '5h' | 'weekly') => {
+        const windowLabel = windowType === '5h' ? '5H' : t('accounts.quota_window_weekly_short', '周配额');
+        const titleLine = `${label} (${windowLabel})`;
+        const currentPercentage = windowType === '5h' ? fiveHourPercentage : weeklyPercentage;
+        const pctLine = t('accounts.remaining_quota', '剩余配额: {{percentage}}%', { percentage: currentPercentage });
+        const resetTime = windowType === '5h' ? fiveHour?.resetTime : weekly?.resetTime;
+        const timeLine = resetTime
+            ? t('accounts.reset_in', '重置: {{time}}', { time: formatTimeRemaining(resetTime) })
+            : '';
         const models = summary.supportedModels && summary.supportedModels.length > 0
-            ? `\n支持官方模型 (${summary.supportedModels.length}个):\n• ${summary.supportedModels.join('\n• ')}`
+            ? `\n${t('accounts.supported_official_models', '支持官方模型 ({{count}}个):', { count: summary.supportedModels.length })}\n• ${summary.supportedModels.join('\n• ')}`
             : '';
         return [titleLine, pctLine, timeLine].filter(Boolean).join(' | ') + models;
     };
@@ -90,7 +93,7 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
                         "relative h-[22px] flex items-center px-1.5 rounded-md overflow-hidden border border-gray-100/50 dark:border-white/5 bg-gray-50/30 dark:bg-white/5 group/quota transition-all",
                         isUnavailable && "border-rose-400/70 dark:border-rose-500/70 bg-rose-50/80 dark:bg-rose-950/30 ring-rose-400/30"
                     )}
-                    title={summary.isWeeklyExhausted ? t('accounts.weekly_exhausted_tooltip') : formatTooltip('5H')}
+                    title={summary.isWeeklyExhausted ? t('accounts.weekly_exhausted_tooltip') : formatTooltip('5h')}
                 >
                     {/* Bottom Accent Progress Line */}
                     <div className="absolute bottom-0 inset-x-0 h-[2.5px] bg-black/[0.05] dark:bg-white/[0.08] overflow-hidden">
@@ -150,7 +153,7 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
                         summary.isWeeklyExhausted && "border-rose-400/70 dark:border-rose-500/70 bg-rose-50/80 dark:bg-rose-950/30 ring-rose-400/30",
                         fiveHour === undefined && isUnavailable && "border-rose-400/70 dark:border-rose-500/70 bg-rose-50/80 dark:bg-rose-950/30 ring-rose-400/30"
                     )}
-                    title={formatTooltip('周配额')}
+                    title={formatTooltip('weekly')}
                 >
                     {/* Bottom Accent Progress Line */}
                     <div className="absolute bottom-0 inset-x-0 h-[2.5px] bg-black/[0.05] dark:bg-white/[0.08] overflow-hidden">

@@ -382,6 +382,9 @@
         "weekly_tokens": "本周期 Token",
         "weekly_tokens_tooltip": "本实例在此配额周期记录的 Token 用量（输入 + 输出）",
         "quota_protected": "受保护",
+        "remaining_quota": "剩余配额: {{percentage}}%",
+        "reset_in": "重置: {{time}}",
+        "supported_official_models": "支持官方模型 ({{count}}个):",
         "details": {
             "title": "配额详情",
             "model_quota": "具体模型配额",

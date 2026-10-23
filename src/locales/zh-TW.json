@@ -336,6 +336,9 @@
         "quota_window_weekly": "7天周配額",
         "quota_window_weekly_short": "周配額",
         "quota_protected": "受保護",
+        "remaining_quota": "剩餘配額: {{percentage}}%",
+        "reset_in": "重設: {{time}}",
+        "supported_official_models": "支援官方模型 ({{count}}個):",
         "details": {
             "title": "配額詳情",
             "model_quota": "具體模型配額",
