@@ -732,35 +732,26 @@ pub fn resolve_custom_budget(
         if is_low {
             if tb_config.claude_low > 0 {
                 Some(tb_config.claude_low as i64)
-            } else if tb_config.claude_low < 0 {
-                Some(-1)
             } else {
                 None
             }
         } else if is_med {
             if tb_config.claude_medium > 0 {
                 Some(tb_config.claude_medium as i64)
-            } else if tb_config.claude_medium < 0 {
-                Some(-1)
             } else {
                 None
             }
         } else if is_high {
             if tb_config.claude_high > 0 {
                 Some(tb_config.claude_high as i64)
-            } else if tb_config.claude_high < 0 {
-                Some(-1)
             } else {
                 None
             }
         } else {
             // 针对未指定档位后缀的 Claude 思考模型（如 claude-sonnet-4-6、claude-opus-4-6-thinking）：
-            // claude_budget=0 表示"未显式配置，使用官方模型结构体默认值"；
-            // 填 -1 则明确走官方动态自适应；填具体数值则精确覆盖
+            // 填 > 0 则精确覆盖；<= 0 则回退至官方模型结构体默认值 (如 1024)
             if tb_config.claude_budget > 0 {
                 Some(tb_config.claude_budget as i64)
-            } else if tb_config.claude_budget < 0 {
-                Some(-1)
             } else {
                 None
             }
