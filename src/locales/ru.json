@@ -64,7 +64,8 @@
         "selected": "Selected",
         "claude_series": "Claude Series",
         "maximize": "Maximize",
-        "app_name": "Antigravity Tools"
+        "app_name": "Antigravity Tools",
+        "copy_to_clipboard": "Скопировать в буфер"
     },
     "nav": {
         "dashboard": "Дашборд",
@@ -208,7 +209,11 @@
         "no_client_account": "Нет активного или привязанного аккаунта для этого приложения",
         "go_switch_account": "Перейти к смене аккаунта",
         "switch_best_to_target": "Переключить лучший аккаунт на {{target}}",
-        "switch_this_to_target": "Переключить этот аккаунт на {{target}}"
+        "switch_this_to_target": "Переключить этот аккаунт на {{target}}",
+        "account_pool": "Пул аккаунтов",
+        "view_mode_title_5h": "5-часовое плавающее окно",
+        "view_mode_title_weekly": "7-дневная недельная квота",
+        "view_mode_title_weighted": "Комплексный взвешенный вид"
     },
     "accounts": {
         "qos": {
@@ -453,7 +458,15 @@
         "quota_group_claude": "Модели Claude и GPT",
         "weekly_constrained_tooltip": "Ограничено недельной квотой",
         "weekly_tokens": "Токены за цикл",
-        "weekly_tokens_tooltip": "Токены, зафиксированные этим инстансом в текущем цикле квоты (ввод + вывод)"
+        "weekly_tokens_tooltip": "Токены, зафиксированные этим инстансом в текущем цикле квоты (ввод + вывод)",
+        "client_classic": "Classic",
+        "client_classic_tooltip": "Текущий аккаунт Antigravity Classic",
+        "client_ide": "IDE",
+        "client_ide_tooltip": "Текущий аккаунт Antigravity IDE",
+        "client_cli": "CLI",
+        "client_cli_tooltip": "Текущий аккаунт Antigravity CLI (agy)",
+        "switch_next_short": "След.",
+        "weekly_exhausted_tooltip": "Недельная квота исчерпана, защита активирована"
     },
     "settings": {
         "save": "Сохранить настройки",
@@ -781,7 +794,8 @@
         "branding": {
             "title": "Инструменты Antigravity",
             "subtitle": "Профессиональное управление аккаунтами"
-        }
+        },
+        "lightweight_mode_desc": "Полностью освобождает память WebView при выходе или сворачивании в трей"
     },
     "tray": {
         "current": "Текущий",
@@ -794,7 +808,10 @@
         "no_account": "Нет аккаунта",
         "unknown_quota": "Неизвестно (Нажмите для обновления)",
         "forbidden": "Аккаунт запрещен",
-        "lightweight_mode": "Легковесный режим (выгрузка памяти)"
+        "lightweight_mode": "Легковесный режим (выгрузка памяти)",
+        "open_console": "Открыть консоль",
+        "pin_desc": "Закрепить на рабочем столе (не скрывать при потере фокуса)",
+        "unpin_desc": "Закреплено (нажмите, чтобы открепить, авто-скрытие при потере фокуса)"
     },
     "proxy": {
         "title": "Сервис API Прокси",

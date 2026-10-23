@@ -10,6 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "withGlobalTauri": false,
     "windows": [
       {
@@ -21,6 +22,20 @@
         "hiddenTitle": true,
         "transparent": false,
         "visible": false
+      },
+      {
+        "label": "mini",
+        "title": "Antigravity Mini",
+        "url": "index.html?mini=1",
+        "width": 360,
+        "height": 360,
+        "decorations": false,
+        "resizable": false,
+        "shadow": true,
+        "transparent": true,
+        "alwaysOnTop": false,
+        "visible": false,
+        "skipTaskbar": true
       }
     ],
     "security": {

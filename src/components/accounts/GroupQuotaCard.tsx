@@ -94,14 +94,16 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
                     )}
                     title={summary.isWeeklyExhausted ? t('accounts.weekly_exhausted_tooltip') : formatTooltip('5H')}
                 >
-                    {/* Background Progress Bar */}
-                    <div
-                        className={cn(
-                            "absolute inset-y-0 left-0 transition-all duration-700 ease-out opacity-15 dark:opacity-20",
-                            showLiveIssue ? (isUnavailable ? "bg-rose-500" : "bg-amber-500") : getBgColorClass(fiveHourPercentage)
-                        )}
-                        style={{ width: `${fiveHourPercentage}%` }}
-                    />
+                    {/* Bottom Accent Progress Line */}
+                    <div className="absolute bottom-0 inset-x-0 h-[2.5px] bg-black/[0.05] dark:bg-white/[0.08] overflow-hidden">
+                        <div
+                            className={cn(
+                                "h-full transition-all duration-700 ease-out rounded-r-full",
+                                showLiveIssue ? (isUnavailable ? "bg-rose-500" : "bg-amber-500") : getBgColorClass(fiveHourPercentage)
+                            )}
+                            style={{ width: `${fiveHourPercentage}%` }}
+                        />
+                    </div>
 
                     {/* Content */}
                     <div className="relative z-10 w-full flex items-center text-[10px] font-mono leading-none gap-1.5">
@@ -155,14 +157,16 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
                     )}
                     title={formatTooltip('周配额')}
                 >
-                    {/* Background Progress Bar */}
-                    <div
-                        className={cn(
-                            "absolute inset-y-0 left-0 transition-all duration-700 ease-out opacity-15 dark:opacity-20",
-                            summary.isWeeklyExhausted ? "bg-rose-500" : getBgColorClass(weeklyPercentage)
-                        )}
-                        style={{ width: `${weeklyPercentage}%` }}
-                    />
+                    {/* Bottom Accent Progress Line */}
+                    <div className="absolute bottom-0 inset-x-0 h-[2.5px] bg-black/[0.05] dark:bg-white/[0.08] overflow-hidden">
+                        <div
+                            className={cn(
+                                "h-full transition-all duration-700 ease-out rounded-r-full",
+                                summary.isWeeklyExhausted ? "bg-rose-500" : getBgColorClass(weeklyPercentage)
+                            )}
+                            style={{ width: `${weeklyPercentage}%` }}
+                        />
+                    </div>
 
                     {/* Content */}
                     <div className="relative z-10 w-full flex items-center text-[10px] font-mono leading-none gap-1.5">
@@ -178,7 +182,7 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
                             <span className="text-[9px] font-normal text-gray-400 dark:text-gray-500 scale-95 shrink-0">
                                 {t('accounts.quota_window_weekly_short', '周配额')}
                             </span>
-                            {weekly.cycleTokens !== undefined && weekly.cycleTokens !== null && (
+                            {weekly.cycleTokens !== undefined && weekly.cycleTokens !== null && weekly.cycleTokens > 0 && (
                                 <span className="text-[9px] font-normal text-gray-400 dark:text-gray-500 shrink-0"
                                       title={t('accounts.weekly_tokens_tooltip')}>
                                     ({weekly.cycleTokens.toLocaleString('en-US', { notation: 'compact', maximumFractionDigits: 1 })})

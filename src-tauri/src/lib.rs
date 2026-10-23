@@ -659,34 +659,53 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let tray_enabled = window
-                    .app_handle()
-                    .try_state::<AppRuntimeFlags>()
-                    .map(|flags| flags.tray_enabled)
-                    .unwrap_or(true);
-
-                if tray_enabled {
-                    api.prevent_close();
-
-                    let is_lightweight = modules::load_app_config()
-                        .map(|c| c.lightweight_mode)
-                        .unwrap_or(false);
-
-                    if is_lightweight {
-                        let _ = modules::lightweight::enter_lightweight_mode(window.app_handle());
-                    } else {
-                        let _ = window.hide();
-                        #[cfg(target_os = "macos")]
-                        {
-                            use tauri::Manager;
-                            window
-                                .app_handle()
-                                .set_activation_policy(tauri::ActivationPolicy::Accessory)
-                                .unwrap_or(());
+            match event {
+                tauri::WindowEvent::Focused(focused) => {
+                    if !focused && window.label() == "mini" {
+                        modules::tray::record_blur();
+                        if !modules::tray::is_mini_view_pinned() {
+                            let _ = window.hide();
+                            modules::tray::set_mini_view_active(false);
                         }
                     }
                 }
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    if window.label() == "mini" {
+                        api.prevent_close();
+                        let _ = window.hide();
+                        modules::tray::set_mini_view_active(false);
+                        return;
+                    }
+
+                    let tray_enabled = window
+                        .app_handle()
+                        .try_state::<AppRuntimeFlags>()
+                        .map(|flags| flags.tray_enabled)
+                        .unwrap_or(true);
+
+                    if tray_enabled {
+                        api.prevent_close();
+
+                        let is_lightweight = modules::load_app_config()
+                            .map(|c| c.lightweight_mode)
+                            .unwrap_or(false);
+
+                        if is_lightweight {
+                            let _ = modules::lightweight::enter_lightweight_mode(window.app_handle());
+                        } else {
+                            let _ = window.hide();
+                            #[cfg(target_os = "macos")]
+                            {
+                                use tauri::Manager;
+                                window
+                                    .app_handle()
+                                    .set_activation_policy(tauri::ActivationPolicy::Accessory)
+                                    .unwrap_or(());
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -746,6 +765,12 @@ pub fn run() {
             commands::set_data_dir,
             commands::migrate_data_dir,
             commands::show_main_window,
+            commands::show_mini_view,
+            commands::exit_app,
+            commands::set_mini_view_pinned,
+            commands::is_mini_view_pinned,
+            commands::set_mini_view_active,
+            commands::update_tray_for_account,
             commands::set_window_theme,
             commands::get_antigravity_path,
             commands::get_antigravity_cli_path,

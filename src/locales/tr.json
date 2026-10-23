@@ -63,7 +63,8 @@
         "selected": "Selected",
         "claude_series": "Claude Series",
         "maximize": "Maximize",
-        "app_name": "Antigravity Tools"
+        "app_name": "Antigravity Tools",
+        "copy_to_clipboard": "Panoya kopyala"
     },
     "nav": {
         "dashboard": "Kontrol Paneli",
@@ -207,7 +208,11 @@
         "no_client_account": "Bu uygulama için etkin veya bağlı hesap bulunamadı",
         "go_switch_account": "Hesap değiştirmeye git",
         "switch_best_to_target": "En iyi hesabı {{target}} olarak değiştir",
-        "switch_this_to_target": "Bu hesabı {{target}} olarak değiştir"
+        "switch_this_to_target": "Bu hesabı {{target}} olarak değiştir",
+        "account_pool": "Hesap Havuzu",
+        "view_mode_title_5h": "5 Saatlik Kayan Pencere Görünümü",
+        "view_mode_title_weekly": "7 Günlük Haftalık Kota Görünümü",
+        "view_mode_title_weighted": "Kapsamlı Ağırlıklı Görünüm"
     },
     "accounts": {
         "qos": {
@@ -453,7 +458,15 @@
         "quota_group_claude": "Claude ve GPT Modelleri",
         "weekly_constrained_tooltip": "Haftalık kota sınırı ile kısıtlandı",
         "weekly_tokens": "Döngü tokenleri",
-        "weekly_tokens_tooltip": "Bu örneğin mevcut kota döngüsünde kaydettiği token kullanımı (girdi + çıktı)"
+        "weekly_tokens_tooltip": "Bu örneğin mevcut kota döngüsünde kaydettiği token kullanımı (girdi + çıktı)",
+        "client_classic": "Klasik",
+        "client_classic_tooltip": "Mevcut Antigravity Klasik oturumu açık hesap",
+        "client_ide": "IDE",
+        "client_ide_tooltip": "Mevcut Antigravity IDE oturumu açık hesap",
+        "client_cli": "CLI",
+        "client_cli_tooltip": "Mevcut Antigravity CLI (agy) oturumu açık hesap",
+        "switch_next_short": "Sonraki",
+        "weekly_exhausted_tooltip": "Haftalık kota tükendi, otomatik koruma devrede"
     },
     "settings": {
         "save": "Ayarları Kaydet",
@@ -777,7 +790,8 @@
             "open_btn": "Open Console",
             "debug_logging": "Debug Logging",
             "debug_logging_desc": "When enabled, records the complete request and response chain. Recommended to enable only when troubleshooting issues."
-        }
+        },
+        "lightweight_mode_desc": "Etkinleştirildiğinde, çıkış yaparken veya tepsiye küçültürken WebView belleğini tamamen serbest bırakır"
     },
     "tray": {
         "current": "Mevcut",
@@ -790,7 +804,10 @@
         "no_account": "Hesap Yok",
         "unknown_quota": "Bilinmiyor (Yenilemek için tıklayın)",
         "forbidden": "Hesap Yasaklı",
-        "lightweight_mode": "Hafif Mod (Tepsideyken belleği boşalt)"
+        "lightweight_mode": "Hafif Mod (Tepsideyken belleği boşalt)",
+        "open_console": "Konsolu Aç",
+        "pin_desc": "Masaüstüne sabitle (odak kaybedildiğinde gizleme)",
+        "unpin_desc": "Sabitlendi (sabitlemeyi kaldırmak için tıkla, otomatik gizle)"
     },
     "proxy": {
         "title": "API Proxy Hizmeti",

@@ -534,8 +534,10 @@ pub async fn save_config(
         tracing::warn!("Failed to apply internal error log retention: {}", e);
     }
 
-    // 通知托盘配置已更新
+    // 通知所有窗口配置已更新，并跨窗口广播主题与语言变更
     let _ = app.emit("config://updated", ());
+    let _ = app.emit("app://theme-changed", serde_json::json!({ "theme": config.theme.clone() }));
+    let _ = app.emit("app://language-changed", serde_json::json!({ "language": config.language.clone() }));
 
     // 同步全局内存配置（无论反代服务当前是否处于运行状态）
     crate::modules::hub_version::update_hub_fingerprint(
@@ -1160,12 +1162,27 @@ pub async fn migrate_data_dir(new_path: String, clean_source: bool) -> Result<()
 
 /// 显示主窗口。登录项的免打扰启动只跳过这一次自动显示。
 #[tauri::command]
-pub async fn show_main_window(window: tauri::Window) -> Result<(), String> {
+pub async fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
     if crate::modules::startup_quiet::take() {
         tracing::info!("Skipped the automatic first window show for a quiet login launch");
         return Ok(());
     }
-    window.show().map_err(|e| e.to_string())
+    let window = crate::modules::lightweight::ensure_main_window(&app)?;
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+    }
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+    Ok(())
+}
+
+/// 呼出/切换迷你悬浮窗（从主控制台导航栏或其他入口调用）
+#[tauri::command]
+pub async fn show_mini_view(app: tauri::AppHandle) -> Result<(), String> {
+    crate::modules::tray::handle_tray_click(&app, None);
+    Ok(())
 }
 
 /// 设置窗口主题（用于同步 Windows 标题栏按钮颜色）
@@ -1662,6 +1679,78 @@ pub async fn query_transit_info(url: String, key: String) -> Result<String, Stri
     } else {
         Err(format!("HTTP {}: {}", status, text))
     }
+}
+
+/// 优雅关闭网关服务并退出应用
+#[tauri::command]
+pub async fn exit_app(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    tauri::async_runtime::spawn(async move {
+        tracing::info!("[Command] 退出应用触发，开始全面清理服务与端口...");
+
+        let state = app.state::<crate::commands::proxy::ProxyServiceState>();
+        let cf_state = app.state::<crate::commands::cloudflared::CloudflaredState>();
+
+        // 1. 终止 cloudflared 隧道子进程
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(500), cf_state.stop()).await;
+
+        // 2. 停止 Admin Server（关闭 TCP 监听器和所有活动连接）
+        if let Ok(mut lock) = tokio::time::timeout(
+            std::time::Duration::from_millis(1000),
+            state.admin_server.write(),
+        )
+        .await
+        {
+            if let Some(admin) = lock.take() {
+                admin.stop().await;
+            }
+        }
+
+        // 3. 停止业务代理实例及后台任务
+        if let Ok(mut lock) = tokio::time::timeout(
+            std::time::Duration::from_millis(1000),
+            state.instance.write(),
+        )
+        .await
+        {
+            if let Some(inst) = lock.take() {
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_millis(500),
+                    inst.token_manager
+                        .graceful_shutdown(std::time::Duration::from_millis(400)),
+                )
+                .await;
+                inst.axum_server.set_running(false).await;
+                inst.axum_server.stop();
+            }
+        }
+
+        // 4. 给予底层套接字彻底注销的微小缓冲，然后干净退出进程
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        std::process::exit(0);
+    });
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_mini_view_pinned(pinned: bool) {
+    crate::modules::tray::set_mini_view_pinned(pinned);
+}
+
+#[tauri::command]
+pub fn is_mini_view_pinned() -> bool {
+    crate::modules::tray::is_mini_view_pinned()
+}
+
+#[tauri::command]
+pub fn set_mini_view_active(active: bool) {
+    crate::modules::tray::set_mini_view_active(active);
+}
+
+#[tauri::command]
+pub fn update_tray_for_account(app: tauri::AppHandle, account_id: Option<String>) {
+    crate::modules::tray::set_tray_selected_account_id(account_id);
+    crate::modules::tray::update_tray_menus(&app);
 }
 
 #[cfg(test)]

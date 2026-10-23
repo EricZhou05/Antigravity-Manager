@@ -435,6 +435,33 @@ impl InboundThinkingPipeline {
                         }
                     }
 
+                    // [Claude 目标模型防 400 校验 (Ref #3718, #3733)]:
+                    // Anthropic 验签引擎约束：若存在 thought: true 部件，该轮必须具有合法真实签名；
+                    // 若该轮没有任何合法的 Claude 真实签名（例如从 Gemini 跨模型切过来，或无签名的历史思考）：
+                    // 严禁组装出无签名的 thought: true 部件。有其他部件时直接丢弃思考块；无其他部件时降级为纯文本。
+                    if is_claude {
+                        let claude_has_sig = placeholder_sig.as_deref().is_some_and(|s| {
+                            crate::proxy::thinking_store::is_real_signature(s)
+                                && crate::proxy::thinking_store::is_claude_signature(s)
+                        }) || other_parts.iter().any(|p| {
+                            crate::proxy::thinking_store::extract_part_signature(p, true).is_some()
+                        });
+
+                        if !claude_has_sig {
+                            if other_parts.is_empty() {
+                                if let Some(ref tp) = thinking_part {
+                                    if let Some(txt) = tp.get("text").and_then(Value::as_str) {
+                                        if !txt.is_empty() {
+                                            other_parts.push(json!({ "text": txt }));
+                                        }
+                                    }
+                                }
+                            }
+                            thinking_part = None;
+                            extra_thinking_parts.clear();
+                        }
+                    }
+
                     // 核心前缀保序：首位强制存在且仅存在一个 thinking_part，其余正文与工具调用紧随其后
                     let mut new_parts = Vec::with_capacity(parts.len() + 1);
                     if let Some(tp) = thinking_part {
@@ -1883,6 +1910,21 @@ impl InboundThinkingPipeline {
                     }
                 }
             }
+        } else {
+            // Claude 系列模型绝对严禁携带任何哨兵，执行防御性清理（彻底剥离历史会话或跨模型切换误混入的哨兵）
+            if let Some(contents_arr) = canonical_contents.as_array_mut() {
+                for content in contents_arr.iter_mut() {
+                    if let Some(parts) = content.get_mut("parts").and_then(|p| p.as_array_mut()) {
+                        for part in parts.iter_mut() {
+                            if let Some(sig) = part.get("thoughtSignature").and_then(|s| s.as_str()) {
+                                if crate::proxy::thinking_store::is_sentinel_signature(sig) {
+                                    part.as_object_mut().map(|o| o.remove("thoughtSignature"));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // 2. systemInstruction (规范化统一键序: role -> parts -> 其余)
@@ -2133,6 +2175,23 @@ impl InboundThinkingPipeline {
                     "[Pipeline-Defense] Target is Claude model [{}] with forced tool_choice (mode: ANY). Stripped thinkingConfig to prevent upstream 400 conflict.",
                     target_model
                 );
+            }
+        }
+
+        // [Pipeline First] Claude 思考预算下限保护 (Anthropic 规范: thinkingBudget >= 1024, Ref #3721)
+        if target_is_claude {
+            if let Some(tc) = gc_obj.get_mut("thinkingConfig").and_then(|v| v.as_object_mut()) {
+                if let Some(tb_val) = tc.get_mut("thinkingBudget") {
+                    if let Some(tb_num) = tb_val.as_i64() {
+                        if tb_num > 0 && tb_num < 1024 {
+                            tracing::warn!(
+                                "[Pipeline-Defense] Clamping Claude thinkingBudget from {} to 1024 to satisfy Anthropic constraint.",
+                                tb_num
+                            );
+                            *tb_val = json!(1024);
+                        }
+                    }
+                }
             }
         }
 
@@ -4703,6 +4762,105 @@ mod tests {
         assert!(
             gc.get("thinkingConfig").is_some(),
             "Claude 目标模型当 toolConfig 为 AUTO 时，thinkingConfig 必须正常保留"
+        );
+    }
+
+    #[test]
+    fn test_claude_model_without_signature_pure_text_degrades_issue_3718() {
+        // 当模型为 Claude 时，若该轮只有思考内容而无其他部件且无签名，
+        // 必须降级为普通正文，不可带 thought: true
+        let mut contents = vec![
+            json!({
+                "role": "user",
+                "parts": [{"text": "query"}]
+            }),
+            json!({
+                "role": "model",
+                "parts": [
+                    {
+                        "text": "thinking without sig",
+                        "thought": true
+                    }
+                ]
+            }),
+        ];
+
+        InboundThinkingPipeline::process_contents(
+            &mut contents,
+            "claude-sonnet-4-6",
+            true,
+            None,
+            false,
+        );
+
+        let model_parts = contents[1]["parts"].as_array().expect("parts array");
+        assert_eq!(model_parts.len(), 1);
+        assert_eq!(model_parts[0]["text"], "thinking without sig");
+        assert!(
+            model_parts[0].get("thought").is_none(),
+            "纯思考且无签名时必须降级为普通文本，不可带 thought: true"
+        );
+    }
+
+    #[test]
+    fn test_claude_thinking_budget_clamped_to_1024() {
+        let mut inner_req = json!({
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": "hi"}]
+                }
+            ],
+            "generationConfig": {
+                "thinkingConfig": {
+                    "includeThoughts": true,
+                    "thinkingBudget": 512
+                }
+            }
+        });
+
+        InboundThinkingPipeline::align_google_request_prefix_topology_with_model(
+            &mut inner_req,
+            "claude-sonnet-4-6",
+            None,
+        );
+
+        let gc = inner_req.get("generationConfig").expect("generationConfig");
+        let tc = gc.get("thinkingConfig").expect("thinkingConfig");
+        assert_eq!(
+            tc["thinkingBudget"], 1024,
+            "Claude 目标模型思考预算低于 1024 时必须自动提升至 1024"
+        );
+    }
+
+    #[test]
+    fn test_gemini_thinking_budget_preserves_lower_value() {
+        let mut inner_req = json!({
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": "hi"}]
+                }
+            ],
+            "generationConfig": {
+                "thinkingConfig": {
+                    "includeThoughts": true,
+                    "thinkingBudget": 1000
+                }
+            }
+        });
+
+        InboundThinkingPipeline::align_google_request_prefix_topology_with_model(
+            &mut inner_req,
+            "gemini-3.8-flash-low",
+            None,
+        );
+
+        let gc = inner_req.get("generationConfig").expect("generationConfig");
+        let tc = gc.get("thinkingConfig").expect("thinkingConfig");
+        assert_eq!(
+            tc["thinkingBudget"], 1000,
+            "Gemini 模型思考预算允许 1000，不得强制改写为 1024"
         );
     }
 }
