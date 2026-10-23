@@ -71,6 +71,15 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
         return getGroupQuotaSummaries(account.quota?.quota_groups, account.quota?.models, tier);
     }, [account.quota?.quota_groups, account.quota?.models, tier]);
 
+    const modelCapabilities = useMemo(() => {
+        const supported = Array.from(new Set(groupSummaries.flatMap(s => s.supportedModels || [])));
+        const hasArgon = supported.some(m => m.includes('argon')) || groupSummaries.some(s => s.key === 'argon');
+        const hasClaude55 = supported.some(m => m.includes('5-5') || m.includes('5.5'));
+        const hasClaude46 = supported.some(m => m.includes('4-6') || m.includes('4.6'));
+        const hasGpt = supported.some(m => m.startsWith('gpt'));
+        return { hasArgon, hasClaude55, hasClaude46, hasGpt };
+    }, [groupSummaries]);
+
     const isGroupProtected = (key: 'gemini' | 'claude' | 'argon') => {
         if (!config?.quota_protection?.enabled) return false;
         if (!account.protected_models || account.protected_models.length === 0) return false;
@@ -207,6 +216,40 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                                 <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-[9px] font-bold shadow-sm border border-orange-200/50 dark:border-orange-800/50">
                                     <Tag className="w-2.5 h-2.5" />
                                     {account.custom_label}
+                                </span>
+                            )}
+                            {/* 核心模型能力直观徽章 */}
+                            {modelCapabilities.hasArgon && (
+                                <span
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-gradient-to-r from-purple-500/15 to-indigo-500/15 text-purple-700 dark:text-purple-300 text-[9px] font-bold border border-purple-200/60 dark:border-purple-800/50"
+                                    title="此账号已支持 Gemini 4 Argon 系列旗舰推理模型 (High / Medium / Low)"
+                                >
+                                    <Sparkles className="w-2.5 h-2.5 text-purple-500" />
+                                    Argon
+                                </span>
+                            )}
+                            {modelCapabilities.hasClaude55 && (
+                                <span
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[9px] font-bold border border-amber-200/60 dark:border-amber-800/50"
+                                    title="此账号已支持 Claude 5.5 系列新一代模型"
+                                >
+                                    Claude 5.5
+                                </span>
+                            )}
+                            {modelCapabilities.hasClaude46 && !modelCapabilities.hasClaude55 && (
+                                <span
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-600/90 dark:text-amber-400/90 text-[9px] font-bold border border-amber-200/40 dark:border-amber-800/30"
+                                    title="此账号已支持 Claude 4.6 模型"
+                                >
+                                    Claude 4.6
+                                </span>
+                            )}
+                            {modelCapabilities.hasGpt && (
+                                <span
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[9px] font-bold border border-emerald-200/60 dark:border-emerald-800/50"
+                                    title="此账号已支持 GPT-OSS-120B 旗舰模型"
+                                >
+                                    GPT-120B
                                 </span>
                             )}
                         </div>

@@ -162,13 +162,14 @@ pub fn parse_version_tuple(s: &str) -> Option<(u32, u32)> {
             && (minor_token.starts_with("202") || minor_token.starts_with("201"))
         {
             0
-        } else {
-            let m = minor_token.parse::<u32>().ok()?;
+        } else if let Ok(m) = minor_token.parse::<u32>() {
             if m >= 1000 {
                 0
             } else {
                 m
             }
+        } else {
+            0
         }
     } else {
         0
@@ -197,8 +198,9 @@ pub fn is_model_compliant_with_baseline(model: &str) -> bool {
         return false;
     }
 
-    // 特许放行的官方轻量级与图像专用模型
-    if m == "gemini-3.1-flash-lite"
+    // 特许放行的官方轻量级与图像专用模型，以及新一代 Gemini 4 Argon 旗舰模型
+    if m.contains("argon")
+        || m == "gemini-3.1-flash-lite"
         || m == "gemini-3.5-flash-lite"
         || m == "gemini-3.1-flash-image"
         || m == "gemini-3-pro-image"

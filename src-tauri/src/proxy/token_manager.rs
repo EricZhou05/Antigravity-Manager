@@ -1313,6 +1313,55 @@ impl TokenManager {
             }
         }
 
+        // [NEW] 检查 quota_groups 是否存在 Argon 专属分组，为该账号注入 Argon 授权、配额与限额
+        if let Some(groups) = account
+            .get("quota")
+            .and_then(|q| q.get("quota_groups"))
+            .and_then(|g| g.as_array())
+        {
+            let argon_bucket = groups.iter().find_map(|g| {
+                let name = g
+                    .get("display_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                let buckets = g.get("buckets").and_then(|b| b.as_array())?;
+                if name.contains("argon") {
+                    return buckets.first();
+                }
+                buckets.iter().find(|b| {
+                    let b_id = b
+                        .get("bucket_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    b_id.contains("argon")
+                })
+            });
+
+            if let Some(bucket) = argon_bucket {
+                let frac = bucket
+                    .get("remaining_fraction")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(1.0);
+                let pct = (frac * 100.0) as i32;
+                model_quotas.insert("gemini-4-argon".to_string(), pct);
+                model_quotas.insert("gemini-4-argon-high".to_string(), pct);
+                model_quotas.insert("gemini-4-argon-medium".to_string(), pct);
+                model_quotas.insert("gemini-4-argon-low".to_string(), pct);
+
+                available_models.insert("gemini-4-argon".to_string());
+                available_models.insert("gemini-4-argon-high".to_string());
+                available_models.insert("gemini-4-argon-medium".to_string());
+                available_models.insert("gemini-4-argon-low".to_string());
+
+                model_limits.insert("gemini-4-argon".to_string(), 65536);
+                model_limits.insert("gemini-4-argon-high".to_string(), 65536);
+                model_limits.insert("gemini-4-argon-medium".to_string(), 65536);
+                model_limits.insert("gemini-4-argon-low".to_string(), 65536);
+            }
+        }
+
         if let Some(live_limits) = account
             .get("live_limited_models")
             .and_then(|value| value.as_object())
@@ -1625,14 +1674,56 @@ impl TokenManager {
     fn get_available_models_from_json(account_path: &PathBuf) -> Option<HashSet<String>> {
         let content = std::fs::read_to_string(account_path).ok()?;
         let account: serde_json::Value = serde_json::from_str(&content).ok()?;
-        let models = account.get("quota")?.get("models")?.as_array()?;
         let mut result = HashSet::new();
-        for model in models {
-            if let Some(name) = model.get("name").and_then(|v| v.as_str()) {
-                let normalized = name.trim().to_lowercase();
-                if !normalized.is_empty() {
-                    result.insert(normalized);
+        if let Some(models) = account
+            .get("quota")
+            .and_then(|q| q.get("models"))
+            .and_then(|m| m.as_array())
+        {
+            for model in models {
+                if let Some(name) = model.get("name").and_then(|v| v.as_str()) {
+                    let normalized = name.trim().to_lowercase();
+                    if !normalized.is_empty() {
+                        result.insert(normalized);
+                    }
                 }
+            }
+        }
+        // [NEW] 检查 quota_groups 是否包含 argon 分组
+        if let Some(groups) = account
+            .get("quota")
+            .and_then(|q| q.get("quota_groups"))
+            .and_then(|g| g.as_array())
+        {
+            let has_argon = groups.iter().any(|g| {
+                let name = g
+                    .get("display_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                let buckets = g.get("buckets").and_then(|b| b.as_array());
+                name.contains("argon")
+                    || buckets.map_or(false, |bs| {
+                        bs.iter().any(|b| {
+                            let b_id = b
+                                .get("bucket_id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_lowercase();
+                            let b_name = b
+                                .get("display_name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_lowercase();
+                            b_id.contains("argon") || b_name.contains("argon")
+                        })
+                    })
+            });
+            if has_argon {
+                result.insert("gemini-4-argon".to_string());
+                result.insert("gemini-4-argon-high".to_string());
+                result.insert("gemini-4-argon-medium".to_string());
+                result.insert("gemini-4-argon-low".to_string());
             }
         }
         Some(result)
@@ -4103,6 +4194,53 @@ impl TokenManager {
                             .model_quotas
                             .insert(m.name.clone(), m.percentage as i32);
                         token.available_models.insert(m.name.to_lowercase());
+                    }
+                    // [NEW] 同步 Argon 配额组能力
+                    let argon_bucket = quota_data.quota_groups.as_ref().and_then(|groups| {
+                        groups.iter().find_map(|g| {
+                            let name = g.display_name.to_lowercase();
+                            if name.contains("argon") {
+                                return g.buckets.first();
+                            }
+                            g.buckets
+                                .iter()
+                                .find(|b| b.bucket_id.to_lowercase().contains("argon"))
+                        })
+                    });
+                    if let Some(bucket) = argon_bucket {
+                        let pct = (bucket.remaining_fraction * 100.0) as i32;
+                        token.model_quotas.insert("gemini-4-argon".to_string(), pct);
+                        token
+                            .model_quotas
+                            .insert("gemini-4-argon-high".to_string(), pct);
+                        token
+                            .model_quotas
+                            .insert("gemini-4-argon-medium".to_string(), pct);
+                        token
+                            .model_quotas
+                            .insert("gemini-4-argon-low".to_string(), pct);
+                        token.available_models.insert("gemini-4-argon".to_string());
+                        token
+                            .available_models
+                            .insert("gemini-4-argon-high".to_string());
+                        token
+                            .available_models
+                            .insert("gemini-4-argon-medium".to_string());
+                        token
+                            .available_models
+                            .insert("gemini-4-argon-low".to_string());
+                        token
+                            .model_limits
+                            .insert("gemini-4-argon".to_string(), 65536);
+                        token
+                            .model_limits
+                            .insert("gemini-4-argon-high".to_string(), 65536);
+                        token
+                            .model_limits
+                            .insert("gemini-4-argon-medium".to_string(), 65536);
+                        token
+                            .model_limits
+                            .insert("gemini-4-argon-low".to_string(), 65536);
                     }
                 }
 

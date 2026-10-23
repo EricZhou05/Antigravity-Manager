@@ -21,6 +21,11 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
     const showLiveIssue = liveState.shouldShow || summary.isWeeklyConstrained;
     const isUnavailable = liveState.isActive || summary.isWeeklyExhausted;
 
+    const fiveHour = summary.fiveHour;
+    const weekly = summary.weekly;
+    const fiveHourPercentage = fiveHour?.percentage ?? 0;
+    const weeklyPercentage = weekly?.percentage ?? 0;
+
     const label = summary.dynamicLabel || (
         summary.key === 'gemini'
             ? 'Gemini'
@@ -28,13 +33,24 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
                 ? (fullWidth ? 'Gemini 4 Argon' : 'G4 Argon')
                 : 'Claude / GPT'
     );
-    const supportedModelsTooltip = summary.supportedModels && summary.supportedModels.length > 0
-        ? `\n支持模型: ${summary.supportedModels.join(', ')}`
-        : '';
-    const Icon = summary.key === 'gemini' || summary.key === 'argon' ? Gemini.Color : Sparkles;
+    const isMultiBucket = fiveHour !== undefined && weekly !== undefined;
+    // 当上方已有 5H 展示完整 label 时，下方周配额条采用紧凑前缀，彻底避免横向截断
+    const weeklyLabel = isMultiBucket
+        ? (summary.key === 'gemini' ? 'Gemini' : summary.key === 'claude' ? 'Claude' : label)
+        : label;
 
-    const fiveHour = summary.fiveHour;
-    const weekly = summary.weekly;
+    const formatTooltip = (windowType: '5H' | '周配额') => {
+        const titleLine = `${label} (${windowType})`;
+        const pctLine = `剩余配额: ${windowType === '5H' ? fiveHourPercentage : weeklyPercentage}%`;
+        const timeLine = windowType === '5H'
+            ? (fiveHour?.resetTime ? `重置: ${formatTimeRemaining(fiveHour.resetTime)}` : '')
+            : (weekly?.resetTime ? `重置: ${formatTimeRemaining(weekly.resetTime)}` : '');
+        const models = summary.supportedModels && summary.supportedModels.length > 0
+            ? `\n支持官方模型 (${summary.supportedModels.length}个):\n• ${summary.supportedModels.join('\n• ')}`
+            : '';
+        return [titleLine, pctLine, timeLine].filter(Boolean).join(' | ') + models;
+    };
+    const Icon = summary.key === 'gemini' || summary.key === 'argon' ? Gemini.Color : Sparkles;
 
     const getBgColorClass = (p: number) => {
         const color = getQuotaColor(p);
@@ -66,9 +82,6 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
         }
     };
 
-    const fiveHourPercentage = fiveHour?.percentage ?? 0;
-    const weeklyPercentage = weekly?.percentage ?? 0;
-
     return (
         <div className="flex flex-col gap-1 min-w-0">
             {/* 5H 滑动配额胶囊条 (仅当 5H 存在时渲染) */}
@@ -79,7 +92,7 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
                         showLiveIssue && "border-amber-400/70 dark:border-amber-500/70 bg-amber-50/80 dark:bg-amber-950/30 ring-1 ring-amber-400/30",
                         isUnavailable && "border-rose-400/70 dark:border-rose-500/70 bg-rose-50/80 dark:bg-rose-950/30 ring-rose-400/30"
                     )}
-                    title={`${summary.isWeeklyExhausted ? t('accounts.weekly_exhausted_tooltip') : `${label} (5H)`}${supportedModelsTooltip}`}
+                    title={summary.isWeeklyExhausted ? t('accounts.weekly_exhausted_tooltip') : formatTooltip('5H')}
                 >
                     {/* Background Progress Bar */}
                     <div
@@ -140,7 +153,7 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
                         fiveHour === undefined && showLiveIssue && "border-amber-400/70 dark:border-amber-500/70 bg-amber-50/80 dark:bg-amber-950/30 ring-1 ring-amber-400/30",
                         fiveHour === undefined && isUnavailable && "border-rose-400/70 dark:border-rose-500/70 bg-rose-50/80 dark:bg-rose-950/30 ring-rose-400/30"
                     )}
-                    title={`${summary.key === 'argon' ? 'Gemini 4 Argon (Weekly Limit)' : t('accounts.quota_window_weekly')}${supportedModelsTooltip}`}
+                    title={formatTooltip('周配额')}
                 >
                     {/* Background Progress Bar */}
                     <div
@@ -161,7 +174,7 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
                         )}>
                             {/* 统一展示图标、分组名称与周配额标识 */}
                             <Icon size={12} className="shrink-0" />
-                            <span className="truncate">{label}</span>
+                            <span className="truncate">{weeklyLabel}</span>
                             <span className="text-[9px] font-normal text-gray-400 dark:text-gray-500 scale-95 shrink-0">
                                 {t('accounts.quota_window_weekly_short', '周配额')}
                             </span>
@@ -169,6 +182,13 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
                                 <span className="text-[9px] font-normal text-gray-400 dark:text-gray-500 shrink-0"
                                       title={t('accounts.weekly_tokens_tooltip')}>
                                     ({weekly.cycleTokens.toLocaleString('en-US', { notation: 'compact', maximumFractionDigits: 1 })})
+                                </span>
+                            )}
+                            {summary.key === 'argon' && (
+                                <span className="hidden sm:inline-flex items-center gap-1 shrink-0 ml-0.5">
+                                    <span className="text-[8px] px-1 py-0.2 rounded bg-purple-500/15 text-purple-700 dark:text-purple-300 font-bold">High</span>
+                                    <span className="text-[8px] px-1 py-0.2 rounded bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 font-bold">Med</span>
+                                    <span className="text-[8px] px-1 py-0.2 rounded bg-blue-500/15 text-blue-700 dark:text-blue-300 font-bold">Low</span>
                                 </span>
                             )}
                         </span>

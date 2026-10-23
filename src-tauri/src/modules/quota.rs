@@ -610,6 +610,58 @@ pub async fn fetch_quota_with_cache(
                             }
                         }
                     }
+
+                    // [NEW] 若上游下发了 Argon 专属配额组，但 models 中未显式拆分条目时，为该账号注入 Argon 官方权威模型条目
+                    let has_argon_group = groups.iter().any(|g| {
+                        let gname = g.display_name.to_lowercase();
+                        gname.contains("argon")
+                            || g.buckets
+                                .iter()
+                                .any(|b| b.bucket_id.to_lowercase().contains("argon"))
+                    });
+                    if has_argon_group
+                        && !quota_data
+                            .models
+                            .iter()
+                            .any(|m| m.name.to_lowercase().contains("argon"))
+                    {
+                        let argon_b = groups.iter().find_map(|g| {
+                            g.buckets
+                                .iter()
+                                .find(|b| b.bucket_id.to_lowercase().contains("argon"))
+                        });
+                        let pct = argon_b
+                            .map(|b| (b.remaining_fraction * 100.0).round() as i32)
+                            .unwrap_or(100);
+                        let reset = argon_b.map(|b| b.reset_time.clone()).unwrap_or_default();
+                        for argon_name in [
+                            "gemini-4-argon",
+                            "gemini-4-argon-high",
+                            "gemini-4-argon-medium",
+                            "gemini-4-argon-low",
+                        ] {
+                            let label = match argon_name {
+                                "gemini-4-argon-high" => "Gemini 4 Argon (High)",
+                                "gemini-4-argon-medium" => "Gemini 4 Argon (Medium)",
+                                "gemini-4-argon-low" => "Gemini 4 Argon (Low)",
+                                _ => "Gemini 4 Argon",
+                            };
+                            quota_data.add_model(crate::models::quota::ModelQuota {
+                                name: argon_name.to_string(),
+                                percentage: pct,
+                                reset_time: reset.clone(),
+                                display_name: Some(label.to_string()),
+                                supports_images: Some(true),
+                                supports_thinking: Some(true),
+                                thinking_budget: Some(-1),
+                                recommended: Some(true),
+                                max_tokens: Some(1048576),
+                                max_output_tokens: Some(65536),
+                                model: Some("MODEL_PLACEHOLDER_M421".to_string()),
+                                supported_mime_types: None,
+                            });
+                        }
+                    }
                 }
 
                 quota_data.quota_groups = quota_groups;

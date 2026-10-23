@@ -346,6 +346,16 @@ function AccountRowContent({
         return getGroupQuotaSummaries(account.quota?.quota_groups, account.quota?.models, tier);
     }, [account.quota?.quota_groups, account.quota?.models, tier]);
 
+    const modelCapabilities = useMemo(() => {
+        const supported = Array.from(new Set(groupSummaries.flatMap(s => s.supportedModels || [])));
+        const hasArgon = supported.some(m => m.includes('argon')) || groupSummaries.some(s => s.key === 'argon');
+        const hasClaude55 = supported.some(m => m.includes('5-5') || m.includes('5.5'));
+        const hasClaude46 = supported.some(m => m.includes('4-6') || m.includes('4.6'));
+        const hasGpt = supported.some(m => m.startsWith('gpt'));
+        const hasGemini38 = supported.some(m => m.includes('3.8') || m.includes('3-8'));
+        return { hasArgon, hasClaude55, hasClaude46, hasGpt, hasGemini38, supportedCount: supported.length };
+    }, [groupSummaries]);
+
     return (
         <>
             {/* 邮箱列 */}
@@ -457,6 +467,41 @@ function AccountRowContent({
                                 {account.custom_label}
                             </span>
                         )}
+
+                        {/* 核心支持模型徽章栏 (直观展现该账号具体可用的旗舰模型代际) */}
+                        {modelCapabilities.hasArgon && (
+                            <span
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-gradient-to-r from-purple-500/15 to-indigo-500/15 text-purple-700 dark:text-purple-300 text-[10px] font-bold shadow-2xs border border-purple-200/60 dark:border-purple-800/50 cursor-default"
+                                title="此账号已支持 Gemini 4 Argon 系列旗舰推理模型 (High / Medium / Low)"
+                            >
+                                <Sparkles className="w-2.5 h-2.5 text-purple-500" />
+                                Argon
+                            </span>
+                        )}
+                        {modelCapabilities.hasClaude55 && (
+                            <span
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[10px] font-bold shadow-2xs border border-amber-200/60 dark:border-amber-800/50 cursor-default"
+                                title="此账号已支持 Claude 5.5 系列新一代模型 (Opus / Sonnet)"
+                            >
+                                Claude 5.5
+                            </span>
+                        )}
+                        {modelCapabilities.hasClaude46 && !modelCapabilities.hasClaude55 && (
+                            <span
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-600/90 dark:text-amber-400/90 text-[10px] font-bold shadow-2xs border border-amber-200/40 dark:border-amber-800/30 cursor-default"
+                                title="此账号已支持 Claude 4.6 模型"
+                            >
+                                Claude 4.6
+                            </span>
+                        )}
+                        {modelCapabilities.hasGpt && (
+                            <span
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold shadow-2xs border border-emerald-200/60 dark:border-emerald-800/50 cursor-default"
+                                title="此账号已支持 GPT-OSS-120B 旗舰开源模型"
+                            >
+                                GPT-120B
+                            </span>
+                        )}
                         {/* 标签编辑输入框 */}
                         {isEditingLabel && (
                             <div className="flex items-center gap-1">
@@ -491,7 +536,7 @@ function AccountRowContent({
             </td>
 
             {/* 模型配额列 */}
-            <td className="px-2 py-1 align-middle">
+            <td className="px-3 py-2 align-middle">
                 {isDisabled || account.quota?.is_forbidden || account.validation_blocked ? (
                     <div className={cn(
                         "flex items-center justify-center gap-3 py-1.5 px-4 rounded-xl border group/error",
@@ -521,7 +566,7 @@ function AccountRowContent({
                         </button>
                     </div>
                 ) : (
-                    <div className="flex flex-col gap-1.5 py-0">
+                    <div className="flex flex-col gap-1.5 py-0.5">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                             {groupSummaries.filter(s => s.key !== 'argon').map((summary) => (
                                 <GroupQuotaCard
@@ -537,7 +582,7 @@ function AccountRowContent({
                             const argon = groupSummaries.find(s => s.key === 'argon');
                             if (!argon) return null;
                             return (
-                                <div className="w-full">
+                                <div className="w-full pt-0.5">
                                     <GroupQuotaCard
                                         summary={argon}
                                         isProtected={Boolean(config?.quota_protection?.enabled && isGroupProtected(account.protected_models, 'argon'))}
