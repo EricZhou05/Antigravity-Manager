@@ -1710,6 +1710,7 @@ pub async fn handle_messages(
     let mut last_email: Option<String> = None;
     let mut last_mapped_model: Option<String> = None;
     let mut last_status = StatusCode::SERVICE_UNAVAILABLE; // Default to 503 if no response reached
+    let mut failure_statuses = super::common::FailureStatusTracker::default();
     let mut force_rotate = false;
 
     // [Stage Timing] 阶段耗时度量变量 (毫秒，保留微秒级浮点精度)
@@ -1740,6 +1741,7 @@ pub async fn handle_messages(
             if last_status == StatusCode::SERVICE_UNAVAILABLE || last_status == StatusCode::OK {
                 last_status = StatusCode::GATEWAY_TIMEOUT;
             }
+            failure_statuses.record(StatusCode::GATEWAY_TIMEOUT);
             if last_error.is_empty() {
                 last_error = format!(
                     "Gateway global request budget exceeded ({}s)",
@@ -1759,6 +1761,7 @@ pub async fn handle_messages(
             if last_status == StatusCode::SERVICE_UNAVAILABLE || last_status == StatusCode::OK {
                 last_status = StatusCode::GATEWAY_TIMEOUT;
             }
+            failure_statuses.record(StatusCode::GATEWAY_TIMEOUT);
             break;
         }
 
@@ -2040,6 +2043,8 @@ pub async fn handle_messages(
             Ok(r) => r,
             Err(e) => {
                 last_error = e.clone();
+                failure_statuses.record(StatusCode::GATEWAY_TIMEOUT);
+                token_manager.mark_account_transient_failure(&account_id, 30, &e);
                 debug!(
                     "Request failed on attempt {}/{}: {}",
                     attempt + 1,
@@ -2582,6 +2587,7 @@ pub async fn handle_messages(
         // 1. 立即提取状态码和 headers（防止 response 被 move）
         let status_code = status.as_u16();
         last_status = status;
+        failure_statuses.record(status);
         let retry_after = response
             .headers()
             .get("Retry-After")
@@ -2951,7 +2957,9 @@ pub async fn handle_messages(
         }
     }
 
-    let response_status = normalize_claude_error_status(last_status.as_u16());
+    // 所有尝试均失败：仅当全部结构化失败状态均为 429 时返回 429，一旦包含网络/看门狗超时则降级为 504/502/503
+    let final_status = failure_statuses.final_status();
+    let response_status = normalize_claude_error_status(final_status.as_u16());
     let headers = crate::proxy::handlers::common::build_token_error_headers_for_protocol(
         "claude",
         last_mapped_model.as_deref(),
