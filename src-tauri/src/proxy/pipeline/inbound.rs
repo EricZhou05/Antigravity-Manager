@@ -1916,7 +1916,8 @@ impl InboundThinkingPipeline {
                 for content in contents_arr.iter_mut() {
                     if let Some(parts) = content.get_mut("parts").and_then(|p| p.as_array_mut()) {
                         for part in parts.iter_mut() {
-                            if let Some(sig) = part.get("thoughtSignature").and_then(|s| s.as_str()) {
+                            if let Some(sig) = part.get("thoughtSignature").and_then(|s| s.as_str())
+                            {
                                 if crate::proxy::thinking_store::is_sentinel_signature(sig) {
                                     part.as_object_mut().map(|o| o.remove("thoughtSignature"));
                                 }
@@ -2180,7 +2181,10 @@ impl InboundThinkingPipeline {
 
         // [Pipeline First] Claude 思考预算下限保护 (Anthropic 规范: thinkingBudget >= 1024, Ref #3721)
         if target_is_claude {
-            if let Some(tc) = gc_obj.get_mut("thinkingConfig").and_then(|v| v.as_object_mut()) {
+            if let Some(tc) = gc_obj
+                .get_mut("thinkingConfig")
+                .and_then(|v| v.as_object_mut())
+            {
                 if let Some(tb_val) = tc.get_mut("thinkingBudget") {
                     if let Some(tb_num) = tb_val.as_i64() {
                         if tb_num > 0 && tb_num < 1024 {

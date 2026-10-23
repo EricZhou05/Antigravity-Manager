@@ -536,8 +536,14 @@ pub async fn save_config(
 
     // 通知所有窗口配置已更新，并跨窗口广播主题与语言变更
     let _ = app.emit("config://updated", ());
-    let _ = app.emit("app://theme-changed", serde_json::json!({ "theme": config.theme.clone() }));
-    let _ = app.emit("app://language-changed", serde_json::json!({ "language": config.language.clone() }));
+    let _ = app.emit(
+        "app://theme-changed",
+        serde_json::json!({ "theme": config.theme.clone() }),
+    );
+    let _ = app.emit(
+        "app://language-changed",
+        serde_json::json!({ "language": config.language.clone() }),
+    );
 
     // 同步全局内存配置（无论反代服务当前是否处于运行状态）
     crate::modules::hub_version::update_hub_fingerprint(

@@ -466,6 +466,14 @@ const SPEC_31_PRO_LOW: RealModelSpec = RealModelSpec {
     include_thoughts: true,
     preserve_client_budget: false,
 };
+const SPEC_31_PRO_HIGH: RealModelSpec = RealModelSpec {
+    id: "gemini-3.1-pro-high",
+    thinking_budget: 10001,
+    max_output_tokens: 65535,
+    include_thoughts: true,
+    preserve_client_budget: false,
+};
+#[allow(dead_code)]
 const SPEC_PRO_AGENT: RealModelSpec = RealModelSpec {
     id: "gemini-pro-agent",
     thinking_budget: 10001,
@@ -541,8 +549,8 @@ pub static GEMINI_FAMILIES: &[CanonicalFamily] = &[
         reasoning: true,
         tiers: &[
             (VariantTier::Low, SPEC_31_PRO_LOW),
-            (VariantTier::Medium, SPEC_PRO_AGENT),
-            (VariantTier::High, SPEC_PRO_AGENT),
+            (VariantTier::Medium, SPEC_31_PRO_HIGH),
+            (VariantTier::High, SPEC_31_PRO_HIGH),
         ],
         aliases: &[
             ("gemini-3.1-pro-high", AliasPolicy::Fixed(VariantTier::High)),
@@ -760,13 +768,13 @@ mod tests {
                 "gemini-3.1-pro",
                 VariantTier::Medium,
                 1_000,
-                "gemini-pro-agent",
+                "gemini-3.1-pro-high",
             ),
             (
                 "gemini-3.1-pro",
                 VariantTier::High,
                 1_000,
-                "gemini-pro-agent",
+                "gemini-3.1-pro-high",
             ),
         ] {
             let spec = resolve_with_tier(canonical, Some(tier), Some(budget))
@@ -804,13 +812,13 @@ mod tests {
     #[test]
     fn test_resolve_31_pro_variants() {
         let s = resolve("gemini-3.1-pro", None).unwrap();
-        assert_eq!(s.id, "gemini-pro-agent");
+        assert_eq!(s.id, "gemini-3.1-pro-high");
         assert_eq!(s.thinking_budget, 10001);
         assert_eq!(s.max_output_tokens, 65535); // Pro uses 65535, not 65536
 
         // 裸模型 budget 字段被彻底忽略，统一默认 Medium (10001)
         let s = resolve("gemini-3.1-pro", Some(1001)).unwrap();
-        assert_eq!(s.id, "gemini-pro-agent");
+        assert_eq!(s.id, "gemini-3.1-pro-high");
         assert_eq!(s.thinking_budget, 10001);
 
         // 显式 effort Low 接管
@@ -836,11 +844,11 @@ mod tests {
         assert_eq!(s.id, "gemini-3.1-pro-low");
 
         let s = resolve("gemini-3.1-pro-high", None).unwrap();
-        assert_eq!(s.id, "gemini-pro-agent");
+        assert_eq!(s.id, "gemini-3.1-pro-high");
 
-        // 裸模型解析（缺省遵循决策链 -> Medium -> gemini-pro-agent）
+        // 裸模型解析（缺省遵循决策链 -> Medium -> gemini-3.1-pro-high）
         let s = resolve("gemini-3.1-pro", None).unwrap();
-        assert_eq!(s.id, "gemini-pro-agent");
+        assert_eq!(s.id, "gemini-3.1-pro-high");
 
         // 裸模型带显式档位解析
         let s = resolve_with_tier("gemini-3.1-pro", Some(VariantTier::Low), None).unwrap();
@@ -1025,23 +1033,29 @@ mod tests {
     #[test]
     fn baseline_resolve_31_pro_variants() {
         // ── gemini-3.1-pro (canonical) ─────────────────────────────────
-        // None → High → gemini-pro-agent
-        check("gemini-3.1-pro", None, "gemini-pro-agent", 10001, 65535);
-        // Some(0) → budget ignored → Medium/High → gemini-pro-agent
-        check("gemini-3.1-pro", Some(0), "gemini-pro-agent", 10001, 65535);
-        // Some(4000) → Medium → High fallback → gemini-pro-agent
+        // None → High → gemini-3.1-pro-high
+        check("gemini-3.1-pro", None, "gemini-3.1-pro-high", 10001, 65535);
+        // Some(0) → budget ignored → Medium/High → gemini-3.1-pro-high
         check(
             "gemini-3.1-pro",
-            Some(4000),
-            "gemini-pro-agent",
+            Some(0),
+            "gemini-3.1-pro-high",
             10001,
             65535,
         );
-        // Some(7000) → High → gemini-pro-agent
+        // Some(4000) → Medium → High fallback → gemini-3.1-pro-high
+        check(
+            "gemini-3.1-pro",
+            Some(4000),
+            "gemini-3.1-pro-high",
+            10001,
+            65535,
+        );
+        // Some(7000) → High → gemini-3.1-pro-high
         check(
             "gemini-3.1-pro",
             Some(7000),
-            "gemini-pro-agent",
+            "gemini-3.1-pro-high",
             10001,
             65535,
         );
@@ -1050,37 +1064,49 @@ mod tests {
         check(
             "gemini-3.1-pro-high",
             None,
-            "gemini-pro-agent",
+            "gemini-3.1-pro-high",
             10001,
             65535,
         );
         check(
             "gemini-3.1-pro-high",
             Some(0),
-            "gemini-pro-agent",
+            "gemini-3.1-pro-high",
             10001,
             65535,
         );
         check(
             "gemini-3.1-pro-high",
             Some(4000),
-            "gemini-pro-agent",
+            "gemini-3.1-pro-high",
             10001,
             65535,
         );
         check(
             "gemini-3.1-pro-high",
             Some(7000),
-            "gemini-pro-agent",
+            "gemini-3.1-pro-high",
             10001,
             65535,
         );
 
         // ── gemini-pro (same canonical arm) ────────────────────────────
-        check("gemini-pro", None, "gemini-pro-agent", 10001, 65535);
-        check("gemini-pro", Some(0), "gemini-pro-agent", 10001, 65535);
-        check("gemini-pro", Some(4000), "gemini-pro-agent", 10001, 65535);
-        check("gemini-pro", Some(7000), "gemini-pro-agent", 10001, 65535);
+        check("gemini-pro", None, "gemini-3.1-pro-high", 10001, 65535);
+        check("gemini-pro", Some(0), "gemini-3.1-pro-high", 10001, 65535);
+        check(
+            "gemini-pro",
+            Some(4000),
+            "gemini-3.1-pro-high",
+            10001,
+            65535,
+        );
+        check(
+            "gemini-pro",
+            Some(7000),
+            "gemini-3.1-pro-high",
+            10001,
+            65535,
+        );
 
         // ── gemini-3.1-pro-low (fixed → SPEC_31_PRO_LOW) ──────────────
         check(
@@ -1179,7 +1205,7 @@ mod tests {
             4000,
             65536,
         );
-        check("GEMINI-3.1-PRO", None, "gemini-pro-agent", 10001, 65535);
+        check("GEMINI-3.1-PRO", None, "gemini-3.1-pro-high", 10001, 65535);
         // Non-variant model
         check("CLAUDE-SONNET-4-6", None, "claude-sonnet-4-6", 1024, 64000);
         check(
@@ -1198,36 +1224,36 @@ mod tests {
 
     #[test]
     fn old_catalog_alias_fallback() {
-        // ── gemini-3.1-pro-high (Fixed(High) → always gemini-pro-agent, never downgraded) ────
-        // None → High → gemini-pro-agent
+        // ── gemini-3.1-pro-high (Fixed(High) → always gemini-3.1-pro-high, never downgraded) ────
+        // None → High → gemini-3.1-pro-high
         check(
             "gemini-3.1-pro-high",
             None,
-            "gemini-pro-agent",
+            "gemini-3.1-pro-high",
             10001,
             65535,
         );
-        // Some(0) → High (Fixed, no downgrade) → gemini-pro-agent
+        // Some(0) → High (Fixed, no downgrade) → gemini-3.1-pro-high
         check(
             "gemini-3.1-pro-high",
             Some(0),
-            "gemini-pro-agent",
+            "gemini-3.1-pro-high",
             10001,
             65535,
         );
-        // Some(4000) → High (Fixed, no downgrade) → gemini-pro-agent
+        // Some(4000) → High (Fixed, no downgrade) → gemini-3.1-pro-high
         check(
             "gemini-3.1-pro-high",
             Some(4000),
-            "gemini-pro-agent",
+            "gemini-3.1-pro-high",
             10001,
             65535,
         );
-        // Some(7000) → High → gemini-pro-agent
+        // Some(7000) → High → gemini-3.1-pro-high
         check(
             "gemini-3.1-pro-high",
             Some(7000),
-            "gemini-pro-agent",
+            "gemini-3.1-pro-high",
             10001,
             65535,
         );
@@ -1263,10 +1289,22 @@ mod tests {
         );
 
         // ── gemini-pro (HonorTier → same as gemini-3.1-pro) ────────────
-        check("gemini-pro", None, "gemini-pro-agent", 10001, 65535);
-        check("gemini-pro", Some(0), "gemini-pro-agent", 10001, 65535);
-        check("gemini-pro", Some(4000), "gemini-pro-agent", 10001, 65535);
-        check("gemini-pro", Some(7000), "gemini-pro-agent", 10001, 65535);
+        check("gemini-pro", None, "gemini-3.1-pro-high", 10001, 65535);
+        check("gemini-pro", Some(0), "gemini-3.1-pro-high", 10001, 65535);
+        check(
+            "gemini-pro",
+            Some(4000),
+            "gemini-3.1-pro-high",
+            10001,
+            65535,
+        );
+        check(
+            "gemini-pro",
+            Some(7000),
+            "gemini-3.1-pro-high",
+            10001,
+            65535,
+        );
 
         // ── gemini-3-flash (HonorTier → same as gemini-3.5-flash) ──────
         check("gemini-3-flash", None, "gemini-3.5-flash-low", 4000, 65536);
