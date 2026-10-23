@@ -269,18 +269,45 @@ impl InboundThinkingPipeline {
                                 }
                             }
                         } else {
-                            if target_model.to_lowercase().contains("gemini") {
+                            if let Some(obj) = part.as_object_mut() {
                                 // 规范化字段：若客户端携带蛇形 thought_signature 且无驼峰字段，平滑重命名为标准 thoughtSignature 保留
-                                if let Some(obj) = part.as_object_mut() {
-                                    if let Some(sig) = obj.remove("thought_signature") {
-                                        if !obj.contains_key("thoughtSignature") {
-                                            obj.insert("thoughtSignature".to_string(), sig);
-                                        }
+                                if let Some(sig) = obj.remove("thought_signature") {
+                                    if !obj.contains_key("thoughtSignature") {
+                                        obj.insert("thoughtSignature".to_string(), sig);
                                     }
-                                    // 黄金法则 2.1：根据模型家校验签名合法性，若合法采纳并反向入库，不合法则丢弃由流水线补充
-                                    if let Some(sig_str) =
-                                        obj.get("thoughtSignature").and_then(|s| s.as_str())
-                                    {
+                                }
+                                if let Some(sig_str) =
+                                    obj.get("thoughtSignature").and_then(|s| s.as_str())
+                                {
+                                    if is_claude {
+                                        // 黄金法则（官方抓包对齐）：Claude 模型严禁携带 Gemini 签名或哨兵，只保留合法的 Claude 签名
+                                        if sig_str != crate::proxy::thinking_store::SENTINEL_SIGNATURE
+                                            && crate::proxy::thinking_store::is_real_signature(sig_str)
+                                            && crate::proxy::thinking_store::is_claude_signature(sig_str)
+                                        {
+                                            let final_sig = crate::proxy::thinking_store::ensure_google_claude_thought_signature(sig_str);
+                                            obj.insert("thoughtSignature".to_string(), json!(final_sig));
+                                            if let Some(fc) = obj.get("functionCall") {
+                                                if let Some(id) = fc.get("id").and_then(|v| v.as_str()) {
+                                                    if let Some(sid) = session_id {
+                                                        crate::proxy::SignatureCache::global()
+                                                            .cache_tool_signature(
+                                                                sid,
+                                                                id,
+                                                                sig_str.to_string(),
+                                                            );
+                                                    }
+                                                }
+                                            }
+                                            if let Some(sid) = session_id {
+                                                crate::proxy::SignatureCache::global()
+                                                    .cache_session_signature(sid, sig_str.to_string(), msg_idx);
+                                            }
+                                        } else {
+                                            // 异构签名（如从 Gemini 切到 Claude 时遗留的短签名或哨兵）：全量清理剥除，对齐官方形态！
+                                            obj.remove("thoughtSignature");
+                                        }
+                                    } else if target_model.to_lowercase().contains("gemini") {
                                         if sig_str == crate::proxy::thinking_store::SENTINEL_SIGNATURE {
                                             // 官方跳过验签哨兵 (skip_thought_signature_validator)：客户端自带的合法哨兵，予以保留
                                         } else if crate::proxy::thinking_store::is_real_signature(sig_str)
@@ -1719,26 +1746,52 @@ impl InboundThinkingPipeline {
         // 1. contents (官方报文中 contents 置于首位)
         let mut canonical_contents = req_obj.remove("contents").unwrap_or(json!([]));
 
-        // [Gatekeeper 2026-09-29 / 2026-09-30 Pipeline First] Gemini 目标出站终审安全自愈门禁：
-        // Google Gemini 3+ 与 Google v1internal 规则：全会话历史与活跃轮次中的所有工具调用 (Function Calling)
-        // 均被 Google AST 校验器严格强制检查 thoughtSignature。
-        // 若任意历史或活跃轮次的某个 functionCall 缺少签名，出站前统一自动注入官方合法哨兵 SENTINEL_SIGNATURE，彻底杜绝上游 400 (Fixes #3202, #3229)！
-        if let Some(contents_arr) = canonical_contents.as_array_mut() {
-            for content in contents_arr.iter_mut() {
-                if let Some(parts) = content.get_mut("parts").and_then(|p| p.as_array_mut()) {
-                    for part in parts.iter_mut() {
-                        if part.get("functionCall").is_some() {
-                            let has_sig = part
-                                .get("thoughtSignature")
-                                .or_else(|| part.get("thought_signature"))
-                                .and_then(|s| s.as_str())
-                                .map_or(false, |s| !s.trim().is_empty());
-                            if !has_sig {
-                                tracing::warn!(
-                                    "[Gatekeeper] Found functionCall missing thoughtSignature in turn, auto-injecting sentinel!"
-                                );
-                                part["thoughtSignature"] =
-                                    json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE);
+        // [Gatekeeper 2026-09-29 / 2026-09-30 Pipeline First] 目标出站终审安全自愈门禁：
+        // 核心规范（对齐官方抓包 Ground Truth）：
+        // 1. Claude 模型对接 Anthropic 官方验签引擎，只认真实密码学签名，严禁注入任何哨兵！
+        // 2. Gemini 原生工具调用：一轮中如果已有部件（首个工具或正文）携带真实签名，后续并发工具必须保持留空无签名状态；整轮无签名才给首个工具补 Base64 哨兵；
+        // 3. 跨模型切回 Gemini 时的异构工具调用（来自 Claude 的工具，如 toolu_ 前缀）：每一个异构 functionCall 均统一赋予 Base64 哨兵免检通行证，正文绝对不带哨兵！
+        let is_claude = target_model.to_lowercase().contains("claude")
+            || crate::models::OfficialModelCatalog::get(target_model)
+                .map(|m| m.is_claude())
+                .unwrap_or(false);
+
+        if !is_claude {
+            if let Some(contents_arr) = canonical_contents.as_array_mut() {
+                for content in contents_arr.iter_mut() {
+                    if let Some(parts) = content.get_mut("parts").and_then(|p| p.as_array_mut()) {
+                        // 判定是否包含来自 Claude 的异构工具调用
+                        let has_foreign_claude_tools = parts.iter().any(|p| {
+                            p.get("functionCall")
+                                .and_then(|fc| fc.get("id"))
+                                .and_then(|id| id.as_str())
+                                .map_or(false, |id| id.starts_with("toolu_"))
+                        });
+
+                        if has_foreign_claude_tools {
+                            // 官方抓包第 41 段铁证：对来自 Claude 的异构工具调用，每一个 functionCall 均赋予 Base64 哨兵通行证
+                            for part in parts.iter_mut() {
+                                if part.get("functionCall").is_some() {
+                                    part["thoughtSignature"] =
+                                        json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE);
+                                }
+                            }
+                        } else {
+                            // Gemini 原生工具调用：仅当整轮没有任何签名时，才为首个 functionCall 补齐官方 Base64 哨兵；并发后续留空
+                            let turn_has_signature = parts.iter().any(|p| {
+                                p.get("thoughtSignature")
+                                    .or_else(|| p.get("thought_signature"))
+                                    .and_then(|s| s.as_str())
+                                    .map_or(false, |s| !s.trim().is_empty())
+                            });
+                            if !turn_has_signature {
+                                if let Some(first_fc) = parts.iter_mut().find(|p| p.get("functionCall").is_some()) {
+                                    tracing::warn!(
+                                        "[Gatekeeper] Found Gemini turn missing tool signature, injecting sentinel to first functionCall!"
+                                    );
+                                    first_fc["thoughtSignature"] =
+                                        json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE);
+                                }
                             }
                         }
                     }
@@ -4204,7 +4257,7 @@ mod tests {
     }
 
     #[test]
-    fn test_gatekeeper_sentinel_injected_for_claude_model_function_call_issue_3202() {
+    fn test_gatekeeper_sentinel_exempt_for_claude_and_concurrent_tools() {
         let mut inner_req = json!({
             "contents": [
                 {
@@ -4214,6 +4267,12 @@ mod tests {
                             "functionCall": {
                                 "name": "default_api:Bash",
                                 "args": {"command": "git status"}
+                            }
+                        },
+                        {
+                            "functionCall": {
+                                "name": "default_api:Bash",
+                                "args": {"command": "echo test"}
                             }
                         }
                     ]
@@ -4227,11 +4286,70 @@ mod tests {
             None,
         );
 
-        let fc_part = &inner_req["contents"][0]["parts"][0];
+        let parts = &inner_req["contents"][0]["parts"].as_array().unwrap();
+        // 官方抓包铁证：Claude 模型绝不注入哨兵，所有并发工具保持留空无签名状态！
+        assert!(
+            parts[0].get("thoughtSignature").is_none(),
+            "Claude 模型的工具调用绝不能被注入假哨兵签名"
+        );
+        assert!(
+            parts[1].get("thoughtSignature").is_none(),
+            "Claude 模型的并发工具调用绝不能被注入假哨兵签名"
+        );
+    }
+
+    #[test]
+    fn test_gatekeeper_foreign_claude_tools_switched_to_gemini_get_base64_sentinel() {
+        let mut inner_req = json!({
+            "contents": [
+                {
+                    "role": "model",
+                    "parts": [
+                        {
+                            "text": "好的，我来并发调用两个工具！"
+                        },
+                        {
+                            "functionCall": {
+                                "id": "toolu_vrtx_014tSGoyFo117aJ1JWhpumRx",
+                                "name": "run_command",
+                                "args": {"command": "echo 1"}
+                            }
+                        },
+                        {
+                            "functionCall": {
+                                "id": "toolu_vrtx_01RmbEqaEAmEtzU3z8JCxmAX",
+                                "name": "run_command",
+                                "args": {"command": "echo 2"}
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        InboundThinkingPipeline::align_google_request_prefix_topology_with_model(
+            &mut inner_req,
+            "gemini-3.8-flash-low",
+            None,
+        );
+
+        let parts = &inner_req["contents"][0]["parts"].as_array().unwrap();
+        // 官方抓包第 41 段铁证：
+        // 1. 正文文本绝对不带签名、绝对不带哨兵！
+        assert!(
+            parts[0].get("thoughtSignature").is_none(),
+            "正文文本绝对不应该携带哨兵或签名"
+        );
+        // 2. 所有来自 Claude 的异构工具（toolu_ 开头），全部被赋予 Base64 哨兵通行证！
         assert_eq!(
-            fc_part.get("thoughtSignature").and_then(|v| v.as_str()),
+            parts[1].get("thoughtSignature").and_then(|v| v.as_str()),
             Some(crate::proxy::thinking_store::SENTINEL_SIGNATURE),
-            "Gatekeeper 必须为 Claude 模型的工具调用补全哨兵签名，防止 Google 400 报错 (Fixes #3202)"
+            "来自 Claude 的异构工具 1 必须获得 Base64 哨兵通行证以让 Gemini 免检放行"
+        );
+        assert_eq!(
+            parts[2].get("thoughtSignature").and_then(|v| v.as_str()),
+            Some(crate::proxy::thinking_store::SENTINEL_SIGNATURE),
+            "来自 Claude 的异构工具 2 必须获得 Base64 哨兵通行证以让 Gemini 免检放行"
         );
     }
 

@@ -20,7 +20,14 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 const MIN_SIGNATURE_LENGTH: usize = 32;
-pub const SENTINEL_SIGNATURE: &str = "skip_thought_signature_validator";
+pub const SENTINEL_SIGNATURE: &str = "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=";
+pub const LEGACY_SENTINEL_SIGNATURE: &str = "skip_thought_signature_validator";
+
+#[inline]
+pub fn is_sentinel_signature(s: &str) -> bool {
+    let trimmed = s.trim();
+    trimmed == SENTINEL_SIGNATURE || trimmed == LEGACY_SENTINEL_SIGNATURE
+}
 const MAX_SESSIONS: usize = 2000;
 fn max_turns_per_session() -> usize {
     crate::proxy::config::get_thinking_max_memory_turns()
@@ -919,19 +926,31 @@ impl ThinkingStore {
                 *parts = cleaned_parts;
 
                 if is_claude_target {
-                    // Claude：签名放在第一个非思考 part，不挂到思考块。
-                    // 库存里认得出的 Claude 签名才回填；Gemini 签名不注入。
+                    // Claude 模型：官方抓包铁证（Ground Truth）：
+                    // 1. 从 Gemini 切换到 Claude 模型后，历史上的 Gemini 轮次必须彻底剥离签名，且绝不能送出 thought: true！
+                    // 2. 只有当该轮历史记录确属 Claude 真实签名时，才允许回填签名并恢复 thought: true 思考块！
                     let fallback = rec
                         .signature
                         .as_deref()
                         .filter(|s| is_real_signature(s) && is_claude_signature(s));
-                    let wrapped = fallback.map(|s| ensure_google_claude_thought_signature(s));
-                    place_turn_signature_scoped(
-                        &mut *parts,
-                        wrapped.as_deref(),
-                        false,
-                        Some(store_key),
-                    );
+                    if let Some(claude_sig) = fallback {
+                        let wrapped = ensure_google_claude_thought_signature(claude_sig);
+                        place_turn_signature_scoped(
+                            &mut *parts,
+                            Some(&wrapped),
+                            false,
+                            Some(store_key),
+                        );
+                        parts.insert(0, thought_part);
+                        restored += 1;
+                    } else {
+                        // 历史记录非 Claude 签名（例如从 Gemini 切过来的历史轮次）：
+                        // 严禁插入 thought: true 思考块！严禁注入任何假签名或哨兵！
+                        // 严格对齐官方抓包形态：历史保持纯文本与普通工具调用（无签留空出站，Google 100% 正常接受）。
+                        tracing::debug!(
+                            "[ThinkingStore] Bypassing non-Claude thought block/signature for Claude target model"
+                        );
+                    }
                 } else {
                     // Gemini 原生：把本轮捕获到的真实签名归位到「该轮第一个非思考 part」。
                     //
@@ -943,9 +962,9 @@ impl ThinkingStore {
                         .as_deref()
                         .filter(|s| is_real_signature(s) && is_likely_gemini_signature(s));
                     place_turn_signature_scoped(&mut *parts, fallback, true, Some(store_key));
+                    parts.insert(0, thought_part);
+                    restored += 1;
                 }
-                parts.insert(0, thought_part);
-                restored += 1;
             } else {
                 // 【2026-09-27】无实质思考内容（占位/空思考）：绝不注入 "..." 占位思考块！
                 // 官方标准形态为「无思考块 + 锚点带签名」（baogao.txt 9/24 轮）。
@@ -1890,12 +1909,20 @@ pub fn finalize_gemini_contents_thinking_with_session(
             let turn_real_sig =
                 extract_turn_signature(&other_parts, !is_claude_turn, is_claude_turn);
 
-            // 1.1 Gemini 目标下工具调用签名多级检索与穿透回填：
+            // 1.1 工具调用签名多级检索与穿透回填（支持 Gemini 与 Claude 模型）：
             // ① 原生/传入 tool_id -> 内存 L1 + SQLite L2 (tool_signatures)
             // ② 若未命中（非原生 ID 如 Write-76 或缓存失配），计算 ID 无关的确定性因果伪哈希 ID (synthetic_id) 穿透匹配 SQLite
-            // ③ 若找到则回填并反向自愈写入缓存，回填不了则由后序 chosen_sig 统一带上官方哨兵 (SENTINEL_SIGNATURE)
+            // ③ 若找到则回填并反向自愈写入缓存，回填不了则由后序 chosen_sig 统一处理 (Gemini 带哨兵，Claude 留空)
+            let is_valid_family_sig = |s: &str| {
+                if is_claude_turn {
+                    is_claude_signature(s)
+                } else {
+                    is_likely_gemini_signature(s)
+                }
+            };
+
             let cached_tool_sig: Option<String> =
-                if !is_claude_turn && turn_real_sig.is_none() {
+                if turn_real_sig.is_none() {
                     let mut found_sig = None;
                     let mut fc_counter = 0usize;
                     for p in &other_parts {
@@ -1906,9 +1933,14 @@ pub fn finalize_gemini_contents_thinking_with_session(
                                 if let Some(sid) = session_id {
                                     if let Some(sig) = crate::proxy::SignatureCache::global()
                                         .get_tool_signature(sid, id)
-                                        .filter(|s| is_likely_gemini_signature(s))
+                                        .filter(|s| is_valid_family_sig(s))
                                     {
-                                        found_sig = Some(sig);
+                                        let final_s = if is_claude_turn {
+                                            ensure_google_claude_thought_signature(&sig)
+                                        } else {
+                                            sig
+                                        };
+                                        found_sig = Some(final_s);
                                         break;
                                     }
                                 }
@@ -1925,13 +1957,18 @@ pub fn finalize_gemini_contents_thinking_with_session(
                             if let Some(sid) = session_id {
                                 if let Some(sig) = crate::proxy::SignatureCache::global()
                                     .get_tool_signature(sid, &synthetic_id)
-                                    .filter(|s| is_likely_gemini_signature(s))
+                                    .filter(|s| is_valid_family_sig(s))
                                 {
+                                    let final_s = if is_claude_turn {
+                                        ensure_google_claude_thought_signature(&sig)
+                                    } else {
+                                        sig
+                                    };
                                     if !id.is_empty() {
                                         crate::proxy::SignatureCache::global()
-                                            .cache_tool_signature(sid, id, sig.clone());
+                                            .cache_tool_signature(sid, id, final_s.clone());
                                     }
-                                    found_sig = Some(sig);
+                                    found_sig = Some(final_s);
                                     break;
                                 }
                             }
@@ -1945,15 +1982,20 @@ pub fn finalize_gemini_contents_thinking_with_session(
                                     )
                                 {
                                     if let Some(sig) =
-                                        rec.signature.filter(|s| is_likely_gemini_signature(s))
+                                        rec.signature.filter(|s| is_valid_family_sig(s))
                                     {
+                                        let final_s = if is_claude_turn {
+                                            ensure_google_claude_thought_signature(&sig)
+                                        } else {
+                                            sig
+                                        };
                                         if !id.is_empty() {
                                             if let Some(sid) = session_id {
                                                 crate::proxy::SignatureCache::global()
-                                                    .cache_tool_signature(sid, id, sig.clone());
+                                                    .cache_tool_signature(sid, id, final_s.clone());
                                             }
                                         }
-                                        found_sig = Some(sig);
+                                        found_sig = Some(final_s);
                                         break;
                                     }
                                 }
@@ -1966,12 +2008,20 @@ pub fn finalize_gemini_contents_thinking_with_session(
                 };
 
             let is_last_model_turn = last_model_idx == Some(msg_idx);
-            let cached_session_sig: Option<String> = if !is_claude_turn
-                && is_last_model_turn
+            let cached_session_sig: Option<String> = if is_last_model_turn
                 && turn_real_sig.is_none()
                 && cached_tool_sig.is_none()
             {
-                initial_session_sig.clone()
+                initial_session_sig
+                    .clone()
+                    .filter(|s| is_valid_family_sig(s))
+                    .map(|s| {
+                        if is_claude_turn {
+                            ensure_google_claude_thought_signature(&s)
+                        } else {
+                            s
+                        }
+                    })
             } else {
                 None
             };
@@ -2091,9 +2141,10 @@ pub fn finalize_gemini_contents_thinking_with_session(
                 }
             } else {
                 // 当思考模式为关，或者 Claude 缺少签名无法通过上游合法性检验时：
-                // 1. 绝不主动注入任何占位思考块（如 "..."）；
-                // 2. 若含有实质性思考内容的思考块，单次出站降级为普通文本以防丢失语义，摘除 thought: true 标记；
-                // 3. 纯占位符则直接剔除，绝不上送 thought: true 结构
+                // 【已废除注释】废除降维包装 <think> 注入正文的逻辑。
+                // 官方抓包铁证：无签名或切模型时，思考块直接完全丢弃，不伪造也不向正文中注入 <think> 标签，
+                // 彻底杜绝正文污染、模型格式模仿幻觉及 Token 膨胀。
+                /*
                 for tp in thinking_parts {
                     let text = tp.get("text").and_then(|t| t.as_str()).unwrap_or("");
                     if is_meaningful_thought(text) {
@@ -2109,6 +2160,7 @@ pub fn finalize_gemini_contents_thinking_with_session(
                         parts.push(json!({ "text": wrapped }));
                     }
                 }
+                */
             }
 
             parts.extend(other_parts);
@@ -2428,7 +2480,7 @@ fn client_id_from_store_key(store_key: &str) -> &str {
 
 pub fn is_real_signature(sig: &str) -> bool {
     let s = sig.trim();
-    if s == SENTINEL_SIGNATURE {
+    if is_sentinel_signature(s) {
         return false;
     }
     if s.as_bytes().first() == Some(&0x12) && s.len() >= 16 {
@@ -2438,12 +2490,12 @@ pub fn is_real_signature(sig: &str) -> bool {
 }
 
 /// 判断签名是否符合 Google Gemini 原生 Protobuf 签名特征：
-/// 1. 官方跳过验签哨兵 (skip_thought_signature_validator)；
+/// 1. 官方跳过验签哨兵 (skip_thought_signature_validator 或 Base64 编码的 c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=)；
 /// 2. 或满足有效长度 (>= MIN_SIGNATURE_LENGTH)，且 Base64 解码后首字节为 Protobuf Tag 2 (0x12)
 ///    (单层 Base64 通常以 'E' 开头，双层 Base64 包装通常以 'R' 开头)
 pub fn is_likely_gemini_signature(sig: &str) -> bool {
     let s = sig.trim();
-    if s == SENTINEL_SIGNATURE {
+    if is_sentinel_signature(s) {
         return true;
     }
     // Claude 签名绝不能被误判为 Gemini 签名
@@ -2465,12 +2517,15 @@ pub fn is_likely_gemini_signature(sig: &str) -> bool {
     {
         return true;
     }
-    if !s.starts_with('E') && !s.starts_with('R') {
+    if !s.starts_with('E') && !s.starts_with('R') && !s.starts_with('c') {
         return false;
     }
     use base64::Engine;
     if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(s) {
         if decoded.first() == Some(&0x12) {
+            return true;
+        }
+        if decoded == SENTINEL_SIGNATURE.as_bytes() {
             return true;
         }
         // 双层 Base64 包装支持（Google Vertex AI 格式）
@@ -2515,7 +2570,7 @@ fn is_wrapped_claude_payload(decoded: &[u8]) -> bool {
 /// 判断签名是否属于 Claude 家族的签名
 pub fn is_claude_signature(sig: &str) -> bool {
     let s = sig.trim();
-    if s.is_empty() || s == SENTINEL_SIGNATURE {
+    if s.is_empty() || is_sentinel_signature(s) {
         return false;
     }
     use base64::Engine;
@@ -2532,7 +2587,7 @@ pub fn is_claude_signature(sig: &str) -> bool {
 /// 因此发往 Google 的 thoughtSignature 必须是 ASCII 签名字节的 Base64 编码 (即 "RXU4..." 或 "Q0FR..." 格式)
 pub fn ensure_google_claude_thought_signature(sig: &str) -> String {
     let s = sig.trim();
-    if s.is_empty() || s == SENTINEL_SIGNATURE {
+    if s.is_empty() || is_sentinel_signature(s) {
         return s.to_string();
     }
     use base64::Engine;

@@ -14,11 +14,18 @@ static TOOL_SIGNATURE_DB: OnceLock<Mutex<Option<(PathBuf, Connection)>>> = OnceL
 const THOUGHT_RAW_MAGIC: &[u8] = b"RAW1";
 const THOUGHT_GZIP_MAGIC: &[u8] = b"AGZ1";
 const MIN_GZIP_THOUGHT: usize = 384;
-pub const SENTINEL_SIGNATURE: &str = "skip_thought_signature_validator";
+pub const SENTINEL_SIGNATURE: &str = "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=";
+pub const LEGACY_SENTINEL_SIGNATURE: &str = "skip_thought_signature_validator";
 pub const MIN_REAL_SIGNATURE: usize = 32;
 
+#[inline]
+pub fn is_sentinel_signature(s: &str) -> bool {
+    let trimmed = s.trim();
+    trimmed == SENTINEL_SIGNATURE || trimmed == LEGACY_SENTINEL_SIGNATURE
+}
+
 pub fn normalize_and_heal_signature(sig: &str) -> Option<String> {
-    if sig.is_empty() || sig == SENTINEL_SIGNATURE {
+    if sig.is_empty() || is_sentinel_signature(sig) {
         return None;
     }
     // 自愈防裂化：若签名被误传或脏存储为原始 Protobuf 二进制 (首字节 0x12)，自动纠正编码为标准 Base64
