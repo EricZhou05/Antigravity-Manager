@@ -3,6 +3,25 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.0-beta.1 (2026-10-24)**:
+        -   **[OpenAI Responses API 结构化输出支持、流水线工具冲突治理与零误杀解壳] (Fixes #3710, Ref #3723, Thanks to @cubelikeplayDaniel)**:
+            -   **协议层入站规范化**: 在 `OpenAIRequest` 中支持 Responses API 的 `text.format` 规范，并在适配器中统一定位与提取 `effective_response_format`，规范化映射为 Gemini 原生 `generationConfig.responseSchema` 与 `responseMimeType: "application/json"`，打通 Codex Desktop 对话自动命名（`thread_title`）、摘要生成等后台结构化任务。(Fixes #3710, Ref #3723, Thanks to @cubelikeplayDaniel)
+            -   **后台任务思考预算收敛与防超时**: 显式遵循 `reasoning.effort: "low"`，将后台短任务的思考预算收敛在 1024 以内，彻底消除高思考模型在对话命名时触发 Codex 客户端 30 秒硬超时中断报错的隐患。(Fixes #3710)
+            -   **流水线统一工具冲突治理 (Pipeline First)**: 将 `responseSchema` 与 `tools` / `toolConfig` 的互斥治理下沉至 `src/proxy/pipeline/inbound.rs` 的 `align_google_request_prefix_topology_with_model` 统一出口，当检测到 `responseSchema` 生效时主动清空 `canonical_tools` 与 `canonical_tool_config`，跨协议彻底杜绝上游 400 校验拒绝。(Fixes #3710, Ref #3723)
+            -   **出站受控整包解壳与常规对话零误杀保障**: 在 `convert_chat_response_to_responses` 中引入 `is_structured_output` 严格门禁，常规对话 100% 原始呈现（杜绝日常聊天文本被误删截断）；仅在结构化任务下采用 `unwrap_outer_code_fence_if_structured` 严格整包解壳，避免破坏内嵌代码块并确保 Codex Desktop 原生 `JSON.parse` 正常解析。(Fixes #3710, Ref #3723)
+        -   **[上游超时预算动态收敛、故障账号解绑与 Claude 429 泄漏清除] (Fixes #3713, Ref #3506, Ref #3525, Ref #3720, PR #3714, Thanks to @cubelikeplayDaniel)**:
+            -   **响应头看门狗与总预算精准收敛**: 将流式首选端点 HTTP 响应头看门狗基准收敛至 30s（超大 payload 弹性放宽至 45s），备用回退预算 25s，全链路总预算由原先的 150s 大幅收敛至 55~70s（非流式严格 30s），彻底杜绝主端点在排队拥塞时长时间挂死。(Fixes #3713, PR #3714, Thanks to @cubelikeplayDaniel)
+            -   **架构哲学对齐与剔除慢端点粗暴降级**: 剔除对成功响应但耗时偏长的端点判定 `mark_failure` 与进入冷却期，避免健康端点被轮流误杀与震荡，将延迟与限速裁决权完全交由 QoSGuardian 调度器统御。(Ref #3720, PR #3714)
+            -   **全端点故障账号短时冷却与粘性解绑迁移**: 在 `TokenManager` 中提供 `mark_account_transient_failure`，当协议处理层发生全端点超时或网络错误时，立即对该账号施加 30s 短时冷却并原子清理其绑定的所有粘性会话，使后续请求无缝自动迁移至其他健康账号。(PR #3714)
+            -   **Claude 协议接入 FailureStatusTracker 消除 429 泄漏**: 在 `claude.rs` 重试循环中完整接入 `FailureStatusTracker`，网络/看门狗超时显式记录 `GATEWAY_TIMEOUT`，最终状态码仅在全量尝试均为 429 时才返回 429，一旦包含网络超时则降级返回 504 Gateway Timeout，彻底根除客户端 1 分钟退避冻结。(PR #3714)
+            -   **重构多账号跨天硬配额耗尽检测**: 将 `quotaResetDelay > 30min`（如 68 小时）且包含 `quota_exhausted` 的响应准确识别为账号级硬配额枯竭，在多账号环境下立即执行 50ms 闪电切号，避免 CPU 阻塞并快速恢复响应。(PR #3714)
+        -   **[流式巨型工具调用跃迁宽限期与 Claude 思考预算默认回退] (Fixes #3739, Ref #3735, PR #3740, PR #3742, Thanks to @cubelikeplayDaniel)**:
+            -   **流式巨型工具调用缓冲跃迁宽限期**: 放宽过渡断崖自动跃迁条件为 `matches!(phase, StreamPhase::Thinking | StreamPhase::Streaming)`，允许在 Streaming 阶段生成 10,000+ tokens 巨型 `functionCall` 缓冲静默时自动跃迁至 Transition 宽限期并赋予 180s 保护，彻底消除满 120s 滑动超时被误杀提前截断的问题。(Fixes #3739, PR #3740, Thanks to @cubelikeplayDaniel)
+            -   **Claude 思考预算缺省回退官方默认值**: 在 `src-tauri/src/proxy/model_specs.rs` 的 `resolve_custom_budget` 中，针对 Claude 思考模型当配置的预算 `<= 0` 时统一返回 `None`，使流水线正确回退并取回官方模型结构体权威默认值（如 1024），避免将 `-1` 误当下发配置。(Ref #3735, PR #3742, Thanks to @cubelikeplayDaniel)
+        -   **[Mini 桌面悬浮视窗 React Router 404 兜底与同步判定] (PR #3741, Thanks to @cubelikeplayDaniel)**:
+            -   **增强 Mini 悬浮窗同步判定机制**: 优先使用 `window.location.search` (`?mini=1`) 与 `__TAURI_INTERNALS__` 立即同步判定，消除 Tauri 异步 IPC 窗口 label 解析延迟引发页面路由重入的偶发白屏。(PR #3741, Thanks to @cubelikeplayDaniel)
+            -   **React Router 404 错误边界兜底**: 在 `createBrowserRouter` 中补充 `errorElement`、`index.html` 重定向以及通配符 `*` 重定向 fallback，彻底消除 React Router 默认 404 错误边界页。(PR #3741)
+
     *   **v5.0.0-beta.0 (2026-10-23)**:
         -   **[上游 fetchAvailableModels 缺少 quotaInfo 架构级解耦与全系模型保活自适应] (Fixes #3737, Thanks to @xiaozhi-xmu, @chenshin166-arch)**:
             -   **模型可用性与额度解析解耦**: 彻底移除旧逻辑中 `if let Some(quota_info) = info.quota_info` 的强过滤门禁，以官方公开模型目录为基准，对 Google 上游不再为 Gemini 系（`gemini-3.8-flash-*`、`gemini-3.1-flash-lite` 等）下发 `quotaInfo` 的账号无损保留模型可用性，彻底消灭全系模型被误丢弃导致本地秒回 503 的严重缺陷。(Fixes #3737, Thanks to @xiaozhi-xmu, @chenshin166-arch)
