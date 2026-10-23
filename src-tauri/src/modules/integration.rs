@@ -725,7 +725,10 @@ pub(crate) fn write_to_system_keyring(account: &crate::models::Account) -> Resul
 
 /// 辅助方法：同步写入本地文件凭据 (~/.gemini/antigravity-cli/antigravity-oauth-token 以及 ~/.gemini/oauth_creds.json)
 /// 用于在 SSH 会话、容器环境或无系统 Keyring / D-Bus 的场景下保障 CLI/工具的凭据兼容性
-fn write_to_file_credentials(account: &crate::models::Account, sync_agy_cli: bool) -> Result<(), String> {
+fn write_to_file_credentials(
+    account: &crate::models::Account,
+    sync_agy_cli: bool,
+) -> Result<(), String> {
     let home = match dirs::home_dir() {
         Some(h) => h,
         None => return Err("Failed to resolve user home directory".to_string()),

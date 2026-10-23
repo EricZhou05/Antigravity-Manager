@@ -3,6 +3,14 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v4.9.9-beta.9 (2026-10-23)**:
+        -   **[Eradicating Linux Window Focus Hijacking & Separating CLI Token Sync] (Fixes #3728, Thanks to @bkspi)**:
+            -   **Completely Prohibited Dynamic Process Execution for Version Probing**: Removed the fallback invocation of `Command::new(exe_path).arg("--version")` on Linux. For Electron desktop applications that do not cleanly terminate on `--version`, running the binary triggered single-instance IPC handlers that forcibly restored and focused the existing window every few seconds (or auto-started the app when closed). Replaced with strictly safe static metadata inspection. (Fixes #3728, Thanks to @bkspi)
+            -   **Symlink Resolution & In-Memory asar Parsing**: Automatically resolves symlinks via `fs::canonicalize` to locate the true installation root across standard Linux paths (`/opt/Antigravity/`, `/usr/share/`, etc.) for `resources/app/package.json` and `product.json`. Implemented a lightweight in-memory `extract_version_from_asar_bytes` parser for asar-bundled assets, safely falling back to defaults on failure without ever spawning external processes. (Fixes #3728)
+            -   **60-Second In-Memory Version Caching**: Introduced a global in-memory cache with a 60-second TTL (`VERSION_CACHE`) in `get_antigravity_version_with_path`, completely eliminating disk I/O churn caused by frequent frontend polling and window focus events. (Fixes #3728)
+            -   **Decoupled Classic App Switches from Overwriting CLI Credentials**: Added an explicit `sync_agy_cli` flag to `write_to_file_credentials`. Switching the Classic desktop edition now strictly updates the system keyring and generic credentials without clobbering `~/.gemini/antigravity-cli/antigravity-oauth-token`, ensuring CLI credentials remain isolated unless explicitly switching the CLI client. (Fixes #3728)
+            -   **Target-Isolated Client Status Fallback**: Hardened `detect_active_clients_status` so that if a client cannot be directly matched against the system keyring, it falls back to its own tracked target ID (`current_classic_account_id` / `current_agy_account_id` / `current_ide_account_id`) instead of returning `None`, preventing frontend UI fallbacks from displaying the same global account across multiple clients. (Fixes #3728)
+
     *   **v4.9.9-beta.8 (2026-10-22)**:
         -   **[Local Snapshot Hydration to Eliminate Cold-Start Blank Flash] (Ref #3726)**:
             -   **Synchronous Snapshot Hydration**: Introduced local storage synchronous snapshot hydration in `useAccountStore` initial state (`getInitialAccounts()` and `getInitialCurrentAccount()`). (Ref #3726)

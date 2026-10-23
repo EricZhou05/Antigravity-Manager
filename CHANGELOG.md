@@ -3,6 +3,14 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v4.9.9-beta.9 (2026-10-23)**:
+        -   **[Linux 窗口抢占置顶与自动拉起根治，并隔离 CLI 凭证同步] (Fixes #3728, Thanks to @bkspi)**:
+            -   **彻底禁止动态进程执行探测版本**: 在 Linux 环境下移除对外部可执行文件执行 `Command::new(exe_path).arg("--version")` 的兜底逻辑；针对 Electron 桌面应用在接收到 `--version` 参数时不会静默退出，而是触发 `single-instance` 机制向正在运行的主实例发送 IPC 消息导致主窗口每数秒被强制恢复并置于最前台抢占焦点、或在客户端关闭时意外启动新实例的致命缺陷，全面改为安全的静态文件与元数据检测。(Fixes #3728, Thanks to @bkspi)
+            -   **多路径符号链接穿透与 asar 内存解析**: 自动通过 `fs::canonicalize` 解析符号链接定位到可执行文件真实物理安装根目录，覆盖 Linux 标准安装路径（`/opt/Antigravity/`、`/usr/share/` 等）下的 `resources/app/package.json` 与 `product.json`；并针对打包于 asar 内的场景实现轻量内存解析器 `extract_version_from_asar_bytes`，探查失败时安全降级默认值，从物理层面杜绝任何外部进程唤醒。(Fixes #3728)
+            -   **版本探查 60 秒全局内存缓存**: 在 `get_antigravity_version_with_path` 引入带有 60 秒 TTL 的内存缓存（`VERSION_CACHE`），彻底消除前端轮询与窗口焦点切换时对磁盘版本文件的高频 I/O 探查损耗。(Fixes #3728)
+            -   **解除经典款切号对 CLI 专属凭证的覆写覆盖**: 为 `write_to_file_credentials` 引入 `sync_agy_cli` 显式控制开关；切换经典款应用时仅维护钥匙串与通用凭证，严禁盲目冲刷 `~/.gemini/antigravity-cli/antigravity-oauth-token`；仅在显式切换 CLI 时同步更新 CLI 凭证文件，杜绝切经典款冲掉 CLI 独立账号的冲突问题。(Fixes #3728)
+            -   **补全多端账号生效探测的回退隔离**: 优化 `detect_active_clients_status`，当某一客户端未在钥匙串直接匹配时，优先回退到该客户端专属记录的目标账号 ID（`current_classic_account_id` / `current_agy_account_id` / `current_ide_account_id`），杜绝因返回 `None` 导致前端错误回退到全局最后切换的账号而造成“一个变另一个也跟着变”的视觉联动。(Fixes #3728)
+
     *   **v4.9.9-beta.8 (2026-10-22)**:
         -   **[本地状态快照水合机制彻底消除冷启动图2空状态闪烁] (Ref #3726)**:
             -   **同步快照秒级水合**: 在 `useAccountStore` 初始状态中引入 `localStorage` 本地快照同步水合机制（`getInitialAccounts()` 与 `getInitialCurrentAccount()`）。(Ref #3726)
