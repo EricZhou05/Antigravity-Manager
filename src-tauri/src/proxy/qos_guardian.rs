@@ -125,6 +125,33 @@ impl QoSGuardian {
         matches!(self.get_state(account_id), AccountQoSState::HalfOpen { .. })
     }
 
+    /// 获取账号当前小黑屋冷却剩余时长 (单位: 秒)
+    pub fn get_jailed_remaining_seconds(&self, account_id: &str) -> Option<u64> {
+        if let Some(state) = self.states.get(account_id) {
+            if let AccountQoSState::Jailed {
+                jailed_at,
+                current_wait,
+                ..
+            } = state.value()
+            {
+                let elapsed = jailed_at.elapsed();
+                if elapsed < *current_wait {
+                    return Some((*current_wait - elapsed).as_secs());
+                } else {
+                    return Some(0);
+                }
+            }
+        }
+        None
+    }
+
+    /// 手动解除账号的小黑屋与 QoS 隔离限制，重置为 Healthy
+    pub fn release_from_jail(&self, account_id: &str) {
+        self.states
+            .insert(account_id.to_string(), AccountQoSState::Healthy);
+        self.penalty_memory.remove(account_id);
+    }
+
     /// 判断账号是否处于纯健康状态
     pub fn is_healthy(&self, account_id: &str) -> bool {
         matches!(self.get_state(account_id), AccountQoSState::Healthy)

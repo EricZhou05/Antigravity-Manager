@@ -302,6 +302,8 @@ struct AccountResponse {
     last_used: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     qos_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    qos_reset_seconds: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -413,6 +415,7 @@ fn to_account_response(
         validation_blocked_reason: account.validation_blocked_reason.clone(),
         validation_url: account.validation_url.clone(),
         qos_status: account.qos_status.clone(),
+        qos_reset_seconds: account.qos_reset_seconds,
     }
 }
 
@@ -743,6 +746,10 @@ impl AxumServer {
             .route("/accounts/switch", post(admin_switch_account))
             .route("/accounts/refresh", post(admin_refresh_all_quotas))
             .route("/accounts/:accountId", delete(admin_delete_account))
+            .route(
+                "/accounts/:accountId/release-qos",
+                post(admin_release_account_qos_jail),
+            )
             .route("/accounts/:accountId/bind-device", post(admin_bind_device))
             .route(
                 "/accounts/:accountId/device-profiles",
@@ -1390,6 +1397,10 @@ async fn admin_list_accounts(
                 }
                 crate::proxy::qos_guardian::AccountQoSState::Healthy => None,
             };
+            let qos_reset_seconds = state
+                .token_manager
+                .qos_guardian
+                .get_jailed_remaining_seconds(&acc.id);
 
             AccountResponse {
                 id: acc.id,
@@ -1413,6 +1424,7 @@ async fn admin_list_accounts(
                 device_bound: acc.device_profile.is_some(),
                 last_used: acc.last_used,
                 qos_status,
+                qos_reset_seconds,
             }
         })
         .collect();
@@ -1491,6 +1503,10 @@ async fn admin_get_current_account(
                 }
                 crate::proxy::qos_guardian::AccountQoSState::Healthy => None,
             };
+            let qos_reset_seconds = state
+                .token_manager
+                .qos_guardian
+                .get_jailed_remaining_seconds(&acc.id);
 
             AccountResponse {
                 id: acc.id,
@@ -1514,6 +1530,7 @@ async fn admin_get_current_account(
                 device_bound: acc.device_profile.is_some(),
                 last_used: acc.last_used,
                 qos_status,
+                qos_reset_seconds,
             }
         })
     } else {
@@ -1559,6 +1576,14 @@ async fn admin_add_account(
         )
     })?;
     Ok(Json(to_account_response(&account, &current_id)))
+}
+
+async fn admin_release_account_qos_jail(
+    State(state): State<AppState>,
+    axum::extract::Path(account_id): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    state.token_manager.release_account_qos_jail(&account_id);
+    StatusCode::OK
 }
 
 async fn admin_delete_account(

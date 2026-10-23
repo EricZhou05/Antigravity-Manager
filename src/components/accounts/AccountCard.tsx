@@ -7,6 +7,8 @@ import { useTranslation } from 'react-i18next';
 import { useConfigStore } from '../../stores/useConfigStore';
 import { GroupQuotaCard } from './GroupQuotaCard';
 import { getValidationBlockedStatusLabel } from './accountValidationStatus';
+import { showToast } from '../common/ToastContainer';
+import { releaseAccountQoSJail } from '../../services/accountService';
 import { QoSStatusBadge } from './QoSStatusBadge';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
 import { getGroupQuotaSummaries } from '../../utils/quotaDisplay';
@@ -51,6 +53,16 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
             onUpdateLabel(labelInput.trim());
         }
         setIsEditingLabel(false);
+    };
+
+    const handleReleaseJail = async () => {
+        try {
+            await releaseAccountQoSJail(account.id);
+            showToast(t('accounts.qos.release_success', '已解除该账号的小黑屋限制'), 'success');
+            onRefresh();
+        } catch (err: any) {
+            showToast(err?.message || '解除失败', 'error');
+        }
     };
 
     const handleCancelLabel = () => {
@@ -181,7 +193,12 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                                     {validationBlockedLabel.toUpperCase()}
                                 </span>
                             )}
-                            <QoSStatusBadge status={account.qos_status} size="sm" />
+                            <QoSStatusBadge
+                                status={account.qos_status}
+                                resetSeconds={account.qos_reset_seconds}
+                                size="sm"
+                                onRelease={handleReleaseJail}
+                            />
                             {/* 订阅类型徽章 */}
                             {(() => {
                                 const tier = getAccountTier(account);

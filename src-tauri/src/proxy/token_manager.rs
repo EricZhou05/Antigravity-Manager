@@ -3725,6 +3725,16 @@ impl TokenManager {
         self.rate_limit_tracker.get_reset_seconds(account_id)
     }
 
+    /// 手动解除账号的小黑屋限制 (QoS 隔离与冷却) 并清除限速记录
+    pub fn release_account_qos_jail(&self, account_id: &str) {
+        self.qos_guardian.release_from_jail(account_id);
+        self.rate_limit_tracker.clear(account_id);
+        crate::modules::logger::log_info(&format!(
+            "[QoS] Account {} manually released from QoS jail",
+            account_id
+        ));
+    }
+
     /// 清除过期的限流记录
     #[allow(dead_code)]
     pub fn clean_expired_rate_limits(&self) {

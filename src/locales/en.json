@@ -234,7 +234,10 @@
             "probing": "Probing Recovery",
             "probing_hint": "Sending synthetic heartbeat probe to verify whether upstream quality has fully recovered.",
             "half_open": "On Probation",
-            "half_open_hint": "Probe succeeded. Single-flight canary traffic in progress. Full health will be restored after stable passes."
+            "half_open_hint": "Probe succeeded. Single-flight canary traffic in progress. Full health will be restored after stable passes.",
+            "release_btn": "Release",
+            "release_tooltip": "Click to manually release account from QoS jail and resume normal scheduling",
+            "release_success": "Successfully released account from QoS jail"
         },
         "account": "Account",
         "search_placeholder": "Search email...",

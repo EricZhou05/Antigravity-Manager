@@ -56,6 +56,8 @@ import { useConfigStore } from '../../stores/useConfigStore';
 import { GroupQuotaCard } from './GroupQuotaCard';
 import { getGroupQuotaSummaries } from '../../utils/quotaDisplay';
 import { getValidationBlockedStatusLabel } from './accountValidationStatus';
+import { showToast } from '../common/ToastContainer';
+import { releaseAccountQoSJail } from '../../services/accountService';
 import { QoSStatusBadge } from './QoSStatusBadge';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
 
@@ -328,6 +330,16 @@ function AccountRowContent({
         setIsEditingLabel(false);
     };
 
+    const handleReleaseJail = async () => {
+        try {
+            await releaseAccountQoSJail(account.id);
+            showToast(t('accounts.qos.release_success', '已解除该账号的小黑屋限制'), 'success');
+            onRefresh();
+        } catch (err: any) {
+            showToast(err?.message || '解除失败', 'error');
+        }
+    };
+
     const handleCancelLabel = () => {
         setLabelInput(account.custom_label || '');
         setIsEditingLabel(false);
@@ -428,7 +440,12 @@ function AccountRowContent({
                                 <span>{validationBlockedLabel}</span>
                             </span>
                         )}
-                        <QoSStatusBadge status={account.qos_status} size="md" />
+                        <QoSStatusBadge
+                            status={account.qos_status}
+                            resetSeconds={account.qos_reset_seconds}
+                            size="md"
+                            onRelease={handleReleaseJail}
+                        />
 
 
                         {/* 订阅类型徽章 */}

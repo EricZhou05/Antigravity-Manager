@@ -218,7 +218,10 @@
             "probing": "解限探測中",
             "probing_hint": "正在向該帳號發起純淨測速探針，檢測上游服務質量是否已滿血恢復",
             "half_open": "觀察緩刑中",
-            "half_open_hint": "探針通過，正在進行生產流量單路試探，連續穩定通過後將徹底恢復健康"
+            "half_open_hint": "探針通過，正在進行生產流量單路試探，連續穩定通過後將徹底恢復健康",
+            "release_btn": "解除",
+            "release_tooltip": "點擊立即手動移除小黑屋限制，恢復帳號正常調度",
+            "release_success": "已成功解除該帳號的小黑屋限制，恢復正常調度"
         },
         "account": "帳號",
         "search_placeholder": "搜尋信箱...",

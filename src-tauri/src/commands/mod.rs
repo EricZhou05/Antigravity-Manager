@@ -69,6 +69,7 @@ pub async fn list_accounts(
                 }
                 crate::proxy::qos_guardian::AccountQoSState::Healthy => None,
             };
+            account.qos_reset_seconds = tm.qos_guardian.get_jailed_remaining_seconds(&account.id);
 
             if let Some(reset_secs) = tm.get_rate_limit_reset_seconds(&account.id) {
                 if reset_secs > 0 {
@@ -91,6 +92,39 @@ pub async fn list_accounts(
     }
 
     Ok(accounts)
+}
+
+/// 手动解除账号的小黑屋限制 (QoS 隔离与冷却)
+#[tauri::command]
+pub async fn release_account_qos_jail(
+    account_id: String,
+    proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
+) -> Result<(), String> {
+    let token_manager = {
+        if let Ok(instance_lock) = proxy_state.instance.try_read() {
+            if let Some(instance) = instance_lock.as_ref() {
+                Some(instance.token_manager.clone())
+            } else if let Ok(admin_lock) = proxy_state.admin_server.try_read() {
+                admin_lock
+                    .as_ref()
+                    .map(|a| a.axum_server.token_manager.clone())
+            } else {
+                None
+            }
+        } else if let Ok(admin_lock) = proxy_state.admin_server.try_read() {
+            admin_lock
+                .as_ref()
+                .map(|a| a.axum_server.token_manager.clone())
+        } else {
+            None
+        }
+    };
+
+    if let Some(tm) = token_manager {
+        tm.release_account_qos_jail(&account_id);
+    }
+
+    Ok(())
 }
 
 /// 添加账号

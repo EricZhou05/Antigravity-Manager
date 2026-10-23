@@ -697,6 +697,7 @@ pub fn run() {
             commands::batch_import_accounts,
             commands::delete_account,
             commands::delete_accounts,
+            commands::release_account_qos_jail,
             commands::reorder_accounts,
             commands::switch_account,
             commands::export_accounts,

@@ -232,7 +232,10 @@
             "probing": "解限探测中",
             "probing_hint": "正在向该账号发起纯净测速探针，检测上游服务质量是否已满血恢复",
             "half_open": "观察缓刑中",
-            "half_open_hint": "探针通过，正在进行生产流量单路试探，连续稳定通过后将彻底恢复健康"
+            "half_open_hint": "探针通过，正在进行生产流量单路试探，连续稳定通过后将彻底恢复健康",
+            "release_btn": "解除",
+            "release_tooltip": "点击立即手动移除小黑屋限制，恢复账号正常调度",
+            "release_success": "已成功解除该账号的小黑屋限制，恢复正常调度"
         },
         "account": "账号",
         "search_placeholder": "搜索邮箱...",

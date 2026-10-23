@@ -102,6 +102,9 @@ pub struct Account {
     /// [NEW] 运行时 QoS 状态 ("suspicious" | "jailed" | "probing" | "half_open")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub qos_status: Option<String>,
+    /// [NEW] 运行时 QoS 冷却剩余时间 (秒)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qos_reset_seconds: Option<u64>,
 }
 
 impl Account {
@@ -134,6 +137,7 @@ impl Account {
             proxy_bound_at: None,
             custom_label: None,
             qos_status: None,
+            qos_reset_seconds: None,
         }
     }
 
