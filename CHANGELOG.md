@@ -13,6 +13,9 @@
         -   **[Gemini 协议 URL Query (?key=) 授权鉴权全面兼容] (Fixes #3729, Thanks to @Ran-Xing)**:
             -   **支持标准 URL Query 传参提取 API Key**: 针对 Google Gemini 官方标准 REST 协议及第三方客户端（如 Cherry Studio 等）通过 URL Query 参数（例如 `?key=YOUR_API_KEY` 或 `?alt=sse&key=...`）传参调用代理时，因中间件仅检查 HTTP Header 而被误判拦截为 `401 Unauthorized` 的问题，重构 `extract_api_key` 鉴权凭证提取管道，完整覆盖 `Authorization: Bearer`、`x-api-key`、`x-goog-api-key` 及 URL Query `?key=`。(Fixes #3729, Thanks to @Ran-Xing)
             -   **统一免鉴权模式下的 User Token 识别**: 在 `auth_mode = Off` 模式下同步接入通用凭证提取管道，确保无论通过 Header 还是 Gemini 标准 URL Query 传参，均能准确提取并记录 User Token 身份与其调用用量。(Fixes #3729)
+        -   **[Web/Headless 模式保存配置补全「仅暴露真实配额模型」等内存热更新] (Fixes #3730, Thanks to @Ran-Xing)**:
+            -   **补齐 Web 配置保存状态热更新**: 针对 Web 网页端 / Headless（无头 VPS）服务在管理接口 `admin_save_config` 保存配置时，因遗漏写锁同步 `only_raw_quota_models` 导致用户开关「仅暴露真实配额模型」后 `/v1/models` 等接口未能即时生效、必须重启进程的缺陷，完整补齐 `only_raw_quota_models` 内存写锁同步。(Fixes #3730, Thanks to @Ran-Xing)
+            -   **对齐桌面端全量热重载链路**: 同步补齐 Web 模式下对 `debug_logging`、`upstream.set_user_agent_override`、`monitor.set_capture_health_logs`、`hub_version` 指纹以及上游代理和代理池底层 HTTP 客户端缓存热失效逻辑，确保 Web/Headless 环境与桌面 GUI 环境享有 100% 相同的高水准动态热重载体验。(Fixes #3730)
 
     *   **v4.9.9-beta.8 (2026-10-22)**:
         -   **[本地状态快照水合机制彻底消除冷启动图2空状态闪烁] (Ref #3726)**:

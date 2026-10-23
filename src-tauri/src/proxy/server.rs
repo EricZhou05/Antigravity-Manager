@@ -1919,11 +1919,24 @@ async fn admin_save_config(
         *mapping = new_config.clone().proxy.custom_mapping;
     }
 
+    // 更新“仅暴露真实配额模型”状态 (Fixes #3730)
+    {
+        let mut only_raw = state.only_raw_quota_models.write().await;
+        *only_raw = new_config.proxy.only_raw_quota_models;
+    }
+
     // 更新上游代理
     {
         let mut proxy = state.upstream_proxy.write().await;
         *proxy = new_config.clone().proxy.upstream_proxy;
     }
+    // [HOT-RELOAD] Rebuild default HTTP client with new upstream proxy
+    state
+        .upstream
+        .rebuild_default_client(Some(new_config.proxy.upstream_proxy.clone()))
+        .await;
+    state.upstream.clear_client_cache();
+    crate::utils::http::invalidate_shared_clients();
 
     // 更新安全策略
     {
@@ -1937,11 +1950,35 @@ async fn admin_save_config(
         *exp = new_config.clone().proxy.experimental;
     }
 
+    // 更新调试日志配置
+    {
+        let mut dbg = state.debug_logging.write().await;
+        *dbg = new_config.clone().proxy.debug_logging;
+    }
+
     // 更新代理池配置（Web/Docker 保存配置时热更新）
     {
         let mut pool = state.proxy_pool_state.write().await;
         *pool = new_config.clone().proxy.proxy_pool;
     }
+    state.proxy_pool_manager.sync_bindings_from_config().await;
+
+    // 更新 User-Agent 配置
+    state
+        .upstream
+        .set_user_agent_override(new_config.proxy.user_agent_override.clone())
+        .await;
+
+    // 同步健康检查日志捕获开关
+    state
+        .monitor
+        .set_capture_health_logs(new_config.proxy.capture_health_logs);
+
+    // 同步 Hub 指纹
+    crate::modules::hub_version::update_hub_fingerprint(
+        new_config.proxy.hub_version.as_deref(),
+        new_config.proxy.hub_cl.as_deref(),
+    );
 
     // 同步全局内存配置（热更新思考预算、系统提示词、图像思考模式与审计策略）
     crate::proxy::update_thinking_budget_config(new_config.proxy.thinking_budget.clone());
