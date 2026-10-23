@@ -1820,7 +1820,7 @@ print(response.choices[0].message.content)`;
                 {!configLoading && !configError && appConfig && (
                     <div className="bg-white dark:bg-base-100 rounded-xl shadow-xs border border-gray-200/80 dark:border-base-200">
                         <div className="px-4 sm:px-5 py-2.5 border-b border-gray-100 dark:border-base-200 bg-gray-50/60 dark:bg-base-200/80 flex flex-wrap items-center justify-between gap-3">
-                            {/* 三个可选菜单栏：服务配置、CLI 一键配置、多协议支持 */}
+                            {/* 菜单栏：服务配置、模型配置、CLI 一键配置、多协议支持 */}
                             <div className="flex items-center gap-1.5 bg-gray-200/70 dark:bg-base-300/60 p-1 rounded-xl">
                                 <button
                                     type="button"

@@ -18,7 +18,6 @@ interface GroupQuotaCardProps {
 export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: GroupQuotaCardProps) {
     const { t } = useTranslation();
     const liveState = getLiveLimitState(liveLimit);
-    const showLiveIssue = liveState.shouldShow || summary.isWeeklyConstrained;
     const isUnavailable = liveState.isActive || summary.isWeeklyExhausted;
 
     const fiveHour = summary.fiveHour;
@@ -89,7 +88,6 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
                 <div
                     className={cn(
                         "relative h-[22px] flex items-center px-1.5 rounded-md overflow-hidden border border-gray-100/50 dark:border-white/5 bg-gray-50/30 dark:bg-white/5 group/quota transition-all",
-                        showLiveIssue && "border-amber-400/70 dark:border-amber-500/70 bg-amber-50/80 dark:bg-amber-950/30 ring-1 ring-amber-400/30",
                         isUnavailable && "border-rose-400/70 dark:border-rose-500/70 bg-rose-50/80 dark:bg-rose-950/30 ring-rose-400/30"
                     )}
                     title={summary.isWeeklyExhausted ? t('accounts.weekly_exhausted_tooltip') : formatTooltip('5H')}
@@ -98,7 +96,7 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
                     <div
                         className={cn(
                             "absolute inset-y-0 left-0 transition-all duration-700 ease-out opacity-15 dark:opacity-20",
-                            showLiveIssue ? (isUnavailable ? "bg-rose-500" : "bg-amber-500") : getBgColorClass(fiveHourPercentage)
+                            isUnavailable ? "bg-rose-500" : getBgColorClass(fiveHourPercentage)
                         )}
                         style={{ width: `${fiveHourPercentage}%` }}
                     />
@@ -107,13 +105,12 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
                     <div className="relative z-10 w-full flex items-center text-[10px] font-mono leading-none gap-1.5">
                         {/* Title + Icon */}
                         <span className={cn(
-                            "flex-1 min-w-0 text-gray-500 dark:text-gray-400 font-bold truncate text-left flex items-center gap-1",
-                            showLiveIssue && "text-amber-700 dark:text-amber-300",
+                            "flex-1 min-w-0 text-gray-700 dark:text-gray-200 font-bold truncate text-left flex items-center gap-1",
                             isUnavailable && "text-rose-700 dark:text-rose-300"
                         )}>
                             <Icon size={12} className="shrink-0" />
                             <span className="truncate">{label}</span>
-                            <span className="text-[9px] font-normal text-gray-400 dark:text-gray-500 scale-95 shrink-0">5H</span>
+                            <span className="text-[9px] font-semibold text-gray-700 dark:text-gray-200 shrink-0">5H</span>
                         </span>
 
                         {/* Reset Time */}
@@ -124,14 +121,14 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
                                     {formatTimeRemaining(fiveHour.resetTime)}
                                 </span>
                             ) : (
-                                <span className="text-gray-300 dark:text-gray-600 italic scale-90">N/A</span>
+                                <span className="text-gray-400 dark:text-gray-500 italic scale-90">N/A</span>
                             )}
                         </div>
 
                         {/* Percentage */}
                         <span className={cn(
                             "text-right font-bold transition-colors flex items-center justify-end gap-0.5 shrink-0 w-[28px]",
-                            showLiveIssue ? (isUnavailable ? "text-rose-700 dark:text-rose-300" : "text-amber-700 dark:text-amber-300") : getTextColorClass(fiveHourPercentage)
+                            isUnavailable ? "text-rose-700 dark:text-rose-300" : getTextColorClass(fiveHourPercentage)
                         )}>
                             {isProtected && (
                                 <span title={t('accounts.quota_protected')}><Lock className="w-2.5 h-2.5 text-amber-500" /></span>
@@ -147,10 +144,8 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
                 <div
                     className={cn(
                         "relative h-[22px] flex items-center px-1.5 rounded-md overflow-hidden border border-gray-100/50 dark:border-white/5 bg-gray-50/30 dark:bg-white/5 group/quota transition-all",
-                        summary.key === 'argon' && !showLiveIssue && !isUnavailable && "border-indigo-300/50 dark:border-indigo-700/40 bg-indigo-50/25 dark:bg-indigo-950/25",
+                        summary.key === 'argon' && !isUnavailable && "border-indigo-300/50 dark:border-indigo-700/40 bg-indigo-50/25 dark:bg-indigo-950/25",
                         summary.isWeeklyExhausted && "border-rose-400/70 dark:border-rose-500/70 bg-rose-50/80 dark:bg-rose-950/30 ring-rose-400/30",
-                        // 当只有周额度时，如果受保护或有 live limit 也高亮该条目
-                        fiveHour === undefined && showLiveIssue && "border-amber-400/70 dark:border-amber-500/70 bg-amber-50/80 dark:bg-amber-950/30 ring-1 ring-amber-400/30",
                         fiveHour === undefined && isUnavailable && "border-rose-400/70 dark:border-rose-500/70 bg-rose-50/80 dark:bg-rose-950/30 ring-rose-400/30"
                     )}
                     title={formatTooltip('周配额')}
@@ -167,19 +162,17 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
                     {/* Content */}
                     <div className="relative z-10 w-full flex items-center text-[10px] font-mono leading-none gap-1.5">
                         <span className={cn(
-                            "flex-1 min-w-0 text-gray-500 dark:text-gray-400 font-bold truncate text-left flex items-center gap-1",
-                            summary.isWeeklyExhausted && "text-rose-700 dark:text-rose-300",
-                            fiveHour === undefined && showLiveIssue && "text-amber-700 dark:text-amber-300",
-                            fiveHour === undefined && isUnavailable && "text-rose-700 dark:text-rose-300"
+                            "flex-1 min-w-0 text-gray-700 dark:text-gray-200 font-bold truncate text-left flex items-center gap-1",
+                            (summary.isWeeklyExhausted || (fiveHour === undefined && isUnavailable)) && "text-rose-700 dark:text-rose-300"
                         )}>
                             {/* 统一展示图标、分组名称与周配额标识 */}
                             <Icon size={12} className="shrink-0" />
                             <span className="truncate">{weeklyLabel}</span>
-                            <span className="text-[9px] font-normal text-gray-400 dark:text-gray-500 scale-95 shrink-0">
+                            <span className="text-[9px] font-semibold text-gray-700 dark:text-gray-200 shrink-0">
                                 {t('accounts.quota_window_weekly_short', '周配额')}
                             </span>
                             {weekly.cycleTokens !== undefined && weekly.cycleTokens !== null && (
-                                <span className="text-[9px] font-normal text-gray-400 dark:text-gray-500 shrink-0"
+                                <span className="text-[9px] font-medium text-gray-600 dark:text-gray-300 shrink-0"
                                       title={t('accounts.weekly_tokens_tooltip')}>
                                     ({weekly.cycleTokens.toLocaleString('en-US', { notation: 'compact', maximumFractionDigits: 1 })})
                                 </span>
@@ -201,7 +194,7 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
                                     {formatTimeRemaining(weekly.resetTime)}
                                 </span>
                             ) : (
-                                <span className="text-gray-300 dark:text-gray-600 italic scale-90">N/A</span>
+                                <span className="text-gray-400 dark:text-gray-500 italic scale-90">N/A</span>
                             )}
                         </div>
 
@@ -223,11 +216,11 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
             {fiveHour === undefined && !weekly && (
                 <div className="relative h-[22px] flex items-center px-1.5 rounded-md overflow-hidden border border-gray-100/50 dark:border-white/5 bg-gray-50/30 dark:bg-white/5">
                     <div className="relative z-10 w-full flex items-center text-[10px] font-mono leading-none gap-1.5">
-                        <span className="flex-1 min-w-0 text-gray-400 dark:text-gray-500 font-bold truncate text-left flex items-center gap-1">
+                        <span className="flex-1 min-w-0 text-gray-700 dark:text-gray-200 font-bold truncate text-left flex items-center gap-1">
                             <Icon size={12} className="shrink-0 opacity-60" />
                             <span className="truncate">{label}</span>
                         </span>
-                        <span className="text-right font-bold text-gray-400 dark:text-gray-600 shrink-0 w-[28px]">
+                        <span className="text-right font-bold text-gray-400 dark:text-gray-500 shrink-0 w-[28px]">
                             -
                         </span>
                     </div>

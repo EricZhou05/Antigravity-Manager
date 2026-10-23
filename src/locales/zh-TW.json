@@ -1394,7 +1394,7 @@
             "title": "使用示例"
         },
         "multi_protocol": {
-            "title": "多協定支援 (Multi-Protocol Support)",
+            "title": "多協定支援",
             "subtitle": "快速同步 API 地址與金鑰到本地 AI 工具",
             "description": "反代服務支援 OpenAI、Anthropic 和 Gemini 協定，滿足不同工具的整合需求",
             "openai_label": "OpenAI 協定",
@@ -1403,7 +1403,7 @@
             "anthropic_tools": "Claude Code CLI",
             "gemini_label": "Gemini 協定",
             "gemini_tools": "Google AI SDK, LangChain",
-            "quick_integration": "快速整合 (Quick Integration)",
+            "quick_integration": "快速整合",
             "click_tip": "👆 點擊模型以更新程式碼範例",
             "copy_base": "複製 Base"
         },

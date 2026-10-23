@@ -1433,7 +1433,7 @@
             "title": "使用示例"
         },
         "multi_protocol": {
-            "title": "多协议支持 (Multi-Protocol Support)",
+            "title": "多协议支持",
             "subtitle": "快速同步 API 地址与密钥到本地 AI 工具",
             "description": "反代服务支持 OpenAI、Anthropic 和 Gemini 协议，满足不同工具的集成需求",
             "openai_label": "OpenAI 协议",
@@ -1442,7 +1442,7 @@
             "anthropic_tools": "Claude Code CLI",
             "gemini_label": "Gemini 协议",
             "gemini_tools": "Google AI SDK, LangChain",
-            "quick_integration": "快速集成 (Quick Integration)",
+            "quick_integration": "快速集成",
             "click_tip": "👆 点击模型以更新代码示例",
             "copy_base": "复制 Base"
         },
