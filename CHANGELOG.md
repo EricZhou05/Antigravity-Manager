@@ -10,6 +10,9 @@
             -   **版本探查 60 秒全局内存缓存**: 在 `get_antigravity_version_with_path` 引入带有 60 秒 TTL 的内存缓存（`VERSION_CACHE`），彻底消除前端轮询与窗口焦点切换时对磁盘版本文件的高频 I/O 探查损耗。(Fixes #3728)
             -   **解除经典款切号对 CLI 专属凭证的覆写覆盖**: 为 `write_to_file_credentials` 引入 `sync_agy_cli` 显式控制开关；切换经典款应用时仅维护钥匙串与通用凭证，严禁盲目冲刷 `~/.gemini/antigravity-cli/antigravity-oauth-token`；仅在显式切换 CLI 时同步更新 CLI 凭证文件，杜绝切经典款冲掉 CLI 独立账号的冲突问题。(Fixes #3728)
             -   **补全多端账号生效探测的回退隔离**: 优化 `detect_active_clients_status`，当某一客户端未在钥匙串直接匹配时，优先回退到该客户端专属记录的目标账号 ID（`current_classic_account_id` / `current_agy_account_id` / `current_ide_account_id`），杜绝因返回 `None` 导致前端错误回退到全局最后切换的账号而造成“一个变另一个也跟着变”的视觉联动。(Fixes #3728)
+        -   **[Gemini 协议 URL Query (?key=) 授权鉴权全面兼容] (Fixes #3729, Thanks to @Ran-Xing)**:
+            -   **支持标准 URL Query 传参提取 API Key**: 针对 Google Gemini 官方标准 REST 协议及第三方客户端（如 Cherry Studio 等）通过 URL Query 参数（例如 `?key=YOUR_API_KEY` 或 `?alt=sse&key=...`）传参调用代理时，因中间件仅检查 HTTP Header 而被误判拦截为 `401 Unauthorized` 的问题，重构 `extract_api_key` 鉴权凭证提取管道，完整覆盖 `Authorization: Bearer`、`x-api-key`、`x-goog-api-key` 及 URL Query `?key=`。(Fixes #3729, Thanks to @Ran-Xing)
+            -   **统一免鉴权模式下的 User Token 识别**: 在 `auth_mode = Off` 模式下同步接入通用凭证提取管道，确保无论通过 Header 还是 Gemini 标准 URL Query 传参，均能准确提取并记录 User Token 身份与其调用用量。(Fixes #3729)
 
     *   **v4.9.9-beta.8 (2026-10-22)**:
         -   **[本地状态快照水合机制彻底消除冷启动图2空状态闪烁] (Ref #3726)**:
