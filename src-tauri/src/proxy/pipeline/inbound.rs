@@ -2266,6 +2266,20 @@ impl InboundThinkingPipeline {
             }
         });
 
+        // [Pipeline First] Gemini 上游限制：responseSchema 与 tools / toolConfig 互斥 (Fix #3710)
+        let has_response_schema = canonical_gc
+            .as_ref()
+            .and_then(|gc| gc.get("responseSchema"))
+            .is_some();
+
+        if has_response_schema && canonical_tools.is_some() {
+            tracing::warn!(
+                "[InboundPipeline] Suppressing tools and toolConfig because responseSchema is active (Gemini API incompatibility)"
+            );
+            canonical_tools = None;
+            canonical_tool_config = None;
+        }
+
         // 8. 严格对齐官方 Topology 键序:
         // contents -> systemInstruction -> tools -> labels -> generationConfig -> sessionId -> safetySettings -> 其余
         let mut reordered = serde_json::Map::new();

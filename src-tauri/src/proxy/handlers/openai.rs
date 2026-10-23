@@ -831,7 +831,45 @@ fn responses_usage_value(chat_response: &OpenAIResponse) -> Value {
         })
 }
 
-fn convert_chat_response_to_responses(chat_response: &OpenAIResponse) -> Value {
+/// 剥离最外层 Markdown 代码块围栏（如 ```json ... ```），确保 Codex Desktop 原生 JSON.parse 正常解析。
+/// 严格执行整包匹配（starts_with 与 ends_with），绝不在正文中进行贪婪查找或截断，彻底避免误杀。
+pub(crate) fn unwrap_outer_code_fence_if_structured(text: &str) -> String {
+    let trimmed = text.trim();
+    // 1. 若本身已经是合法 JSON，直接原样返回
+    if serde_json::from_str::<serde_json::Value>(trimmed).is_ok() {
+        return trimmed.to_string();
+    }
+
+    // 2. 仅当整段输出被 ``` ... ``` 严格包裹时执行整包剥离
+    if trimmed.starts_with("```") && trimmed.ends_with("```") && trimmed.len() >= 6 {
+        if let Some(first_newline) = trimmed.find('\n') {
+            let inner = trimmed[first_newline + 1..trimmed.len() - 3].trim();
+            if serde_json::from_str::<serde_json::Value>(inner).is_ok() {
+                return inner.to_string();
+            }
+        }
+    }
+
+    // 3. 其余任何情况（包括常规对话文本、内嵌 Markdown 代码块等）均保持原样返回
+    text.to_string()
+}
+
+#[inline]
+pub(crate) fn is_request_structured_output(req: &OpenAIRequest) -> bool {
+    req.response_format
+        .as_ref()
+        .is_some_and(|f| f.r#type == "json_schema" || f.r#type == "json_object")
+        || req
+            .text
+            .as_ref()
+            .and_then(|t| t.get("format"))
+            .is_some()
+}
+
+fn convert_chat_response_to_responses(
+    chat_response: &OpenAIResponse,
+    is_structured_output: bool,
+) -> Value {
     let mut output = Vec::new();
 
     for choice in &chat_response.choices {
@@ -849,23 +887,28 @@ fn convert_chat_response_to_responses(chat_response: &OpenAIResponse) -> Value {
             }));
         }
 
-        let text = choice
+        let raw_text = choice
             .message
             .content
             .as_ref()
             .map(openai_content_text)
             .unwrap_or_default();
+        let cleaned_text = if is_structured_output {
+            unwrap_outer_code_fence_if_structured(&raw_text)
+        } else {
+            raw_text
+        };
         let refusal = choice
             .message
             .refusal
             .as_deref()
             .filter(|refusal| !refusal.is_empty());
-        if !text.is_empty() || refusal.is_some() {
+        if !cleaned_text.is_empty() || refusal.is_some() {
             let mut content = Vec::new();
-            if !text.is_empty() {
+            if !cleaned_text.is_empty() {
                 content.push(json!({
                     "type": "output_text",
-                    "text": text,
+                    "text": cleaned_text,
                     "annotations": []
                 }));
             }
@@ -1448,7 +1491,7 @@ data: {"type":"response.failed","response":{"status":"failed","error":{"code":"u
         }))
         .expect("valid OpenAI response fixture");
 
-        let response = convert_chat_response_to_responses(&chat_response);
+        let response = convert_chat_response_to_responses(&chat_response, false);
         assert_eq!(response["object"], "response");
         assert_eq!(response["output"][0]["type"], "reasoning");
         assert_eq!(
@@ -1467,6 +1510,173 @@ data: {"type":"response.failed","response":{"status":"failed","error":{"code":"u
         assert!(response["output"][1]["content"][0]["text"]
             .as_str()
             .is_some_and(|text| !text.contains("Internal analysis")));
+    }
+
+    #[test]
+    fn test_unwrap_outer_code_fence_safety() {
+        use super::unwrap_outer_code_fence_if_structured;
+
+        // 1. 裸 JSON：安全透传，原样返回
+        let bare = r#"{"title": "Bug Fix", "description": "Fixes issue #3710"}"#;
+        assert_eq!(unwrap_outer_code_fence_if_structured(bare), bare);
+
+        // 2. 被 ```json ... ``` 严格包裹：整包解壳
+        let wrapped_json =
+            "```json\n{\"title\": \"Bug Fix\", \"description\": \"Fixes issue #3710\"}\n```";
+        assert_eq!(unwrap_outer_code_fence_if_structured(wrapped_json), bare);
+
+        // 3. 被 ``` ... ``` 严格包裹（无语言标识）：整包解壳
+        let wrapped_plain =
+            "```\n{\"title\": \"Bug Fix\", \"description\": \"Fixes issue #3710\"}\n```";
+        assert_eq!(unwrap_outer_code_fence_if_structured(wrapped_plain), bare);
+
+        // 4. 【零误杀保障】常规代码块：非 JSON 代码绝不破坏
+        let non_json = "```rust\nfn main() { println!(\"Hello\"); }\n```";
+        assert_eq!(unwrap_outer_code_fence_if_structured(non_json), non_json);
+
+        // 5. 【零误杀保障】字段内部包含反引号代码块的合法 JSON：绝不被内部反引号误杀
+        let inner_with_backticks = r#"{"title":"Summary","code":"```ts\nconst x = 1;\n```"}"#;
+        assert_eq!(
+            unwrap_outer_code_fence_if_structured(inner_with_backticks),
+            inner_with_backticks
+        );
+
+        // 6. 前后带有自然语言说明（非整包围栏包裹）：解壳函数保持原样返回
+        let conversational = "Here is the result:\n```json\n{\"a\":1}\n```\nHope it helps!";
+        assert_eq!(
+            unwrap_outer_code_fence_if_structured(conversational),
+            conversational
+        );
+    }
+
+    #[test]
+    fn test_convert_chat_response_to_responses_structured_vs_normal() {
+        use super::convert_chat_response_to_responses;
+
+        let wrapped_json =
+            "```json\n{\"title\": \"Issue 3710\", \"description\": \"Structured outputs\"}\n```";
+        let bare_json = "{\"title\": \"Issue 3710\", \"description\": \"Structured outputs\"}";
+
+        let chat_response = serde_json::from_value(json!({
+            "id": "chatcmpl_title",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "gemini-3.8-flash-high",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": wrapped_json,
+                    "reasoning_content": null
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": { "prompt_tokens": 5, "completion_tokens": 10, "total_tokens": 15 }
+        }))
+        .expect("chat response");
+
+        // is_structured_output = true: 剥离整包外层围栏，输出可供客户端原生 JSON.parse 解析的裸 JSON
+        let structured_val = convert_chat_response_to_responses(&chat_response, true);
+        let out_text = structured_val["output"][0]["content"][0]["text"]
+            .as_str()
+            .unwrap();
+        assert_eq!(out_text, bare_json);
+        assert!(serde_json::from_str::<serde_json::Value>(out_text).is_ok());
+
+        // is_structured_output = false (普通聊天会话): 100% 原始呈现，绝不剥离或丢弃
+        let normal_val = convert_chat_response_to_responses(&chat_response, false);
+        assert_eq!(
+            normal_val["output"][0]["content"][0]["text"]
+                .as_str()
+                .unwrap(),
+            wrapped_json
+        );
+    }
+
+    #[test]
+    fn test_responses_api_text_format_and_pipeline_tool_suppression() {
+        use super::convert_codex_to_openai_request;
+        use crate::proxy::mappers::openai::models::OpenAIRequest;
+        use crate::proxy::mappers::openai::request::transform_openai_request_with_session;
+        use crate::proxy::pipeline::InboundThinkingPipeline;
+
+        let input = json!({
+            "model": "gpt-6-luna",
+            "reasoning": { "effort": "low" },
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "codex_output_schema",
+                    "strict": true,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "title": { "type": "string" },
+                            "description": { "type": "string" }
+                        },
+                        "required": ["title", "description"],
+                        "additionalProperties": false
+                    }
+                }
+            },
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "description": "Read file contents",
+                    "parameters": { "type": "object" }
+                }
+            }],
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": "Summarize this session."
+                }
+            ]
+        });
+
+        let converted = convert_codex_to_openai_request(input);
+        let openai_req: OpenAIRequest =
+            serde_json::from_value(converted).expect("deserialize OpenAIRequest");
+
+        let (mut gemini_payload, _, _, _) = transform_openai_request_with_session(
+            &openai_req,
+            "proj-test",
+            "gemini-3.8-flash-high",
+            None,
+            "sess-test",
+            Some("sess-test"),
+            true,
+        );
+
+        let inner_req = &mut gemini_payload["request"];
+
+        // 1. 验证适配器层提取 text.format 并映射为 responseMimeType 与 responseSchema
+        assert_eq!(
+            inner_req["generationConfig"]["responseMimeType"],
+            "application/json"
+        );
+        assert_eq!(
+            inner_req["generationConfig"]["responseSchema"]["type"],
+            "object"
+        );
+        // 2. 验证 low effort 将 thinkingBudget 约束为 1024
+        assert_eq!(
+            inner_req["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            1024
+        );
+
+        // 3. 验证 Pipeline 统一拓扑对齐与工具抑制 (Pipeline First)
+        InboundThinkingPipeline::align_google_request_prefix_topology_with_model(
+            inner_req,
+            "gemini-3.8-flash-high",
+            None,
+        );
+        assert!(
+            inner_req.get("tools").is_none(),
+            "tools must be suppressed by pipeline when responseSchema is active"
+        );
     }
 
     #[test]
@@ -4774,7 +4984,9 @@ pub async fn handle_completions(
                             let is_responses_api = is_responses_api_path(uri.path());
 
                             if is_responses_api {
-                                let mut resp = convert_chat_response_to_responses(&chat_resp);
+                                let is_structured = is_request_structured_output(&openai_req);
+                                let mut resp =
+                                    convert_chat_response_to_responses(&chat_resp, is_structured);
                                 resp["id"] = json!(response_id_for_save.clone());
                                 let outputs = resp
                                     .get("output")
@@ -4970,7 +5182,8 @@ pub async fn handle_completions(
             let is_responses_api = is_responses_api_path(uri.path());
 
             if is_responses_api {
-                let resp = convert_chat_response_to_responses(&chat_resp);
+                let is_structured = is_request_structured_output(&openai_req);
+                let resp = convert_chat_response_to_responses(&chat_resp, is_structured);
                 if debug_logger::is_enabled(&debug_cfg) {
                     let payload = json!({
                         "kind": "exchange_summary",
