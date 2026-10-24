@@ -285,8 +285,7 @@ export default function MiniView() {
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
                 if (isTauri()) {
-                    invoke('set_mini_view_active', { active: false }).catch(() => {});
-                    getCurrentWindow().hide();
+                    invoke('hide_mini_view').catch(() => {});
                 }
             }
         };
@@ -309,21 +308,18 @@ export default function MiniView() {
 
     const handleClose = async () => {
         if (isTauri()) {
-            await invoke('set_mini_view_active', { active: false }).catch(() => {});
-            await getCurrentWindow().hide();
+            await invoke('hide_mini_view').catch(() => {});
         } else {
             setMiniView(false);
         }
     };
 
-    const handleMaximize = async () => {
+    const handleMaximize = () => {
         if (isTauri()) {
-            await invoke('show_main_window').catch(() => {});
-            // 若迷你窗未钉在桌面，则呼出主控制台后自动收起；若已钉住，则二者并存
-            if (!isPinned) {
-                await invoke('set_mini_view_active', { active: false }).catch(() => {});
-                await getCurrentWindow().hide();
-            }
+            // 原子化唤起主控制台并在未置顶时安全收起迷你视窗，由后端主线程统一调度避免消息死锁
+            invoke('switch_to_main_window').catch((err) => {
+                console.error('Failed to switch to main window:', err);
+            });
         } else {
             setMiniView(false);
         }

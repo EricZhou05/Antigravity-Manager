@@ -663,7 +663,7 @@ pub fn run() {
                 tauri::WindowEvent::Focused(focused) => {
                     if !focused && window.label() == "mini" {
                         modules::tray::record_blur();
-                        if !modules::tray::is_mini_view_pinned() {
+                        if !modules::tray::is_mini_view_pinned() && modules::tray::is_mini_view_active() {
                             let _ = window.hide();
                             modules::tray::set_mini_view_active(false);
                         }
@@ -765,7 +765,9 @@ pub fn run() {
             commands::set_data_dir,
             commands::migrate_data_dir,
             commands::show_main_window,
+            commands::switch_to_main_window,
             commands::show_mini_view,
+            commands::hide_mini_view,
             commands::exit_app,
             commands::set_mini_view_pinned,
             commands::is_mini_view_pinned,

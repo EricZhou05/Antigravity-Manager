@@ -1173,21 +1173,41 @@ pub async fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
         tracing::info!("Skipped the automatic first window show for a quiet login launch");
         return Ok(());
     }
-    let window = crate::modules::lightweight::ensure_main_window(&app)?;
-    #[cfg(target_os = "macos")]
-    {
-        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+    let app_handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let _ = crate::modules::lightweight::exit_lightweight_mode(&app_handle);
+        let _ = app_handle.emit("tray://show-window", ());
+    });
+    Ok(())
+}
+
+/// 从迷你悬浮窗或其他入口原子化安全切换回主控制台窗口
+#[tauri::command]
+pub async fn switch_to_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    // 1. 若迷你窗未钉在桌面，则呼出主控制台时先在后端安全收起，避免前端 await 挂起与失焦事件竞态
+    if !crate::modules::tray::is_mini_view_pinned() {
+        if let Some(mini) = app.get_webview_window("mini") {
+            let _ = mini.hide();
+        }
+        crate::modules::tray::set_mini_view_active(false);
     }
-    let _ = window.show();
-    let _ = window.unminimize();
-    let _ = window.set_focus();
+
+    // 2. 调度到主线程执行 exit_lightweight_mode，彻底消除跨线程窗口操作与消息泵死锁
+    let app_handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let _ = crate::modules::lightweight::exit_lightweight_mode(&app_handle);
+        let _ = app_handle.emit("tray://show-window", ());
+    });
     Ok(())
 }
 
 /// 呼出/切换迷你悬浮窗（从主控制台导航栏或其他入口调用）
 #[tauri::command]
 pub async fn show_mini_view(app: tauri::AppHandle) -> Result<(), String> {
-    crate::modules::tray::handle_tray_click(&app, None);
+    let app_handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        crate::modules::tray::handle_tray_click(&app_handle, None);
+    });
     Ok(())
 }
 
@@ -1751,6 +1771,15 @@ pub fn is_mini_view_pinned() -> bool {
 #[tauri::command]
 pub fn set_mini_view_active(active: bool) {
     crate::modules::tray::set_mini_view_active(active);
+}
+
+/// 安全收起/关闭迷你悬浮窗
+#[tauri::command]
+pub fn hide_mini_view(app: tauri::AppHandle) {
+    if let Some(mini) = app.get_webview_window("mini") {
+        let _ = mini.hide();
+    }
+    crate::modules::tray::set_mini_view_active(false);
 }
 
 #[tauri::command]
