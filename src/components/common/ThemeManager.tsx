@@ -18,6 +18,8 @@ export default function ThemeManager() {
                     const win = getCurrentWindow();
                     if (win.label !== 'mini') {
                         await win.show();
+                        await win.unminimize().catch(() => {});
+                        await win.setFocus().catch(() => {});
                     }
                 }
             }, 100);
