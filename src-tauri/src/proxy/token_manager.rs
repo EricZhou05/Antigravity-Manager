@@ -1279,6 +1279,15 @@ impl TokenManager {
             .and_then(|m| m.as_array())
         {
             for model in models {
+                if model.get("disabled").and_then(|v| v.as_bool()) == Some(true) {
+                    continue;
+                }
+                let raw_name = model.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let raw_name_lower = raw_name.trim().to_lowercase();
+                if raw_name_lower.contains("-disabled") || raw_name_lower.ends_with("_disabled") {
+                    continue;
+                }
+
                 if let (Some(name), Some(pct)) = (
                     model.get("name").and_then(|v| v.as_str()),
                     model.get("percentage").and_then(|v| v.as_i64()),
@@ -1711,8 +1720,14 @@ impl TokenManager {
             .and_then(|m| m.as_array())
         {
             for model in models {
+                if model.get("disabled").and_then(|v| v.as_bool()) == Some(true) {
+                    continue;
+                }
                 if let Some(name) = model.get("name").and_then(|v| v.as_str()) {
                     let normalized = name.trim().to_lowercase();
+                    if normalized.contains("-disabled") || normalized.ends_with("_disabled") {
+                        continue;
+                    }
                     if !normalized.is_empty() {
                         result.insert(normalized);
                     }

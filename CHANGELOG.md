@@ -3,6 +3,18 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.0-beta.2 (2026-10-24)**:
+        -   **[官方禁用模型严格过滤、基准线拦截门禁与虚假配额展示清理] (Fixes #3735, Ref #3737)**:
+            -   **官方模型结构体补齐 disabled 字段**: 在 `OfficialModelInfo` 中补齐 `disabled: Option<bool>` 字段与 `is_disabled(&self)` 判定方法，准确捕获 Google 上游 `fetchAvailableModels` 中带有 `disabled: true` 标记的条目。(Fixes #3735)
+            -   **基准线与归一化门禁拦截禁用变体**: 在 `is_model_compliant_with_baseline` 判定中置顶拦截 `-disabled` / `_disabled` 模型变体；并在 `normalize_to_standard_id` 中对禁用模型返回 `None`，杜绝将 `gemini-4-argon-disabled` 误归一化为可调度的 `gemini-4-argon` 标准计费桶。(Fixes #3735)
+            -   **配额解析与账号池加载严格防渗透**: 在 `quota.rs` 解析 `quota_response.models` 响应及 `TokenManager` 读入本地账号文件（`load_single_account`、`get_available_models_from_json`）时，双向剔除 `is_disabled()` 及 `-disabled` 变体，防止未开放灰度模型渗入可用模型列表。(Fixes #3735, Ref #3737)
+            -   **前端配额卡片与能力徽章虚假展示治理**: 在 `isSupportedDisplayModel`、`getGroupQuotaSummaries` 及 `hasArgon` 聚合逻辑中全面过滤 `-disabled` 标记，仅当账号真正具备未禁用 Argon 模型或官方 Argon 独立配额组时才激活 Argon 徽章与卡片，彻底根除因残留标记误借普通 Gemini 周配额导致的虚假展示。(Fixes #3735)
+        -   **[Mini 视窗唤醒主控制台死锁消除、原生主线程调度与轻量模式防黑屏] (Ref #3733, Ref #3738, Ref #3741)**:
+            -   **主线程调度与死锁根除**: 在后端引入 `switch_to_main_window` 与 `hide_mini_view` 命令，将主窗口重建及激活（`exit_lightweight_mode`）全量调度至系统原生 UI 主线程（`app.run_on_main_thread`），彻底消除 Windows 下跨线程创建窗口导致的 Win32 消息循环死锁与自旋挂起。(Ref #3733, Ref #3738, Ref #3741)
+            -   **Mini 视窗与主控制台切换竞态消除**: 呼出主控制台时，先在 Rust 后端原子化隐藏未置顶的 Mini 视窗并重置活跃态，避免前端多段 await 因 WebView2 挂起导致假死。(Ref #3733, Ref #3738)
+            -   **全链路 ACL 能力权限补全**: 在 `capabilities/default.json` 中为 main 与 mini 窗口补齐 `core:window:allow-hide`、`allow-set-focus`、`allow-unminimize`、`allow-close` 等权限，防止前台窗口控制被底层 ACL 拦截。(Ref #3738)
+            -   **轻量模式首屏渲染就绪无感淡入**: 重建主控制台窗口时默认保持 `visible: false` 静默装载，待 ThemeManager 首屏主题与配置挂载就绪后自动淡入并对焦，彻底根除 WebView2 绘制 React DOM 前的黑底白框闪烁。(Ref #3733, Ref #3738)
+
     *   **v5.0.0-beta.1 (2026-10-24)**:
         -   **[OpenAI Responses API 结构化输出支持、流水线工具冲突治理与零误杀解壳] (Fixes #3710, Ref #3723, Thanks to @cubelikeplayDaniel)**:
             -   **协议层入站规范化**: 在 `OpenAIRequest` 中支持 Responses API 的 `text.format` 规范，并在适配器中统一定位与提取 `effective_response_format`，规范化映射为 Gemini 原生 `generationConfig.responseSchema` 与 `responseMimeType: "application/json"`，打通 Codex Desktop 对话自动命名（`thread_title`）、摘要生成等后台结构化任务。(Fixes #3710, Ref #3723, Thanks to @cubelikeplayDaniel)

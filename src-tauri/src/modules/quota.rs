@@ -499,6 +499,14 @@ pub async fn fetch_quota_with_cache(
                 for (name, info) in quota_response.models {
                     let name_lower = name.trim().to_lowercase();
 
+                    // 显式过滤官方明确标记禁用的条目（如 disabled: true 或名字包含 -disabled / _disabled）
+                    if info.is_disabled()
+                        || name_lower.contains("-disabled")
+                        || name_lower.ends_with("_disabled")
+                    {
+                        continue;
+                    }
+
                     let in_official_sort = official_supported_ids.is_empty()
                         || official_supported_ids.contains(&name_lower);
 

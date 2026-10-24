@@ -176,6 +176,8 @@ export interface GroupQuotaSummary {
 function isSupportedDisplayModel(name: string): boolean {
     const m = name.trim().toLowerCase();
     if (
+        m.includes('-disabled') ||
+        m.endsWith('_disabled') ||
         m.startsWith('chat_') ||
         m.startsWith('tab_') ||
         m.includes('internal') ||
@@ -299,7 +301,8 @@ export function getGroupQuotaSummaries(
 
         if (fallbackModels.length > 0) {
             const matched = fallbackModels.filter(m => {
-                const n = m.name.toLowerCase();
+                const n = (m?.name || '').toLowerCase();
+                if (n.includes('-disabled') || n.endsWith('_disabled') || (m as any)?.disabled) return false;
                 const isArgon = n.includes('argon');
                 if (key === 'argon') return isArgon;
                 if (isArgon) return false;
@@ -379,6 +382,7 @@ export function getGroupQuotaSummaries(
 
         const matchedForSummary = fallbackModels.filter(m => {
             const n = (m?.name || '').toLowerCase();
+            if (n.includes('-disabled') || n.endsWith('_disabled') || (m as any)?.disabled) return false;
             const isArgon = n.includes('argon');
             if (key === 'argon') return isArgon;
             if (isArgon) return false;
@@ -410,7 +414,10 @@ export function getGroupQuotaSummaries(
         const groupName = (group?.display_name || '').toLowerCase();
         return /argon/i.test(groupName)
             || (group?.buckets || []).some(b => /argon/i.test(`${b?.bucket_id || ''} ${b?.display_name || ''}`));
-    }) || fallbackModels.some(m => /argon/i.test(m?.name || ''));
+    }) || fallbackModels.some(m => {
+        const n = (m?.name || '').toLowerCase();
+        return /argon/i.test(n) && !n.includes('-disabled') && !n.endsWith('_disabled') && !(m as any)?.disabled;
+    });
 
     const summaries: GroupQuotaSummary[] = [
         buildGroup('gemini'),

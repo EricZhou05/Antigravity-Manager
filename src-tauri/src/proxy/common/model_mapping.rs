@@ -187,8 +187,10 @@ pub fn is_model_compliant_with_baseline(model: &str) -> bool {
     let lower = model.to_lowercase();
     let m = lower.trim();
 
-    // 过滤内部任务、测试、tab 补全与旧版 agent 内部代号模型
-    if m.starts_with("chat_")
+    // 过滤禁用标记模型、内部任务、测试、tab 补全与旧版 agent 内部代号模型
+    if m.contains("-disabled")
+        || m.ends_with("_disabled")
+        || m.starts_with("chat_")
         || m.starts_with("tab_")
         || m.contains("internal")
         || m.contains("-exp")
@@ -852,6 +854,11 @@ pub fn strip_tier_suffix(model: &str) -> String {
 pub fn normalize_to_standard_id(model_name: &str) -> Option<String> {
     let lower = model_name.to_lowercase();
 
+    // 排除被标记禁用的变体条目（如 gemini-4-argon-disabled）
+    if lower.contains("-disabled") || lower.ends_with("_disabled") {
+        return None;
+    }
+
     // 0. Gemini 4 Argon 系列（独立配额组与独立计费桶，所有档位变体如 high/medium/low/thinking 均归一化为基底 ID）
     if lower.contains("argon") {
         return Some("gemini-4-argon".to_string());
@@ -1212,6 +1219,10 @@ mod tests {
         // Gemini 4 Argon & Flash >= 3.8 pass, < 3.8 rejected (except 3.1/3.5-flash-lite)
         assert!(is_model_compliant_with_baseline("gemini-4-argon"));
         assert!(is_model_compliant_with_baseline("gemini-4-argon-high"));
+        assert!(!is_model_compliant_with_baseline("gemini-4-argon-disabled"));
+        assert!(!is_model_compliant_with_baseline(
+            "gemini-3.8-flash-disabled"
+        ));
         assert!(is_model_compliant_with_baseline("gemini-3.8-flash-high"));
         assert!(is_model_compliant_with_baseline("gemini-3.8-flash"));
         assert!(is_model_compliant_with_baseline("gemini-3.10-flash-high"));
@@ -1466,6 +1477,7 @@ mod tests {
             normalize_to_standard_id("gemini-4-argon"),
             Some("gemini-4-argon".to_string())
         );
+        assert_eq!(normalize_to_standard_id("gemini-4-argon-disabled"), None);
     }
 
     #[test]

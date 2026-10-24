@@ -59,6 +59,8 @@ function isCompliantModel(
 ): boolean {
     const m = key.toLowerCase().trim();
     if (
+        m.includes('-disabled') ||
+        m.endsWith('_disabled') ||
         m.startsWith('chat_') ||
         m.startsWith('tab_') ||
         m.includes('internal') ||

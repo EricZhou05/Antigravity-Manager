@@ -71,9 +71,17 @@ pub struct OfficialModelInfo {
     pub add_cursor_to_find_replace_target: Option<bool>,
     #[serde(default)]
     pub tab_jump_print_line_range: Option<bool>,
+    /// 官方明确下发的禁用标识 (如 disabled: true)
+    #[serde(default)]
+    pub disabled: Option<bool>,
 }
 
 impl OfficialModelInfo {
+    /// 判定模型是否被官方明确标记为禁用
+    pub fn is_disabled(&self) -> bool {
+        self.disabled == Some(true)
+    }
+
     /// 判定是否为 Claude 模型家族
     pub fn is_claude(&self) -> bool {
         self.model_provider.as_deref() == Some("MODEL_PROVIDER_ANTHROPIC")
@@ -334,6 +342,7 @@ impl OfficialModelCatalog {
             supports_estimate_token_counter: None,
             add_cursor_to_find_replace_target: None,
             tab_jump_print_line_range: None,
+            disabled: None,
         })
     }
 }
