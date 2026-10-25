@@ -504,7 +504,13 @@
             "lightweight_mode": "Mod Ringan (Lepaskan Memori)",
             "lightweight_mode_desc": "Tamatkan proses paparan WebView apabila diminimumkan ke dulang sistem untuk mengurangkan memori ke ~35MB. Membuka semula tetingkap memerlukan beberapa milisaat.",
             "lightweight_mode_enabled": "Mod ringan didayakan",
-            "lightweight_mode_disabled": "Mod ringan dilumpuhkan"
+            "lightweight_mode_disabled": "Mod ringan dilumpuhkan",
+            "tray_click_action": "Tindakan Klik Kiri Dulang",
+            "tray_click_action_desc": "Pilih tindakan lalai apabila mengklik ikon dulang sistem",
+            "tray_click_action_mini": "Buka Tetingkap Mini Pemantauan (Disyorkan)",
+            "tray_click_action_main": "Buka Konsol Utama Secara Langsung",
+            "tray_click_action_mini_short": "Tetingkap Mini",
+            "tray_click_action_main_short": "Konsol Utama"
         },
         "account": {
             "title": "Tetapan Akaun",

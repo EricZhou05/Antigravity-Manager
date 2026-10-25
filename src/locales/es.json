@@ -506,7 +506,13 @@
             "lightweight_mode": "Modo Ligero (Liberar Memoria)",
             "lightweight_mode_desc": "Destruye el proceso de renderizado WebView al cerrar o minimizar a la bandeja, reduciendo la memoria a ~35MB. Requiere unos milisegundos para reconstruir la ventana al reabrirla.",
             "lightweight_mode_enabled": "Modo ligero habilitado",
-            "lightweight_mode_disabled": "Modo ligero deshabilitado"
+            "lightweight_mode_disabled": "Modo ligero deshabilitado",
+            "tray_click_action": "Acción al hacer clic en la bandeja",
+            "tray_click_action_desc": "Elija la acción predeterminada al hacer clic en el icono de la bandeja del sistema",
+            "tray_click_action_mini": "Abrir ventana flotante Mini (Recomendado)",
+            "tray_click_action_main": "Abrir consola principal directamente",
+            "tray_click_action_mini_short": "Ventana Mini",
+            "tray_click_action_main_short": "Consola"
         },
         "account": {
             "title": "Configuración de Cuenta",

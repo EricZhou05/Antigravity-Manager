@@ -506,7 +506,13 @@
             "lightweight_mode": "Легковесный режим (освобождение памяти)",
             "lightweight_mode_desc": "Выгружает процесс WebView при сворачивании или закрытии в трей, снижая память до ~35 МБ. При повторном открытии окна потребуется пара миллисекунд для пересоздания.",
             "lightweight_mode_enabled": "Легковесный режим включен",
-            "lightweight_mode_disabled": "Легковесный режим отключен"
+            "lightweight_mode_disabled": "Легковесный режим отключен",
+            "tray_click_action": "Действие при клике на иконку в трее",
+            "tray_click_action_desc": "Выберите действие по умолчанию при клике на иконку в системном трее",
+            "tray_click_action_mini": "Открыть мини-окно мониторинга (рекомендуется)",
+            "tray_click_action_main": "Открыть главную панель",
+            "tray_click_action_mini_short": "Мини-окно",
+            "tray_click_action_main_short": "Главная"
         },
         "account": {
             "title": "Настройки аккаунта",

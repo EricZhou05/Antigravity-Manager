@@ -506,7 +506,13 @@
             "lightweight_mode": "軽量モード (メモリ解放)",
             "lightweight_mode_desc": "トレイに最小化または終了する際にWebView描画プロセスを破棄し、常駐メモリを約35MBまで削減します。再表示時にわずかな再構築時間を要します。",
             "lightweight_mode_enabled": "軽量モードを有効にしました",
-            "lightweight_mode_disabled": "軽量モードを無効にしました"
+            "lightweight_mode_disabled": "軽量モードを無効にしました",
+            "tray_click_action": "トレイ左クリックの動作",
+            "tray_click_action_desc": "システムトレイまたはメニューバーアイコンをクリックした際の既定の動作を選択します",
+            "tray_click_action_mini": "Mini 監視ウィンドウを開く (推奨)",
+            "tray_click_action_main": "メインコンソールを直接開く",
+            "tray_click_action_mini_short": "Mini 画面",
+            "tray_click_action_main_short": "メイン画面"
         },
         "account": {
             "title": "アカウント設定",

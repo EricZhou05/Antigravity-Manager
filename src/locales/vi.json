@@ -506,7 +506,13 @@
             "lightweight_mode": "Chế độ nhẹ (Giải phóng bộ nhớ)",
             "lightweight_mode_desc": "Hủy tiến trình render WebView khi đóng hoặc thu nhỏ xuống khay hệ thống, giảm RAM xuống ~35MB. Cần vài mili-giây để dựng lại cửa sổ khi mở lại.",
             "lightweight_mode_enabled": "Đã bật chế độ nhẹ",
-            "lightweight_mode_disabled": "Đã tắt chế độ nhẹ"
+            "lightweight_mode_disabled": "Đã tắt chế độ nhẹ",
+            "tray_click_action": "Hành động khi nhấp chuột trái vào khay",
+            "tray_click_action_desc": "Chọn hành động mặc định khi nhấp vào biểu tượng trên khay hệ thống",
+            "tray_click_action_mini": "Mở cửa sổ giám sát Mini (Khuyên dùng)",
+            "tray_click_action_main": "Mở trực tiếp bảng điều khiển chính",
+            "tray_click_action_mini_short": "Cửa sổ Mini",
+            "tray_click_action_main_short": "Bảng chính"
         },
         "account": {
             "title": "Cài đặt Tài khoản",

@@ -506,7 +506,13 @@
             "lightweight_mode": "경량 모드 (메모리 해제)",
             "lightweight_mode_desc": "트레이로 닫거나 최소화할 때 WebView 렌더링 프로세스를 종료하여 상주 메모리를 약 35MB로 줄입니다. 창을 다시 열 때 약간의 재구성 시간이 필요합니다.",
             "lightweight_mode_enabled": "경량 모드 활성화됨",
-            "lightweight_mode_disabled": "경량 모드 비활성화됨"
+            "lightweight_mode_disabled": "경량 모드 비활성화됨",
+            "tray_click_action": "트레이 좌클릭 동작",
+            "tray_click_action_desc": "시스템 트레이 또는 메뉴바 아이콘을 클릭할 때의 기본 동작을 선택합니다",
+            "tray_click_action_mini": "Mini 모니터링 창 열기 (권장)",
+            "tray_click_action_main": "메인 콘솔 바로 열기",
+            "tray_click_action_mini_short": "Mini 창",
+            "tray_click_action_main_short": "메인 콘솔"
         },
         "account": {
             "title": "계정 설정",
