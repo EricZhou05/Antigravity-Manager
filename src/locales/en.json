@@ -526,7 +526,9 @@
             "tray_click_action": "Tray Left-Click Action",
             "tray_click_action_desc": "Choose the default response when clicking the system tray or menu bar icon",
             "tray_click_action_mini": "Open Mini Floating Monitor (Recommended)",
-            "tray_click_action_main": "Open Main Console Directly"
+            "tray_click_action_main": "Open Main Console Directly",
+            "tray_click_action_mini_short": "Mini View",
+            "tray_click_action_main_short": "Main Console"
         },
         "account": {
             "title": "Account Settings",

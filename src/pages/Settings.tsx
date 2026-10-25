@@ -803,24 +803,41 @@ function Settings() {
 
                             {/* 托盘左键单击操作 */}
                             {isTauri() && (
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-900 dark:text-base-content mb-2">
-                                        {t('settings.general.tray_click_action')}
-                                    </label>
-                                    <select
-                                        className="w-full px-4 py-4 border border-gray-200 dark:border-base-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-base-content bg-gray-50 dark:bg-base-200"
-                                        value={formData.tray_click_action || 'mini'}
-                                        onChange={(e) => {
-                                            const action = e.target.value as 'mini' | 'main';
-                                            setFormData({ ...formData, tray_click_action: action });
-                                        }}
-                                    >
-                                        <option value="mini">{t('settings.general.tray_click_action_mini')}</option>
-                                        <option value="main">{t('settings.general.tray_click_action_main')}</option>
-                                    </select>
-                                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-                                        {t('settings.general.tray_click_action_desc')}
-                                    </p>
+                                <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-base-200 rounded-lg border border-gray-100 dark:border-base-300">
+                                    <div className="pr-4">
+                                        <div className="font-medium text-gray-900 dark:text-base-content">
+                                            {t('settings.general.tray_click_action')}
+                                        </div>
+                                        <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                                            {t('settings.general.tray_click_action_desc')}
+                                        </p>
+                                    </div>
+                                    <div className="flex items-center bg-gray-200/80 dark:bg-base-300 p-1 rounded-lg shrink-0">
+                                        <button
+                                            type="button"
+                                            onClick={() => setFormData({ ...formData, tray_click_action: 'mini' })}
+                                            className={cn(
+                                                "px-3 py-1.5 text-xs font-medium rounded-md transition-all cursor-pointer select-none",
+                                                (formData.tray_click_action || 'mini') === 'mini'
+                                                    ? "bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-xs font-semibold"
+                                                    : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+                                            )}
+                                        >
+                                            {t('settings.general.tray_click_action_mini_short', 'Mini 悬浮窗')}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setFormData({ ...formData, tray_click_action: 'main' })}
+                                            className={cn(
+                                                "px-3 py-1.5 text-xs font-medium rounded-md transition-all cursor-pointer select-none",
+                                                formData.tray_click_action === 'main'
+                                                    ? "bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-xs font-semibold"
+                                                    : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+                                            )}
+                                        >
+                                            {t('settings.general.tray_click_action_main_short', '主控制台')}
+                                        </button>
+                                    </div>
                                 </div>
                             )}
 

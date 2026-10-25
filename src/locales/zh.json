@@ -524,7 +524,9 @@
             "tray_click_action": "托盘左键单击操作",
             "tray_click_action_desc": "选择单击系统托盘/菜单栏图标时的默认响应动作",
             "tray_click_action_mini": "弹出 Mini 悬浮监控窗 (推荐)",
-            "tray_click_action_main": "直接打开主控制台界面"
+            "tray_click_action_main": "直接打开主控制台界面",
+            "tray_click_action_mini_short": "Mini 悬浮窗",
+            "tray_click_action_main_short": "主控制台"
         },
         "account": {
             "title": "账号设置",
