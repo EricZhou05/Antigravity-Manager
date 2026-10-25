@@ -571,6 +571,43 @@ impl QoSGuardian {
         );
     }
 
+    /// 收集已到期的小黑屋账号并统一原子标记为探测中，返回 (account_id, level) 列表。
+    ///
+    /// 【防止 DashMap 读写自死锁 (Fixes #3749)】
+    /// 必须先收集快照并彻底结束 `states.iter()` 释放分片读锁，再对状态进行更新。
+    /// 在 DashMap 迭代器持有分片读锁时，若在循环内调用 `insert()` 或 `get_mut()` 写入同一分片，
+    /// 会引发同线程自死锁，导致后台巡检线程永久挂死并逐步卡死整个 HTTP 网关。
+    pub fn take_expired_jails_for_probing(&self) -> Vec<(String, usize)> {
+        // 阶段 1：收集到期账号，结束迭代器并释放所有分片读锁
+        let candidates: Vec<(String, usize)> = self
+            .states
+            .iter()
+            .filter_map(|entry| match *entry.value() {
+                AccountQoSState::Jailed {
+                    level,
+                    jailed_at,
+                    current_wait,
+                } if jailed_at.elapsed() >= current_wait => Some((entry.key().clone(), level)),
+                _ => None,
+            })
+            .collect();
+
+        // 阶段 2：读锁已完全释放，逐个安全原子更新为 Probing 状态
+        let mut expired = Vec::with_capacity(candidates.len());
+        for (account_id, level) in candidates {
+            if let Some(mut entry) = self.states.get_mut(&account_id) {
+                if let AccountQoSState::Jailed { .. } = *entry.value() {
+                    *entry.value_mut() = AccountQoSState::Probing {
+                        level,
+                        started_at: Instant::now(),
+                    };
+                    expired.push((account_id, level));
+                }
+            }
+        }
+        expired
+    }
+
     /// 强制恢复健康 (如在 UI 上手动重置)
     pub fn reset_account(&self, account_id: &str) {
         self.states
@@ -876,5 +913,69 @@ mod tests {
         );
         assert_eq!(act2, QoSAction::TaggedSuspicious);
         assert!(guardian.is_suspicious("acc_a"));
+    }
+
+    #[test]
+    fn test_take_expired_jails_for_probing_does_not_deadlock() {
+        let guardian = Arc::new(QoSGuardian::new());
+
+        // 设置到期账号 (50ms 前入狱，刑期 10ms)
+        let expired_at = Instant::now() - Duration::from_millis(50);
+        guardian.states.insert(
+            "acc_expired".to_string(),
+            AccountQoSState::Jailed {
+                level: 0,
+                jailed_at: expired_at,
+                current_wait: Duration::from_millis(10),
+            },
+        );
+
+        // 设置未到期账号 (刑期 1 小时)
+        guardian.states.insert(
+            "acc_waiting".to_string(),
+            AccountQoSState::Jailed {
+                level: 1,
+                jailed_at: Instant::now(),
+                current_wait: Duration::from_secs(3600),
+            },
+        );
+
+        // 设置普通健康账号
+        guardian
+            .states
+            .insert("acc_healthy".to_string(), AccountQoSState::Healthy);
+
+        // 在单独线程中运行，配合 5 秒超时保护检测死锁
+        let g = guardian.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let expired = g.take_expired_jails_for_probing();
+            let _ = tx.send(expired);
+        });
+
+        let result = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("take_expired_jails_for_probing deadlocked or timed out!");
+
+        // 断言：仅已到期账号被取出
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "acc_expired");
+        assert_eq!(result[0].1, 0);
+
+        // 断言：到期账号状态已原子转换为 Probing
+        match guardian.get_state("acc_expired") {
+            AccountQoSState::Probing { level, .. } => assert_eq!(level, 0),
+            other => panic!("Expected Probing state, got {:?}", other),
+        }
+
+        // 断言：未到期账号依然保持 Jailed
+        match guardian.get_state("acc_waiting") {
+            AccountQoSState::Jailed { level, .. } => assert_eq!(level, 1),
+            other => panic!("Expected Jailed state, got {:?}", other),
+        }
+
+        // 断言：再次调用不会重复取出（已在 Probing 中）
+        let second_run = guardian.take_expired_jails_for_probing();
+        assert!(second_run.is_empty());
     }
 }

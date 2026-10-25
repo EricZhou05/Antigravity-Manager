@@ -5201,70 +5201,56 @@ impl TokenManager {
 
     /// 执行一次 QoS 阶梯自愈扫描轮次
     async fn run_qos_probing_tick(&self) {
-        for entry in self.qos_guardian.states.iter() {
-            let account_id = entry.key().clone();
-            if let crate::proxy::qos_guardian::AccountQoSState::Jailed {
-                level,
-                jailed_at,
-                current_wait,
-            } = *entry.value()
-            {
-                if jailed_at.elapsed() >= current_wait {
-                    // 标记为探测中
-                    self.qos_guardian.mark_probing(&account_id, level);
-
-                    let guardian = self.qos_guardian.clone();
-                    if let Some(token) = self.tokens.get(&account_id).map(|r| r.value().clone()) {
-                        tokio::spawn(async move {
+        let expired_jails = self.qos_guardian.take_expired_jails_for_probing();
+        for (account_id, level) in expired_jails {
+            let guardian = self.qos_guardian.clone();
+            if let Some(token) = self.tokens.get(&account_id).map(|r| r.value().clone()) {
+                tokio::spawn(async move {
+                    tracing::info!(
+                        "🔍 [QoS Probe] Sending synthetic 'Hello' probe to account {} (Level {})...",
+                        account_id,
+                        level
+                    );
+                    let probe_res = Self::send_pure_hello_probe_internal(&token).await;
+                    match probe_res {
+                        Ok(ttft_ms) if ttft_ms < 8000.0 => {
                             tracing::info!(
-                                "🔍 [QoS Probe] Sending synthetic 'Hello' probe to account {} (Level {})...",
+                                "🎉 [QoS Probe] Account {} PASSED probe ({:.2}s < 8s)! Moving to Half-Open probation.",
                                 account_id,
-                                level
+                                ttft_ms / 1000.0
                             );
-                            let probe_res = Self::send_pure_hello_probe_internal(&token).await;
-                            match probe_res {
-                                Ok(ttft_ms) if ttft_ms < 8000.0 => {
-                                    tracing::info!(
-                                        "🎉 [QoS Probe] Account {} PASSED probe ({:.2}s < 8s)! Moving to Half-Open probation.",
-                                        account_id,
-                                        ttft_ms / 1000.0
-                                    );
-                                    guardian.mark_probe_passed(&account_id, level);
-                                }
-                                Ok(ttft_ms) => {
-                                    tracing::warn!(
-                                        "⏳ [QoS Probe] Account {} probe TTFT was {:.2}s >= 8s. Escalating jail level.",
-                                        account_id,
-                                        ttft_ms / 1000.0
-                                    );
-                                    let (next_lv, wait) =
-                                        guardian.mark_probe_failed(&account_id, level);
-                                    tracing::warn!(
-                                        "Account {} escalated to Level {} (wait {:?})",
-                                        account_id,
-                                        next_lv,
-                                        wait
-                                    );
-                                }
-                                Err(err) => {
-                                    tracing::warn!(
-                                        "⏳ [QoS Probe] Account {} probe failed: {}. Escalating jail level.",
-                                        account_id,
-                                        err
-                                    );
-                                    let (next_lv, wait) =
-                                        guardian.mark_probe_failed(&account_id, level);
-                                    tracing::warn!(
-                                        "Account {} escalated to Level {} (wait {:?})",
-                                        account_id,
-                                        next_lv,
-                                        wait
-                                    );
-                                }
-                            }
-                        });
+                            guardian.mark_probe_passed(&account_id, level);
+                        }
+                        Ok(ttft_ms) => {
+                            tracing::warn!(
+                                "⏳ [QoS Probe] Account {} probe TTFT was {:.2}s >= 8s. Escalating jail level.",
+                                account_id,
+                                ttft_ms / 1000.0
+                            );
+                            let (next_lv, wait) = guardian.mark_probe_failed(&account_id, level);
+                            tracing::warn!(
+                                "Account {} escalated to Level {} (wait {:?})",
+                                account_id,
+                                next_lv,
+                                wait
+                            );
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                "⏳ [QoS Probe] Account {} probe failed: {}. Escalating jail level.",
+                                account_id,
+                                err
+                            );
+                            let (next_lv, wait) = guardian.mark_probe_failed(&account_id, level);
+                            tracing::warn!(
+                                "Account {} escalated to Level {} (wait {:?})",
+                                account_id,
+                                next_lv,
+                                wait
+                            );
+                        }
                     }
-                }
+                });
             }
         }
     }
@@ -5302,14 +5288,12 @@ impl TokenManager {
             .map_err(|e| format!("Client builder error: {}", e))?;
 
         let start = std::time::Instant::now();
+        let hub_ua = crate::modules::hub_version::get_current_hub_user_agent();
         let resp = client
             .post(endpoint)
             .header("Authorization", format!("Bearer {}", token.access_token))
             .header("Content-Type", "application/json")
-            .header(
-                "User-Agent",
-                "antigravity/hub/2.23.1 (Windows NT 10.0; Win64; x64)",
-            )
+            .header("User-Agent", hub_ua)
             .json(&body)
             .send()
             .await
