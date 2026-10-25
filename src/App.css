@@ -30,13 +30,15 @@ body,
   border: none;
 }
 
-/* Mini 悬浮窗强制全透明，彻底消除直角白边/黑边，透出真实桌面圆角与阴影 */
+/* Mini 悬浮窗强制全透明，彻底消除直角白边/黑边与滚动条直角，透出真实桌面圆角与阴影 */
 html.mini-window,
 html.mini-window body,
 body.mini-window,
-#root.mini-root {
+#root.mini-root,
+html.mini-window #root {
   background: transparent !important;
   background-color: transparent !important;
+  overflow: hidden !important;
 }
 
 /* 主窗口浅色与暗色默认背景 */
@@ -76,7 +78,7 @@ body:not(.mini-window) {
 }
 
 /* Dark mode override for body strictly */
-.dark body {
+.dark body:not(.mini-window) {
   background-color: #0f172a;
   color: #f8fafc;
 }
@@ -102,7 +104,12 @@ a {
 /* 滚动条优化 - 彻底隐藏但保留功能 */
 ::-webkit-scrollbar {
   width: 0px;
+  height: 0px;
   background: transparent;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent !important;
 }
 
 ::-webkit-scrollbar-track {

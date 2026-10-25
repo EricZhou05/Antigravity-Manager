@@ -619,10 +619,13 @@ export default function MiniView() {
     ];
 
     return (
-        <div className="w-full h-full flex flex-col bg-white/95 dark:bg-[#15161a]/95 backdrop-blur-2xl rounded-2xl border border-gray-200/80 dark:border-white/[0.12] shadow-2xl overflow-hidden select-none">
+        <div className={clsx(
+            "w-full h-full flex flex-col bg-white/95 dark:bg-[#15161a]/95 backdrop-blur-2xl rounded-2xl border border-gray-200/80 dark:border-white/[0.12] overflow-hidden select-none",
+            !isTauri() && "shadow-2xl"
+        )}>
             {/* 1. 顶栏：macOS 风格分段 Tab 与快捷工具 */}
             <div
-                className="flex-none flex items-center justify-between pl-2 pr-3 py-1.5 bg-gray-50/80 dark:bg-white/[0.03] border-b border-gray-100 dark:border-white/[0.06] select-none cursor-default"
+                className="flex-none flex items-center justify-between pl-2 pr-3 py-1.5 bg-gray-50/80 dark:bg-white/[0.03] rounded-t-2xl border-b border-gray-100 dark:border-white/[0.06] select-none cursor-default"
                 data-tauri-drag-region
                 onMouseDown={(e) => {
                     const target = e.target as HTMLElement;
@@ -1030,7 +1033,7 @@ export default function MiniView() {
 
                 {/* 3. 底部托盘综合控制栏：Lemon 经典布局（左侧微型轻量开关、中间打开控制台主按钮、右侧退出应用） */}
                 <div
-                    className="flex-none h-10 bg-gray-50/95 dark:bg-black/40 flex items-center justify-between px-3 text-[11px] text-gray-500 dark:text-gray-400 border-t border-gray-100 dark:border-white/[0.06] select-none cursor-default"
+                    className="flex-none h-10 bg-gray-50/95 dark:bg-black/40 rounded-b-2xl flex items-center justify-between px-3 text-[11px] text-gray-500 dark:text-gray-400 border-t border-gray-100 dark:border-white/[0.06] select-none cursor-default"
                     data-tauri-drag-region
                     onMouseDown={(e) => {
                         const target = e.target as HTMLElement;
