@@ -3,6 +3,20 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.0-beta.3 (2026-10-25)**:
+        -   **[QoS 到期巡检 DashMap 自死锁修复与安全读写分离] (Fixes #3749, PR #3751, Thanks to @cubelikeplayDaniel)**:
+            -   **两阶段解耦与安全读写分离**: 在 `qos_guardian.rs` 中新增 `take_expired_jails_for_probing()`，Phase 1 通过只读迭代器收集所有已到期小黑屋账号快照 `Vec<(String, usize)>`，彻底退出迭代并释放 `DashMap` 分片读锁；Phase 2 逐个安全原子置换为 `Probing` 状态并释放写锁，彻底消除后台巡检线程同线程读写自死锁导致代理端口 8045 假死挂死的问题。(Fixes #3749, PR #3751, Thanks to @cubelikeplayDaniel)
+            -   **并发防死锁回归专项测试**: 增加 `test_take_expired_jails_for_probing_does_not_deadlock` 单元测试，在独立子线程与 5 秒超时保护下执行到期提取与状态置换验证，杜绝并发死锁回归。(Fixes #3749, PR #3751)
+        -   **[官方 Hub 出站基准升级至 2.24.0 与 Headless 异步探测注入] (Fixes #3750, PR #3751, Thanks to @cubelikeplayDaniel)**:
+            -   **内置稳态基准提升**: 将 `constants.rs` 中的内置稳态基准升级至官方 Antigravity 2.24.0（`OFFICIAL_HUB_VERSION = "2.24.0"`，`OFFICIAL_HUB_CL = "1000335682"`），满足 Google 上游新一代 `gemini-4-argon` 系列模型的客户端版本门控，杜绝因陈旧指纹触发 404 NOT_FOUND 进而导致全账号池 0.326ms 熔断 503 报错。(Fixes #3750, PR #3751, Thanks to @cubelikeplayDaniel)
+            -   **Headless 异步探测远程清单**: 在 Headless 与桌面启动流程中派发后台异步任务调用 `detect_and_update_hub_fingerprint()`，确保无本地 IDE 的纯 Docker 容器在启动后即自动同步官方最新更新清单。(Fixes #3750, PR #3751)
+            -   **合成测速探针 UA 动态化**: 将 `token_manager.rs` 中的测速探针硬编码 UA 替换为 `crate::modules::hub_version::get_current_hub_user_agent()`，确保出站指纹全链路合规统一。(Fixes #3750, PR #3751)
+        -   **[Argon 配额防呆隔离与虚假继承消除] (Fixes #3745, Ref PR #3747, Thanks to @cubelikeplayDaniel)**:
+            -   **移除降级借额逻辑**: 在 `quota.rs` 中移除 Argon 模型在缺少专属分组时借用通用 Gemini 配额的降级逻辑，严格要求命中官方 Argon 独立配额组。(Fixes #3745, Ref PR #3747, Thanks to @cubelikeplayDaniel)
+            -   **内存账号池全链路清理防呆**: 在 `token_manager.rs` 的 `load_single_account`、`get_available_models_from_json` 以及实时配额刷新逻辑中，若账号未分配 Argon 专属分组，彻底从 `model_quotas`、`available_models` 和 `model_limits` 中清理，防止无权账号冒领配额并规避调度器 503 熔断。(Fixes #3745, Ref PR #3747)
+            -   **前端配额卡片精准解耦**: 在 `quotaDisplay.ts` 中修正 `hasArgon` 判定，仅在真实 `quota_groups` 中存在 Argon 分组时展示卡片，杜绝 `fallbackModels` 注入虚假 5H 滚动配额。(Fixes #3745)
+            -   **自适应重试策略边界对齐**: 在 `common.rs` 中确保硬配额快速轮换（50ms）仅在第一轮重试生效，第二轮平滑进入温和指数退避。(Fixes #3745)
+
     *   **v5.0.0-beta.2 (2026-10-24)**:
         -   **[官方禁用模型严格过滤、基准线拦截门禁与虚假配额展示清理] (Fixes #3735, Ref #3737)**:
             -   **官方模型结构体补齐 disabled 字段**: 在 `OfficialModelInfo` 中补齐 `disabled: Option<bool>` 字段与 `is_disabled(&self)` 判定方法，准确捕获 Google 上游 `fetchAvailableModels` 中带有 `disabled: true` 标记的条目。(Fixes #3735)
