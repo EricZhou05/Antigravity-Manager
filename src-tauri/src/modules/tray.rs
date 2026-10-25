@@ -81,6 +81,25 @@ pub fn ensure_mini_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow
     Ok(window)
 }
 
+/// 隐藏/收起 Mini 悬浮视窗并清理激活状态，在 macOS 下按需恢复主窗口 ActivationPolicy
+pub fn hide_mini_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("mini") {
+        let _ = window.hide();
+    }
+    set_mini_view_active(false);
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(main) = app.get_webview_window("main") {
+            let is_open =
+                main.is_visible().unwrap_or(false) || main.is_minimized().unwrap_or(false);
+            if is_open {
+                let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+            }
+        }
+    }
+}
+
 /// 处理系统托盘点击事件：实现跨平台现代 Popover（类似腾讯 Lemon / Raycast）
 /// 默认失焦自动收起（除非用户点击图钉进行固定）
 pub fn handle_tray_click(app: &tauri::AppHandle, rect: Option<tauri::Rect>) {
@@ -90,10 +109,7 @@ pub fn handle_tray_click(app: &tauri::AppHandle, rect: Option<tauri::Rect>) {
     }
 
     if is_mini_view_active() {
-        if let Some(window) = app.get_webview_window("mini") {
-            let _ = window.hide();
-        }
-        set_mini_view_active(false);
+        hide_mini_window(app);
         return;
     }
 
@@ -187,15 +203,14 @@ pub fn handle_tray_click(app: &tauri::AppHandle, rect: Option<tauri::Rect>) {
         win_y as i32,
     )));
 
+    // macOS 专属策略：唤起 Mini 视窗时，始终切换为 Accessory 附属模式。
+    // 关键点：当主控制台处于 Regular 模式（在后台、另一个桌面 Space、或已最小化到 Dock）时，
+    // 若在 Regular 模式下直接调用 window.set_focus()，AppKit 的 activateIgnoringOtherApps:YES
+    // 会将整个应用程序激活并将其所有可见窗口（包括主控制台）强制提至前台或触发跨 Space 跳转。
+    // 切至 Accessory 模式后，系统仅将 Mini 独立呈现置顶，绝不干扰或强拉后台的主控制台。
     #[cfg(target_os = "macos")]
     {
-        let main_visible = app
-            .get_webview_window("main")
-            .and_then(|w| w.is_visible().ok())
-            .unwrap_or(false);
-        if !main_visible {
-            let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-        }
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
     }
 
     let _ = window.show();
@@ -393,10 +408,7 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                         .unwrap_or_else(|_| "mini".to_string());
 
                     if click_action == "main" {
-                        if let Some(mini) = app.get_webview_window("mini") {
-                            let _ = mini.hide();
-                        }
-                        set_mini_view_active(false);
+                        hide_mini_window(app);
                         let _ = crate::modules::lightweight::exit_lightweight_mode(app);
                         let _ = app.emit("tray://show-window", ());
                     } else {

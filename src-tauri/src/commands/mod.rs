@@ -1191,10 +1191,7 @@ pub async fn switch_to_main_window(app: tauri::AppHandle) -> Result<(), String> 
         let _ = app_handle.emit("tray://show-window", ());
 
         if !crate::modules::tray::is_mini_view_pinned() {
-            if let Some(mini) = app_handle.get_webview_window("mini") {
-                let _ = mini.hide();
-            }
-            crate::modules::tray::set_mini_view_active(false);
+            crate::modules::tray::hide_mini_window(&app_handle);
         }
     });
     Ok(())
@@ -1775,10 +1772,7 @@ pub fn set_mini_view_active(active: bool) {
 /// 安全收起/关闭迷你悬浮窗
 #[tauri::command]
 pub fn hide_mini_view(app: tauri::AppHandle) {
-    if let Some(mini) = app.get_webview_window("mini") {
-        let _ = mini.hide();
-    }
-    crate::modules::tray::set_mini_view_active(false);
+    crate::modules::tray::hide_mini_window(&app);
 }
 
 #[tauri::command]

@@ -679,19 +679,24 @@ pub fn run() {
         .on_window_event(|window, event| {
             match event {
                 tauri::WindowEvent::Focused(focused) => {
-                    if !focused && window.label() == "mini" {
+                    if window.label() == "main" && *focused {
+                        #[cfg(target_os = "macos")]
+                        {
+                            let _ = window
+                                .app_handle()
+                                .set_activation_policy(tauri::ActivationPolicy::Regular);
+                        }
+                    } else if !focused && window.label() == "mini" {
                         modules::tray::record_blur();
                         if !modules::tray::is_mini_view_pinned() && modules::tray::is_mini_view_active() {
-                            let _ = window.hide();
-                            modules::tray::set_mini_view_active(false);
+                            modules::tray::hide_mini_window(window.app_handle());
                         }
                     }
                 }
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     if window.label() == "mini" {
                         api.prevent_close();
-                        let _ = window.hide();
-                        modules::tray::set_mini_view_active(false);
+                        modules::tray::hide_mini_window(window.app_handle());
                         return;
                     }
 
