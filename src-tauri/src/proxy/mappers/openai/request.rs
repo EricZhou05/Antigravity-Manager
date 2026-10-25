@@ -716,7 +716,7 @@ pub fn transform_openai_request_with_session(
                     None
                 };
 
-                let mut final_name = if let Some(ref p_name) = matched_preceding_name {
+                let final_name = if let Some(ref p_name) = matched_preceding_name {
                     p_name.as_str()
                 } else if name == "local_shell_call" {
                     "shell"
