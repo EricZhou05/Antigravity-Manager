@@ -520,7 +520,11 @@
             "lightweight_mode": "轻量模式 (释放内存)",
             "lightweight_mode_desc": "退出或最小化到托盘时销毁前端渲染进程，常驻内存可降至 ~35MB。重新打开主窗口时需要数毫秒重建。",
             "lightweight_mode_enabled": "已启用轻量模式",
-            "lightweight_mode_disabled": "已禁用轻量模式"
+            "lightweight_mode_disabled": "已禁用轻量模式",
+            "tray_click_action": "托盘左键单击操作",
+            "tray_click_action_desc": "选择单击系统托盘/菜单栏图标时的默认响应动作",
+            "tray_click_action_mini": "弹出 Mini 悬浮监控窗 (推荐)",
+            "tray_click_action_main": "直接打开主控制台界面"
         },
         "account": {
             "title": "账号设置",

@@ -801,6 +801,29 @@ function Settings() {
                                 </div>
                             )}
 
+                            {/* 托盘左键单击操作 */}
+                            {isTauri() && (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-900 dark:text-base-content mb-2">
+                                        {t('settings.general.tray_click_action')}
+                                    </label>
+                                    <select
+                                        className="w-full px-4 py-4 border border-gray-200 dark:border-base-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-base-content bg-gray-50 dark:bg-base-200"
+                                        value={formData.tray_click_action || 'mini'}
+                                        onChange={(e) => {
+                                            const action = e.target.value as 'mini' | 'main';
+                                            setFormData({ ...formData, tray_click_action: action });
+                                        }}
+                                    >
+                                        <option value="mini">{t('settings.general.tray_click_action_mini')}</option>
+                                        <option value="main">{t('settings.general.tray_click_action_main')}</option>
+                                    </select>
+                                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+                                        {t('settings.general.tray_click_action_desc')}
+                                    </p>
+                                </div>
+                            )}
+
                                 {/* 菜单显示设置 */}
                                 <div className="border-t border-gray-200 dark:border-base-200 pt-6 mt-6">
                                     <h3 className="font-medium text-gray-900 dark:text-base-content mb-3">{t('settings.menu.title')}</h3>

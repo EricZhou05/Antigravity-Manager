@@ -387,7 +387,21 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                     button == MouseButton::Left && button_state == MouseButtonState::Up;
 
                 if should_handle {
-                    handle_tray_click(tray.app_handle(), Some(rect));
+                    let app = tray.app_handle();
+                    let click_action = crate::modules::load_app_config()
+                        .map(|c| c.tray_click_action)
+                        .unwrap_or_else(|_| "mini".to_string());
+
+                    if click_action == "main" {
+                        if let Some(mini) = app.get_webview_window("mini") {
+                            let _ = mini.hide();
+                        }
+                        set_mini_view_active(false);
+                        let _ = crate::modules::lightweight::exit_lightweight_mode(app);
+                        let _ = app.emit("tray://show-window", ());
+                    } else {
+                        handle_tray_click(app, Some(rect));
+                    }
                 }
             }
             _ => {}

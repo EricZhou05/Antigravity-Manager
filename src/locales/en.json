@@ -522,7 +522,11 @@
             "lightweight_mode": "Lightweight Mode (Release RAM)",
             "lightweight_mode_desc": "Destroy the webview renderer process when minimized or closed to tray. Reduces memory to ~35MB, with a slight delay when reopening the window.",
             "lightweight_mode_enabled": "Lightweight mode enabled",
-            "lightweight_mode_disabled": "Lightweight mode disabled"
+            "lightweight_mode_disabled": "Lightweight mode disabled",
+            "tray_click_action": "Tray Left-Click Action",
+            "tray_click_action_desc": "Choose the default response when clicking the system tray or menu bar icon",
+            "tray_click_action_mini": "Open Mini Floating Monitor (Recommended)",
+            "tray_click_action_main": "Open Main Console Directly"
         },
         "account": {
             "title": "Account Settings",

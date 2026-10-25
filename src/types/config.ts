@@ -201,6 +201,7 @@ export interface AppConfig {
     proxy: ProxyConfig;
     cloudflared: CloudflaredConfig; // [NEW] Cloudflared 配置
     lightweight_mode?: boolean; // [NEW] 轻量模式：关闭到托盘时释放 WebView
+    tray_click_action?: 'mini' | 'main'; // [NEW] 托盘左键点击行为：'mini' 为弹出悬浮窗，'main' 为直接打开主控制台
     suggestion_delete_thinking_store?: boolean; // [NEW] 建议删除历史思考块缓存开关
     thinking_cleanup_dismissed?: boolean; // [NEW] 用户是否已确认/忽略该建议
     dismissed_thinking_cleanup_version?: string; // [NEW] 用户已确认或忽略建议的目标版本号
