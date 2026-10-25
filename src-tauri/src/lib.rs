@@ -465,6 +465,15 @@ pub fn run() {
                         config.proxy.hub_version.as_deref(),
                         config.proxy.hub_cl.as_deref(),
                     );
+                    let hub_ver_cfg = config.proxy.hub_version.clone();
+                    let hub_cl_cfg = config.proxy.hub_cl.clone();
+                    tokio::spawn(async move {
+                        crate::modules::hub_version::detect_and_update_hub_fingerprint(
+                            hub_ver_cfg.as_deref(),
+                            hub_cl_cfg.as_deref(),
+                        )
+                        .await;
+                    });
 
                     // Start proxy service
                     if let Err(e) = commands::proxy::internal_start_proxy_service(
@@ -571,6 +580,15 @@ pub fn run() {
                         config.proxy.hub_version.as_deref(),
                         config.proxy.hub_cl.as_deref(),
                     );
+                    let gui_hub_ver = config.proxy.hub_version.clone();
+                    let gui_hub_cl = config.proxy.hub_cl.clone();
+                    tauri::async_runtime::spawn(async move {
+                        crate::modules::hub_version::detect_and_update_hub_fingerprint(
+                            gui_hub_ver.as_deref(),
+                            gui_hub_cl.as_deref(),
+                        )
+                        .await;
+                    });
                     let state = handle.state::<commands::proxy::ProxyServiceState>();
                     let cf_state = handle.state::<commands::cloudflared::CloudflaredState>();
                     let integration =
