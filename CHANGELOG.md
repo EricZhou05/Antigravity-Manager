@@ -4,6 +4,16 @@
 
 *   **版本演进**:
     *   **v5.0.0-beta.3 (2026-10-25)**:
+        -   **[macOS 悬浮窗唤起死锁根除与前台级联跳出修复] (Fixes #3744, Ref PR #3747, Ref #3748)**:
+            -   **跨线程死锁与 0-可见窗口挂起修复**: 将 `switch_to_main_window` 统一调度到操作系统原生 UI 主线程 (`app.run_on_main_thread`) 执行，在 `exit_lightweight_mode` 中针对 macOS 立即执行 `show()`、`unminimize()` 与 `set_focus()`，根治因跨线程 AppKit 调度与 WebView2/WebKit 消息循环悬空导致的悬浮窗卡死及主控制台无法打开的问题。(Fixes #3744, Ref PR #3747)
+            -   **唤起 Mini 统一收敛至 Accessory 附属模式**: 移除原先主窗口未彻底销毁（在后台/最小化到 Dock/其他 Space）时保留 Regular 策略的缺陷逻辑，唤起 Mini 时统一设为 `ActivationPolicy::Accessory`，彻底消除 AppKit 激活 Mini 视窗时伴随整个应用激活而将后台主控制台强制拉至前台、展开最小化或触发跨 Space 屏幕跳跃的顽疾。(Fixes #3744, Ref #3748)
+            -   **收起 Mini 与主窗口重聚自适应恢复**: 封装 `hide_mini_window` 统一视窗收起流程，在失焦自动收起、点击托盘切换或手动关闭 Mini 时，若主控制台原本处于存活态（`is_visible() || is_minimized()`），精准恢复 `Regular` 策略；并在主控制台重新获得焦点时保证 `Regular` 实时在线。(Ref #3748)
+        -   **[托盘左键行为偏好配置与多国语言支持] (Ref #3748)**:
+            -   **通用设置托盘单击偏好**: 在通用设置中新增托盘单击行为偏好配置 `tray_click_action`（支持「Mini 悬浮窗」与「主控制台」两种交互偏好，默认 Mini 悬浮窗），满足不同用户的桌面交互习惯。(Ref #3748)
+            -   **紧凑胶囊卡片交互与多国语言完备**: 遵循极简设计规范，采用紧凑胶囊卡片布局，对齐通用设置视觉标准，并同步补全全部 12 国语言字典。(Ref #3748)
+        -   **[Mini 悬浮窗底部背景直角消除与真圆角透明治理] (Ref #3748)**:
+            -   **移除冗余 CSS box-shadow**: 在桌面端模式下移除最外层容器冗余的 `shadow-2xl`，完全由系统原生 NSWindow 绘制透明窗体阴影（`"shadow": true`），根治内部 CSS 阴影向下溢出在视窗边界（y = 360px）被截断形成的水平平切线与 90 度直角阴影。(Ref #3748)
+            -   **首尾两栏显式圆角与根视窗溢出截断**: 顶栏显式追加 `rounded-t-2xl`，底栏追加 `rounded-b-2xl`，杜绝 WebKit 亚像素渲染及 backdrop-filter 在容器边缘轻微溢流的问题；并将 Mini 模式下的 `#root` 设为 `overflow: hidden !important`，补全 `::-webkit-scrollbar-corner` 透明规则，彻底透出桌面原生平滑圆角。(Ref #3748)
         -   **[QoS 到期巡检 DashMap 自死锁修复与安全读写分离] (Fixes #3749, PR #3751, Thanks to @cubelikeplayDaniel)**:
             -   **两阶段解耦与安全读写分离**: 在 `qos_guardian.rs` 中新增 `take_expired_jails_for_probing()`，Phase 1 通过只读迭代器收集所有已到期小黑屋账号快照 `Vec<(String, usize)>`，彻底退出迭代并释放 `DashMap` 分片读锁；Phase 2 逐个安全原子置换为 `Probing` 状态并释放写锁，彻底消除后台巡检线程同线程读写自死锁导致代理端口 8045 假死挂死的问题。(Fixes #3749, PR #3751, Thanks to @cubelikeplayDaniel)
             -   **并发防死锁回归专项测试**: 增加 `test_take_expired_jails_for_probing_does_not_deadlock` 单元测试，在独立子线程与 5 秒超时保护下执行到期提取与状态置换验证，杜绝并发死锁回归。(Fixes #3749, PR #3751)
