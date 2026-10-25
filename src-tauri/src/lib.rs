@@ -538,7 +538,7 @@ pub fn run() {
             modules::log_bridge::init_log_bridge(app.handle().clone());
 
             // 为主窗口显式设置应用图标（强制触发 Win32 WM_SETICON，防止透明/覆盖标题栏窗口在任务栏丢失图标）
-            if let Some(window) = app.get_webview_window("main") {
+            if let Some(_window) = app.get_webview_window("main") {
                 #[cfg(not(target_os = "macos"))]
                 {
                     let icon_bytes: &[u8] = include_bytes!("../icons/icon.png");
