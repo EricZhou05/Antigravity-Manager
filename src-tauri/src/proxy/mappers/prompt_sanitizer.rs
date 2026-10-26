@@ -61,6 +61,23 @@ static RE_MULTI_NEWLINE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n{3,}").unwrap
 static RE_CODE_BLOCK_PLACEHOLDER: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"__PROMPT_SANITIZER_CODE_BLOCK_(\d+)__").unwrap());
 
+/// 匹配任意 XML 风格标签候选块 `<tag ...>inner</tag>`
+static RE_XML_TAG_CANDIDATE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?is)(<([a-zA-Z0-9_\-]+)(?:\s+[^>]*)?>)([\s\S]*?)(</([a-zA-Z0-9_\-]+)>)").unwrap()
+});
+
+/// 触发上游风控拦截的知名竞品厂牌正则（大小写不敏感，统一归一化为 Google）
+static RE_COMPETITOR_BRANDS: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(concat!(
+        // 英文竞品厂牌（使用单词边界，大小写不敏感）
+        r"(?i)\b(?:openai|anthropic|qwen|bytedance|tencent|xiaomi|huawei|deepseek|baidu|mistral|cohere)\b",
+        r"|",
+        // 中文竞品厂牌及知名模型代号
+        r"(?:字节跳动|腾讯|小米|华为|通义千问|通义灵码|通义|百度|文心一言|文心快码|深度求索|豆包|混元)"
+    ))
+    .unwrap()
+});
+
 // ============================ System 轨：身份声明归一化 ============================
 //
 // 触发上游 WAF 伪限流（虚假 429 RESOURCE_EXHAUSTED）的是**身份归属声明**，而非模型能力或请求体量：
@@ -108,12 +125,12 @@ static RE_IDENTITY_DECLARATION: Lazy<Regex> = Lazy::new(|| {
         r"(?i:\b(?:you\s+are|you're|i\s+am|i'm|act\s+as)\b[\s,，:：]*)",
         r"(?i:(?:an?\s+)?(?:[\w'\-]+[\s,，]+){0,8}(?:ai[\s,，]+)?(?:agent\b|assistant\b|ai\b|tool\b|cli\b|programmer\b|companion\b|engineer\b|bot\b))?",
         // 动词前导：支持包含版本号小数点的模型名/名字 (如 Grok 4.6, GPT-5.2)，避免使用不支持的零宽断言
-        r"(?i:(?:[^\s.!?。！？\r\n<>]|\d+\.\d+|[\t ]){0,25}?(?:\b(?:created|built|made|developed|designed|trained|powered|maintained|published|released|provided)\s+(?:by|on|upon|at|for)\s+|based\s+on\s+|running\s+(?:inside|in|within)\s+|integrated\s+(?:into|in)\s+))",
+        r"(?i:(?:[^\s.!?。！？\r\n<>]|\d+\.\d+|[\t ]){0,25}?(?:\b(?:created|built|made|developed|designed|trained|powered|maintained|published|released|provided|authored|written)\s+(?:by|on|upon|at|for)\s+|\bby\s+|based\s+on\s+|running\s+(?:inside|in|within|on)\s+|integrated\s+(?:into|in)\s+))",
         // 归属对象：支持跨越数字间的版本号点号 (如 3.8, 4.5) 直到句读边界
         r"(?:[^\s.,，。!?！？;；\r\n<>]|\d+\.\d+|[\t ])+",
         r"|",
         // 中文支：你是/我是 + 包含开发/制作/构建/基于/推出 等归属特征，整句收敛到句读
-        r"(?:你是|我是)[\s,，:：]*[^.!?。！？\r\n<>]{0,50}?(?:由|开发|制作|构建|训练|推出|基于)[^.!?。！？\r\n<>]{1,60}",
+        r"(?:你是|我是)[\s,，:：]*[^.!?。！？\r\n<>]{0,50}?(?:由|开发|制作|构建|训练|推出|基于|运行[在于])[^.!?。！？\r\n<>]{1,60}",
         r")",
         r"([.,，。!?！？;；]?)"
     ))
@@ -136,6 +153,7 @@ static RE_KNOWN_CLIENT_DECLARATION: Lazy<Regex> = Lazy::new(|| {
         r"|kilocode(?:\s*,\s*an?\s+ai\s+coding\s+assistant)?",
         r"|dsh(?:\s*,\s*an?\s+automated\s+software\s+development\s+harness)?",
         r"|devin(?:\s*,\s*an?\s+autonomous\s+software\s+engineer)?",
+        r"|(?:[\w'\-]+(?:code|studio|claw)|[\w'\-]+\s+(?:code|studio|claw)|pi)(?:\s+(?:ai\s+)?(?:coding\s+)?(?:agent|assistant))?",
         r")\b",
         r"([.,，。!?！？;；]?)"
     ))
@@ -159,12 +177,23 @@ const IDENTITY_FAST_MARKERS: &[&str] = &[
     "published by",
     "released by",
     "provided by",
+    "authored by",
+    "written by",
     "based on",
     "running inside",
     "running within",
     "running in",
+    "running on",
     "integrated into",
     "integrated in",
+    // 身份+归属短语
+    "agent by",
+    "assistant by",
+    "ai by",
+    "cli by",
+    "bot by",
+    "programmer by",
+    "engineer by",
     // 知名第三方客户端与平台特征指纹
     "claude code",
     "claude agent",
@@ -185,12 +214,37 @@ const IDENTITY_FAST_MARKERS: &[&str] = &[
     "inflection",
     "grok",
     "xai",
+    "code",
+    "studio",
+    "claw",
+    "pi",
+    "jeikcode",
+    "atomcode",
+    // 竞品厂牌标记
+    "openai",
+    "anthropic",
+    "qwen",
+    "bytedance",
+    "tencent",
+    "xiaomi",
+    "huawei",
+    "deepseek",
+    "baidu",
+    "字节跳动",
+    "腾讯",
+    "小米",
+    "华为",
+    "通义",
+    "豆包",
+    "混元",
     // 中文特征标记
     "由",
     "基于",
     "开发",
     "助手",
     "助理",
+    "运行在",
+    "运行于",
 ];
 
 /// Claude Agent SDK 注入的独立身份块（整串等值匹配）
@@ -302,33 +356,18 @@ impl PromptSanitizer {
     /// 归一化规则（广谱、协议无关）：命中 `RE_IDENTITY_DECLARATION` 或 `RE_KNOWN_CLIENT_DECLARATION` 的声明句
     /// 整体替换为 `OFFICIAL_ANTIGRAVITY_IDENTITY`；若原文以逗号续写功能指令，则保留逗号，续写内容逐字不动。
     /// 代码块（``` 与行内 `）内的身份文本 100% 豁免，头部窗口之后的原文逐字保留。
-    pub fn normalize_system_identity(text: &str) -> String {
-        let lower = text.to_lowercase();
-
-        // 核心铁律 1：本框架主要提示词 100% 绝对保护（JeikCode 提示词绝不误杀，架构天然盖住）
-        if lower.contains("jeikcode") {
+    /// 归一化一段文本内部的所有身份归属声明句、已知客户端开场白与竞品厂牌为官方 Antigravity / Google 声明
+    fn normalize_text_identity(text: &str) -> String {
+        let matches_broad = RE_IDENTITY_DECLARATION.is_match(text);
+        let matches_known = RE_KNOWN_CLIENT_DECLARATION.is_match(text);
+        let matches_brands = RE_COMPETITOR_BRANDS.is_match(text);
+        if !matches_broad && !matches_known && !matches_brands {
             return text.to_string();
         }
 
-        // 核心铁律 2：快速前置短路检查（无任何归属类或已知客户端特征词则零开销返回）
-        if !IDENTITY_FAST_MARKERS
-            .iter()
-            .any(|marker| lower.contains(marker))
-        {
-            return text.to_string();
-        }
-
-        // 仅头部窗口参与身份归一化（正文引用一律豁免）
-        let head = Self::identity_head_region(text);
-        let matches_broad = RE_IDENTITY_DECLARATION.is_match(head);
-        let matches_known = RE_KNOWN_CLIENT_DECLARATION.is_match(head);
-        if !matches_broad && !matches_known {
-            return text.to_string();
-        }
-
-        // 步骤 1：保护头部窗口内的代码块，使其免于身份归一的任何影响
+        // 步骤 1：保护代码块，使其免于身份归一与厂牌替换的任何影响
         let mut placeholders: Vec<String> = Vec::new();
-        let protected_head = RE_CODE_BLOCK.replace_all(head, |caps: &regex::Captures| {
+        let protected_text = RE_CODE_BLOCK.replace_all(text, |caps: &regex::Captures| {
             let idx = placeholders.len();
             placeholders.push(caps[0].to_string());
             format!("__PROMPT_SANITIZER_CODE_BLOCK_{}__", idx)
@@ -337,14 +376,14 @@ impl PromptSanitizer {
         // 步骤 2：归一化身份声明句（逗号续写场景保留逗号，避免出现 ", ," 或 ", and" 断裂）
         // 2.1 广谱归属声明归一化
         let pass1 = RE_IDENTITY_DECLARATION.replace_all(
-            &protected_head,
+            &protected_text,
             |caps: &regex::Captures| match caps.get(1).map(|m| m.as_str()).unwrap_or("") {
                 "," | "，" => format!("{},", OFFICIAL_ANTIGRAVITY_IDENTITY),
                 _ => OFFICIAL_ANTIGRAVITY_IDENTITY.to_string(),
             },
         );
 
-        // 2.2 知名特定客户端开场白归一化（如 Claude Code CLI 开场白）
+        // 2.2 知名特定客户端开场白归一化（如 Claude Code CLI 开场白、*code、*studio、*claw、pi 等）
         let pass2 = RE_KNOWN_CLIENT_DECLARATION.replace_all(&pass1, |caps: &regex::Captures| {
             match caps.get(1).map(|m| m.as_str()).unwrap_or("") {
                 "," | "，" => format!("{},", OFFICIAL_ANTIGRAVITY_IDENTITY),
@@ -352,10 +391,13 @@ impl PromptSanitizer {
             }
         });
 
-        let normalized = pass2.into_owned();
+        // 2.3 竞品厂牌（OpenAI、Anthropic、Qwen、字节跳动、腾讯、小米、华为等）统一归一化为 Google
+        let pass3 = RE_COMPETITOR_BRANDS.replace_all(&pass2, "Google");
 
-        // 步骤 3：单趟无递归还原受保护的代码块，并拼回头部窗口之后的原文
-        let mut restored = RE_CODE_BLOCK_PLACEHOLDER
+        let normalized = pass3.into_owned();
+
+        // 步骤 3：单趟无递归还原受保护的代码块
+        let restored = RE_CODE_BLOCK_PLACEHOLDER
             .replace_all(&normalized, |caps: &regex::Captures| {
                 if let Ok(idx) = caps[1].parse::<usize>() {
                     if let Some(code) = placeholders.get(idx) {
@@ -366,8 +408,72 @@ impl PromptSanitizer {
             })
             .into_owned();
 
-        restored.push_str(&text[head.len()..]);
         restored
+    }
+
+    /// System 轨：对系统提示词全量文本及任意 XML 标签内部的「身份归属声明句」与已知客户端开场白归一化为官方 Antigravity 身份。
+    ///
+    /// 执行策略：
+    /// 1. 不设前序行数与字符数硬截断，全量扫描系统提示词中的身份声明句并替换为官方 Antigravity 助手；
+    /// 2. 深入检测任意 `<xxx ...> ... </xxx>` 标签内部的内容，若包含客户端身份声明同样归一化；
+    /// 3. 全程深度保护代码块（``` 与行内 `），标签本身及后续业务指令逐字完整保留。
+    pub fn normalize_system_identity(text: &str) -> String {
+        let lower = text.to_lowercase();
+
+        // 核心铁律：快速前置短路检查（无任何归属类或已知客户端特征词则零开销返回）
+        if !IDENTITY_FAST_MARKERS
+            .iter()
+            .any(|marker| lower.contains(marker))
+        {
+            return text.to_string();
+        }
+
+        // 步骤 1：先按标准清洗逻辑归一化整段文本中的身份声明
+        let pass1 = Self::normalize_text_identity(text);
+
+        // 步骤 2：若发现有 XML 风格标签，深入到任意 <xxx ...> ... </xxx> 内部匹配其内容
+        // 预先保护 pass1 中的代码块，确保标签替换绝不破坏代码
+        let mut code_placeholders: Vec<String> = Vec::new();
+        let pass1_protected = RE_CODE_BLOCK.replace_all(&pass1, |caps: &regex::Captures| {
+            let idx = code_placeholders.len();
+            code_placeholders.push(caps[0].to_string());
+            format!("__PROMPT_SANITIZER_CODE_BLOCK_{}__", idx)
+        });
+
+        let pass2 = RE_XML_TAG_CANDIDATE.replace_all(&pass1_protected, |caps: &regex::Captures| {
+            let open_name = &caps[2];
+            let close_name = &caps[5];
+            if !open_name.eq_ignore_ascii_case(close_name) {
+                return caps[0].to_string();
+            }
+
+            let inner = &caps[3];
+            let inner_lower = inner.to_lowercase();
+            if !IDENTITY_FAST_MARKERS
+                .iter()
+                .any(|marker| inner_lower.contains(marker))
+            {
+                return caps[0].to_string();
+            }
+
+            let normalized_inner = Self::normalize_text_identity(inner);
+            if normalized_inner != inner {
+                format!("{}{}{}", &caps[1], normalized_inner, &caps[4])
+            } else {
+                caps[0].to_string()
+            }
+        });
+
+        let restored = RE_CODE_BLOCK_PLACEHOLDER.replace_all(&pass2, |caps: &regex::Captures| {
+            if let Ok(idx) = caps[1].parse::<usize>() {
+                if let Some(code) = code_placeholders.get(idx) {
+                    return code.clone();
+                }
+            }
+            caps[0].to_string()
+        });
+
+        restored.into_owned()
     }
 
     /// 清洗 parts 数组中的所有文本节点，并严格捍卫：
@@ -570,10 +676,26 @@ impl PromptSanitizer {
         }
 
         // 2. 清洗所有对话轮次 (contents，包括 user 块与 model 块)
+        //    首个 model 轮次之前的 user 轮次（用户首条业务提问之前的提示词/预置注入块）走 System 轨深度身份归一化；
+        //    有效覆盖客户端将系统提示词作为前几个 Part 放入 user 块的场景（如 user: [提示词1, 提示词2, ..., 第一条用户消息]）；
+        //    模型回复及后续多轮对话正文走 Header 轨（仅剥离计费伪 Header，绝不破坏用户后续业务提问）。
         if let Some(contents) = body.get_mut("contents").and_then(Value::as_array_mut) {
+            let mut seen_model_turn = false;
+
             for turn in contents.iter_mut() {
+                let role = turn.get("role").and_then(Value::as_str).unwrap_or("");
+                if role == "model" {
+                    seen_model_turn = true;
+                }
+
+                let is_leading_user_turn = !seen_model_turn && role == "user";
+
                 if let Some(parts) = turn.get_mut("parts").and_then(Value::as_array_mut) {
-                    cleaned_count += Self::sanitize_parts(parts);
+                    if is_leading_user_turn {
+                        cleaned_count += Self::sanitize_system_parts(parts);
+                    } else {
+                        cleaned_count += Self::sanitize_parts(parts);
+                    }
                 }
             }
 
@@ -823,9 +945,11 @@ mod tests {
         let sys_text = payload["request"]["systemInstruction"]["parts"][0]["text"]
             .as_str()
             .unwrap();
-        // 计费头被精确移除，但 XML 与 === AGENTS.md === 完好无损
+        // 计费头被精确移除，身份被归一化为官方 Antigravity 身份，但 XML 与 === AGENTS.md === 完好无损
         assert!(!sys_text.contains("x-anthropic-billing-header"));
-        assert!(sys_text.contains("<environment>You are JeikCode</environment>"));
+        assert!(sys_text.contains(OFFICIAL_ANTIGRAVITY_IDENTITY));
+        assert!(sys_text.contains("<environment>"));
+        assert!(sys_text.contains("</environment>"));
         assert!(sys_text.contains("=== AGENTS.md ==="));
 
         let user_text = payload["request"]["contents"][0]["parts"][0]["text"]
@@ -1068,11 +1192,11 @@ mod tests {
 
     #[test]
     fn test_normalize_identity_preserves_non_attribution_identities() {
-        // 缺少「归属声明」要素的一律保留；JeikCode 等框架身份（无第三方商业归属动词）不得被改写
+        // 缺少「归属声明」要素的一律保留；通用专家与中性助手身份不得被改写
         for raw in [
             "You are a helpful assistant. Please respond in Chinese.",
             "You are an AI assistant that helps users write code by calling tools.",
-            "You are JeikCode AI coding Agent by Jeik running on your underlying model.",
+            "You are an expert full-stack developer specializing in Rust and TypeScript.",
         ] {
             assert_eq!(PromptSanitizer::normalize_system_identity(raw), raw);
         }
@@ -1196,8 +1320,8 @@ mod tests {
     }
 
     #[test]
-    fn test_sanitize_gemini_payload_preserves_framework_prompts() {
-        // AGENTS.md 铁律：清洗必须「不剥离管道自身的系统提示词与用户提问」
+    fn test_sanitize_gemini_payload_normalizes_system_identity_while_preserving_contents() {
+        // AGENTS.md 铁律：系统提示词及首个 model 之前的注入块中的身份声明统一归一化为官方 Antigravity 身份，而后续多轮对话绝不破坏
         let jeik = concat!(
             "<environment>\n",
             "You are JeikCode AI coding Agent by Jeik.\n\n",
@@ -1210,16 +1334,89 @@ mod tests {
         let mut payload = json!({
             "request": {
                 "systemInstruction": { "role": "user", "parts": [{ "text": jeik }] },
-                "contents": [{ "role": "user", "parts": [{ "text": jeik }] }]
+                "contents": [
+                    { "role": "user", "parts": [{ "text": jeik }] },
+                    { "role": "model", "parts": [{ "text": "Model answer." }] },
+                    { "role": "user", "parts": [{ "text": "Follow-up question about JeikCode." }] }
+                ]
             }
         });
 
-        assert_eq!(PromptSanitizer::sanitize_gemini_payload(&mut payload), 0);
+        assert_eq!(PromptSanitizer::sanitize_gemini_payload(&mut payload), 2);
+        let sys_text = payload["request"]["systemInstruction"]["parts"][0]["text"]
+            .as_str()
+            .unwrap();
+        assert!(sys_text.contains(OFFICIAL_ANTIGRAVITY_IDENTITY));
+        assert!(sys_text.contains("<environment>"));
+        assert!(sys_text.contains("</environment>"));
+        assert!(sys_text.contains("=== AGENTS.md ==="));
+        assert!(sys_text.contains("User custom provisions."));
+
+        // 首个 model 轮次之前的 user 块（客户端注入的系统提示词）也被深度归一化
+        let user_leading = payload["request"]["contents"][0]["parts"][0]["text"]
+            .as_str()
+            .unwrap();
+        assert!(user_leading.contains(OFFICIAL_ANTIGRAVITY_IDENTITY));
+
+        // model 之后的后续 user 提问保持 100% 原始文本
         assert_eq!(
-            payload["request"]["systemInstruction"]["parts"][0]["text"],
-            jeik
+            payload["request"]["contents"][2]["parts"][0]["text"],
+            "Follow-up question about JeikCode."
         );
-        assert_eq!(payload["request"]["contents"][0]["parts"][0]["text"], jeik);
+    }
+
+    #[test]
+    fn test_sanitize_gemini_payload_leading_user_turn_with_injected_system_prompts_and_real_query() {
+        // 覆盖客户端把系统提示词放在 user 块中的场景：
+        // user: [提示词1, 提示词2, 提示词3, 第一条用户消息]
+        let mut payload = json!({
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        { "text": "You are a personal assistant running inside OpenClaw.\n## Tooling\nAvailable tools are listed." },
+                        { "text": "<environment>\nYou are Cherry Studio AI assistant.\n</environment>" },
+                        { "text": "## Available Skills:\n- skill 1\n- skill 2" },
+                        { "text": "请帮我实现一个高效的快速排序算法，语言使用 Rust。" }
+                    ]
+                },
+                {
+                    "role": "model",
+                    "parts": [
+                        { "text": "好的，以下是 Rust 语言实现的快速排序代码：" }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "parts": [
+                        // 后续多轮对话中如果用户提到第三方工具名称，绝不破坏用户提问正文
+                        { "text": "请问刚才那段代码能在 OpenClaw 插件环境下运行吗？" }
+                    ]
+                }
+            ]
+        });
+
+        let cleaned_count = PromptSanitizer::sanitize_gemini_payload(&mut payload);
+        assert_eq!(cleaned_count, 2);
+
+        let parts = payload["contents"][0]["parts"].as_array().unwrap();
+        // Part 0：OpenClaw 身份被归一化为官方 Antigravity，后续工具说明保持完整
+        assert!(parts[0]["text"].as_str().unwrap().starts_with(OFFICIAL_ANTIGRAVITY_IDENTITY));
+        assert!(parts[0]["text"].as_str().unwrap().contains("## Tooling\nAvailable tools are listed."));
+
+        // Part 1：XML 标签内部的 Cherry Studio 身份被归一化，标签结构保持无损
+        assert!(parts[1]["text"].as_str().unwrap().contains(OFFICIAL_ANTIGRAVITY_IDENTITY));
+        assert!(parts[1]["text"].as_str().unwrap().contains("<environment>"));
+        assert!(parts[1]["text"].as_str().unwrap().contains("</environment>"));
+
+        // Part 2：技能说明保持原样
+        assert_eq!(parts[2]["text"], "## Available Skills:\n- skill 1\n- skill 2");
+
+        // Part 3：第一条真实用户提问绝对保持原汁原味
+        assert_eq!(parts[3]["text"], "请帮我实现一个高效的快速排序算法，语言使用 Rust。");
+
+        // 后续对话轮次（model 之后）：用户后续提问保持 100% 原始文本
+        assert_eq!(payload["contents"][2]["parts"][0]["text"], "请问刚才那段代码能在 OpenClaw 插件环境下运行吗？");
     }
 
     #[test]
@@ -1345,6 +1542,85 @@ mod tests {
                 "我是百度开发的人工智能代码助手文心快码。",
                 "文心快码",
             ),
+            (
+                "JeikCode完整主要提示词(环境标签+多行指令)",
+                concat!(
+                    "<environment>\n",
+                    "You are JeikCode AI coding Agent by Jeik running on your underlying model. Always communicate in the language used by the user.\n",
+                    "## PRECEDENCE:\n",
+                    "Critical Precedence: Rules under <project_instructions> constitute USER PROVISIONS.\n",
+                    "=== AGENTS.md ===\n",
+                    "Do not modify.\n",
+                    "</environment>"
+                ),
+                "JeikCode",
+            ),
+            (
+                "JeikCode单行精简身份(归属与宿主声明)",
+                "You are JeikCode AI coding Agent by Jeik running on your underlying model.",
+                "JeikCode",
+            ),
+            (
+                "泛化xxxcode形态",
+                "You are atomcode, an interactive coding assistant.",
+                "atomcode",
+            ),
+            (
+                "泛化xx code形态",
+                "You are hyper code AI coding agent. Complete the task.",
+                "hyper code",
+            ),
+            (
+                "Pi客户端形态",
+                "You are Pi AI coding agent. Help write code.",
+                "Pi",
+            ),
+            (
+                "任意标签内部深度身份声明",
+                concat!(
+                    "Rule 1.\nRule 2.\nRule 3.\nRule 4.\nRule 5.\nRule 6.\nRule 7.\nRule 8.\nRule 9.\n",
+                    "<custom_agent>\n",
+                    "You are JeikCode AI coding Agent by Jeik running on your underlying model.\n",
+                    "Do something.\n",
+                    "</custom_agent>"
+                ),
+                "JeikCode",
+            ),
+            (
+                "xx Studio大写形态",
+                "YOU ARE CHERRY STUDIO, an intelligent AI.",
+                "CHERRY STUDIO",
+            ),
+            (
+                "xx Studio小写形态",
+                "you are lm studio AI assistant. Help the user.",
+                "lm studio",
+            ),
+            (
+                "xxStudio驼峰混合大小写形态",
+                "You are CherryStudio, an AI assistant.",
+                "CherryStudio",
+            ),
+            (
+                "xxStudio全大写形态",
+                "YOU ARE LMSTUDIO AI ASSISTANT.",
+                "LMSTUDIO",
+            ),
+            (
+                "**claw大写形态",
+                "YOU ARE OPENCLAW.",
+                "OPENCLAW",
+            ),
+            (
+                "** claw双词小写形态",
+                "you are open claw AI coding agent.",
+                "open claw",
+            ),
+            (
+                "标签包裹的Cherry Studio大小写不敏感形态",
+                "<environment>\nYOU ARE CHERRY STUDIO AI ASSISTANT.\n</environment>",
+                "CHERRY STUDIO",
+            ),
         ];
 
         for (name, raw, key_fragment) in test_cases {
@@ -1369,24 +1645,8 @@ mod tests {
     }
 
     #[test]
-    fn test_strictly_protects_jeikcode_and_generic_prompts() {
+    fn test_strictly_protects_generic_prompts() {
         let protected_cases = [
-            (
-                "JeikCode完整主要提示词(环境标签+多行指令)",
-                concat!(
-                    "<environment>\n",
-                    "You are JeikCode AI coding Agent by Jeik running on your underlying model. Always communicate in the language used by the user.\n",
-                    "## PRECEDENCE:\n",
-                    "Critical Precedence: Rules under <project_instructions> constitute USER PROVISIONS.\n",
-                    "=== AGENTS.md ===\n",
-                    "Do not modify.\n",
-                    "</environment>"
-                ),
-            ),
-            (
-                "JeikCode单行精简身份(白名单守卫)",
-                "You are JeikCode AI coding Agent by Jeik running on your underlying model.",
-            ),
             (
                 "官方Antigravity自身(保持稳定)",
                 OFFICIAL_ANTIGRAVITY_IDENTITY,
@@ -1421,5 +1681,51 @@ mod tests {
             let out = PromptSanitizer::normalize_system_identity(raw);
             assert_eq!(out, raw, "Case '{name}' 属于保护范畴，绝不可被误杀改写！");
         }
+    }
+
+    #[test]
+    fn test_competitor_brands_normalization_to_google() {
+        // 1. 英文竞品厂牌替换验证（大小写不敏感）
+        let raw_en = "Powered by OpenAI and Anthropic, using Qwen architecture under ByteDance, Tencent, Xiaomi and Huawei.";
+        let cleaned_en = PromptSanitizer::normalize_system_identity(raw_en);
+        assert!(!cleaned_en.to_lowercase().contains("openai"));
+        assert!(!cleaned_en.to_lowercase().contains("anthropic"));
+        assert!(!cleaned_en.to_lowercase().contains("qwen"));
+        assert!(!cleaned_en.to_lowercase().contains("bytedance"));
+        assert!(!cleaned_en.to_lowercase().contains("tencent"));
+        assert!(!cleaned_en.to_lowercase().contains("xiaomi"));
+        assert!(!cleaned_en.to_lowercase().contains("huawei"));
+        assert!(cleaned_en.contains("Google"));
+
+        // 2. 中文竞品厂牌替换验证
+        let raw_zh = "本项目由字节跳动开发，经由腾讯、小米、华为以及通义千问、百度深度支持。";
+        let cleaned_zh = PromptSanitizer::normalize_system_identity(raw_zh);
+        assert!(!cleaned_zh.contains("字节跳动"));
+        assert!(!cleaned_zh.contains("腾讯"));
+        assert!(!cleaned_zh.contains("小米"));
+        assert!(!cleaned_zh.contains("华为"));
+        assert!(!cleaned_zh.contains("通义千问"));
+        assert!(!cleaned_zh.contains("百度"));
+        assert!(cleaned_zh.contains("Google"));
+
+        // 3. 严格保护代码块中的厂牌名称（100% 豁免）
+        let raw_code = concat!(
+            "Instructions from OpenAI:\n",
+            "```python\n",
+            "import openai\n",
+            "from anthropic import Anthropic\n",
+            "# Supported by Tencent and Huawei\n",
+            "client = openai.OpenAI()\n",
+            "```\n",
+            "End of instructions."
+        );
+        let cleaned_code = PromptSanitizer::normalize_system_identity(raw_code);
+        // 代码块外部的 OpenAI 被替换为 Google
+        assert!(cleaned_code.starts_with("Instructions from Google:"));
+        // 代码块内部的 import openai 与 anthropic 完好无损
+        assert!(cleaned_code.contains("import openai"));
+        assert!(cleaned_code.contains("from anthropic import Anthropic"));
+        assert!(cleaned_code.contains("# Supported by Tencent and Huawei"));
+        assert!(cleaned_code.contains("client = openai.OpenAI()"));
     }
 }
