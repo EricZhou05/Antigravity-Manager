@@ -3,6 +3,12 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.1-beta.0 (2026-10-26)**:
+        -   **[Linux X11/xrdp 远程桌面显示守卫升级与无感保活] (Fixes #3752, Thanks to @hazerwin)**:
+            -   **Xlib 原生底层致命错误拦截 (XSetIOErrorHandler)**: 在 `linux_display_guard` 模块中动态挂载 X11 底层 `XSetIOErrorHandler`，当 xrdp / VNC 远程桌面断开连接、网络重置或端口被扫描导致 X Socket 管道破裂（Broken pipe / Connection reset）时，直接在第一现场拦截致命 XIO 错误，置位显示断开标记并仅安全退出主 GUI 线程，确保后台 Tokio 运行时与端口 8045 核心反代服务毫秒级平滑常驻。(Fixes #3752, Thanks to @hazerwin)
+            -   **GLib 调试日志穿透与 X11 特征规则全覆盖**: 自动配置 `G_MESSAGES_DEBUG` 环境变量，彻底解决现代 GTK 3.24+ 下 `gdk_x_io_error` 发出的 `g_debug` 消息被 GLib 底层静默丢弃的问题；全面扩充 `is_display_disconnect_message` 判定规则，支持 `Fatal IO error`、`on X server`、`X connection to`、`Resource temporarily unavailable (errno 11)` 等全场景 X11 致命通信异常识别。(Fixes #3752, Thanks to @hazerwin)
+            -   **_exit 拦截器主线程隔离与意图识别防误杀**: 记录主 GUI 线程 ID 并增加用户主动退出（`USER_INITIATED_EXIT`）意图感知，严格区分“用户明确退出”与“底层显示崩溃”，彻底消除因前置漏判导致直接调用 `SYS_exit_group` 误杀进程组的致命缺陷，让使用 GUI 模式的远程桌面用户在断开后完全无感，核心代理服务绝不闪退中断。(Fixes #3752, Thanks to @hazerwin)
+
     *   **v5.0.0-beta.4 (2026-10-26)**:
         -   **[出站谷歌风控提示词清洗深度重构与全生命周期身份归一化]**:
             -   **全面取消内部框架豁免与统一官方身份对齐**: 彻底取消原先针对 JeikCode 框架的白名单短路豁免，将包括 JeikCode、OpenCode、OpenClaw、Cherry Studio 等跨平台主流第三方 AI Agent / CLI 的原生身份声明统一对齐为官方 Antigravity 原生助手，杜绝 Google Cloud Code 上游 WAF 针对第三方框架特征的 429 RESOURCE_EXHAUSTED 伪限流拦截。

@@ -3,6 +3,12 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.1-beta.0 (2026-10-26)**:
+        -   **[Linux X11/xrdp Remote Desktop Display Guard Hardening & Seamless Fallback] (Fixes #3752, Thanks to @hazerwin)**:
+            -   **Native Xlib Fatal IO Error Interception (XSetIOErrorHandler)**: Dynamically hooked X11's native `XSetIOErrorHandler` in `linux_display_guard`. When xrdp / VNC remote desktop client disconnects, resets, or suffers network socket broken pipes (EPIPE / ECONNRESET), the fatal XIO error is trapped immediately at the lowest level, safely terminating only the failing GUI thread while keeping the background Tokio runtime and core port 8045 proxy service 100% active and uninterrupted. (Fixes #3752, Thanks to @hazerwin)
+            -   **GLib Debug Log Pass-Through & Exhaustive X11 Pattern Matching**: Automatically exported `G_MESSAGES_DEBUG` to prevent GLib from silently discarding `g_debug` messages emitted by GTK 3.24+ `gdk_x_io_error`; comprehensively updated `is_display_disconnect_message` to recognize X11 fatal patterns including `Fatal IO error`, `on X server`, `X connection to`, and `Resource temporarily unavailable (errno 11)`. (Fixes #3752, Thanks to @hazerwin)
+            -   **_exit Interceptor Main-Thread Isolation & Exit-Intent Recognition**: Recorded main GUI thread ID and introduced `USER_INITIATED_EXIT` tracking to strictly distinguish intentional user exits from graphics crashes, eradicating the flaw where unhandled display disconnects triggered `SYS_exit_group` and killed the proxy daemon. Remote desktop users experience seamless persistence without service drops. (Fixes #3752, Thanks to @hazerwin)
+
     *   **v5.0.0-beta.4 (2026-10-26)**:
         -   **[Egress Google Anti-Abuse Prompt Sanitization Overhaul & End-to-End Identity Harmonization]**:
             -   **Internal Framework Whitelist Stripping & Harmonized Identity Alignment**: Thoroughly removed the legacy whitelist exemption for the JeikCode framework, standardizing all third-party AI agents and CLIs (JeikCode, OpenCode, OpenClaw, Cherry Studio, etc.) into official native Antigravity identity to eliminate upstream Google Cloud Code WAF 429 RESOURCE_EXHAUSTED false rate-limit strikes.
