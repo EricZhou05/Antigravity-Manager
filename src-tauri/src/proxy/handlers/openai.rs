@@ -2339,6 +2339,7 @@ pub async fn handle_chat_completions(
     let mut used_attempts = 0;
     let mut retried_without_thinking = false;
     let mut retried_with_budget_degraded = false;
+    let mut retried_with_image_omitted = false;
     let mut degraded_gemini_body: Option<Value> = None;
 
     // 2. 模型路由解析 (移到循环外以支持在所有路径返回 X-Mapped-Model)
@@ -3252,6 +3253,29 @@ pub async fn handle_chat_completions(
             tracing::warn!(
                 "[{}] Upstream 400 tool_choice/thinking conflict detected. In-place self-healing: stripped thinkingConfig on account {}, retrying.",
                 trace_id, email
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            continue;
+        }
+
+        // [FIX Corrupted Image] 400 多模态图像解码/处理失败：自愈剔除损坏图片、记录黑名单并原地重试
+        if (classification.is_image_processing_error()
+            || crate::proxy::pipeline::UpstreamClassification::is_image_processing_error_str(
+                status_code,
+                &error_text,
+            ))
+            && !retried_with_image_omitted
+        {
+            retried_with_image_omitted = true;
+            let purged_count =
+                crate::proxy::mappers::common_utils::purge_corrupted_images_from_gemini_payload(
+                    &mut gemini_body,
+                );
+            degraded_gemini_body = Some(gemini_body);
+            force_rotate = false;
+            tracing::warn!(
+                "[{}] Upstream 400 Unable to process input image detected. In-place self-healing: purged {} image(s) to text placeholders on account {}, retrying.",
+                trace_id, purged_count, email
             );
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             continue;
@@ -4329,6 +4353,7 @@ pub async fn handle_completions(
 
     let mut force_rotate = false;
     let mut retried_with_budget_degraded = false;
+    let mut retried_with_image_omitted = false;
     let mut degraded_gemini_body: Option<Value> = None;
 
     while let Some(attempt) = next_rotation_attempt(
@@ -5354,6 +5379,29 @@ pub async fn handle_completions(
             tracing::warn!(
                 "[{}] Upstream 400 tool_choice/thinking conflict detected. In-place self-healing: stripped thinkingConfig on account {}, retrying.",
                 trace_id, email
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            continue;
+        }
+
+        // [FIX Corrupted Image] 400 多模态图像解码/处理失败：自愈剔除损坏图片、记录黑名单并原地重试
+        if (classification.is_image_processing_error()
+            || crate::proxy::pipeline::UpstreamClassification::is_image_processing_error_str(
+                status_code,
+                &error_text,
+            ))
+            && !retried_with_image_omitted
+        {
+            retried_with_image_omitted = true;
+            let purged_count =
+                crate::proxy::mappers::common_utils::purge_corrupted_images_from_gemini_payload(
+                    &mut gemini_body,
+                );
+            degraded_gemini_body = Some(gemini_body);
+            force_rotate = false;
+            tracing::warn!(
+                "[{}] Upstream 400 Unable to process input image detected. In-place self-healing: purged {} image(s) to text placeholders on account {}, retrying.",
+                trace_id, purged_count, email
             );
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             continue;

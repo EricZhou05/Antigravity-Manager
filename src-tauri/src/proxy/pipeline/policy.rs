@@ -11,6 +11,8 @@ pub enum UpstreamClassification {
     InternalGatewayMessage,
     /// 思考签名失效或跨模型异构签名污染错误（400 Invalid signature in thinking block）
     ThoughtSignatureError,
+    /// 上游多模态图像解码或处理失败错误（400 Unable to process input image 等）
+    ImageProcessingError,
     /// 其他普通客户端错误
     OtherClientError(u16),
 }
@@ -61,7 +63,24 @@ impl UpstreamClassification {
             return UpstreamClassification::ThoughtSignatureError;
         }
 
-        // 4. 判定真正的限流 (仅限 429 和 529)
+        // 4. 判定上游图像解码/处理失败 (400 Unable to process input image)
+        let has_image_processing_error_cue = lower.contains("unable to process input image")
+            || lower.contains("failed to process input image")
+            || lower.contains("cannot process input image")
+            || lower.contains("could not process image")
+            || lower.contains("error processing input image")
+            || lower.contains("invalid input image")
+            || lower.contains("unable to decode image")
+            || lower.contains("unsupported image format")
+            || lower.contains("image decoding failed")
+            || (lower.contains("process input image")
+                && lower.contains("developers.generativeai.google"));
+
+        if status == 400 && has_image_processing_error_cue {
+            return UpstreamClassification::ImageProcessingError;
+        }
+
+        // 5. 判定真正的限流 (仅限 429 和 529)
         if status == 429 || status == 529 {
             let delay = crate::proxy::upstream::retry::parse_retry_delay(body, retry_after_header)
                 .map(|ms| ms.saturating_add(999) / 1000);
@@ -101,9 +120,33 @@ impl UpstreamClassification {
         matches!(self, UpstreamClassification::ThoughtSignatureError)
     }
 
+    /// 该分类是否为上游图像解码/处理失败
+    pub fn is_image_processing_error(&self) -> bool {
+        matches!(self, UpstreamClassification::ImageProcessingError)
+    }
+
     /// 该分类是否为网关自身内部消息
     pub fn is_internal_gateway_message(&self) -> bool {
         matches!(self, UpstreamClassification::InternalGatewayMessage)
+    }
+
+    /// 判断是否为上游多模态图像解码或处理错误 (400 "Unable to process input image")
+    pub fn is_image_processing_error_str(status: u16, body: &str) -> bool {
+        if status != 400 {
+            return false;
+        }
+        let lower = body.to_lowercase();
+        lower.contains("unable to process input image")
+            || lower.contains("failed to process input image")
+            || lower.contains("cannot process input image")
+            || lower.contains("could not process image")
+            || lower.contains("error processing input image")
+            || lower.contains("invalid input image")
+            || lower.contains("unable to decode image")
+            || lower.contains("unsupported image format")
+            || lower.contains("image decoding failed")
+            || (lower.contains("process input image")
+                && lower.contains("developers.generativeai.google"))
     }
 
     /// 判断是否为上游服务过载（HTTP 503 / 529，或 500/504 等返回 "model is overloaded"）
@@ -186,6 +229,31 @@ mod tests {
         assert!(!UpstreamClassification::is_thinking_tool_choice_conflict(
             400,
             "Normal 400 bad request"
+        ));
+    }
+
+    #[test]
+    fn test_image_processing_error_classification() {
+        let err_body = r#"API Error: 400 Unable to process input image. Please retry or report in https://developers.generativeai.google/guide/troubleshooting"#;
+        let classification = UpstreamClassification::classify(400, err_body, None);
+        assert_eq!(classification, UpstreamClassification::ImageProcessingError);
+        assert!(classification.is_image_processing_error());
+        assert!(!classification.should_lock_account());
+        assert!(!classification.abandons_sticky_account());
+
+        assert!(UpstreamClassification::is_image_processing_error_str(
+            400, err_body
+        ));
+        assert!(UpstreamClassification::is_image_processing_error_str(
+            400,
+            r#"{"error":{"message":"Failed to process input image due to decoding error"}}"#
+        ));
+        assert!(!UpstreamClassification::is_image_processing_error_str(
+            200, err_body
+        ));
+        assert!(!UpstreamClassification::is_image_processing_error_str(
+            400,
+            "Invalid signature in thinking block"
         ));
     }
 }

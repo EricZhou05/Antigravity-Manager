@@ -1,7 +1,46 @@
 // Common utilities for request mapping across all protocols
 // Provides unified grounding/networking logic
 
+use once_cell::sync::Lazy;
+use parking_lot::RwLock;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::collections::HashSet;
+
+/// 全局已知损坏/无法被 Google 上游视觉解码器处理的图片 SHA-256 指纹黑名单
+static CORRUPTED_IMAGE_HASHES: Lazy<RwLock<HashSet<String>>> =
+    Lazy::new(|| RwLock::new(HashSet::new()));
+
+/// 计算 Base64 图片数据的指纹 (SHA-256)
+pub fn calculate_image_hash(b64_data: &str) -> String {
+    let clean = b64_data.trim();
+    let mut hasher = Sha256::new();
+    hasher.update(clean.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// 检查图片是否在已知损坏黑名单中
+pub fn is_corrupted_image(b64_data: &str) -> bool {
+    let hash = calculate_image_hash(b64_data);
+    let set = CORRUPTED_IMAGE_HASHES.read();
+    set.contains(&hash)
+}
+
+/// 将图片指纹记录到损坏黑名单中
+pub fn record_corrupted_image_hash(b64_data: &str) {
+    let hash = calculate_image_hash(b64_data);
+    let mut set = CORRUPTED_IMAGE_HASHES.write();
+    if set.len() >= 2000 {
+        set.clear(); // 达到上限时清理重置，防止无界增长
+    }
+    set.insert(hash);
+}
+
+/// 清空全局损坏图片黑名单（主要用于单元测试隔离与内存重置）
+pub fn clear_corrupted_image_hashes() {
+    let mut set = CORRUPTED_IMAGE_HASHES.write();
+    set.clear();
+}
 
 /// Request configuration after grounding resolution
 #[derive(Debug, Clone)]
@@ -1319,6 +1358,73 @@ mod tests {
         assert!(parts[3].get("inlineData").is_some());
         assert_eq!(parts[3]["inlineData"]["data"], valid_png_b64);
     }
+
+    #[test]
+    fn test_corrupted_image_blacklist_and_purge() {
+        clear_corrupted_image_hashes();
+        // 使用该测试专属的 2x2 PNG Base64，与其它测试的标准 1x1 PNG 彻底解耦，防止并发污染
+        let test_corrupt_png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        // 初始状态下合规 PNG 可通过验证
+        assert!(
+            validate_and_sanitize_inline_data(Some("image/png"), test_corrupt_png_b64).is_some()
+        );
+        assert!(!is_corrupted_image(test_corrupt_png_b64));
+
+        let mut payload = json!({
+            "request": {
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [
+                            { "text": "Can you inspect this UI screenshot?" },
+                            { "inlineData": { "mimeType": "image/png", "data": test_corrupt_png_b64 } }
+                        ]
+                    }
+                ]
+            }
+        });
+
+        // 模拟上游返回 400 Unable to process input image，调用 purge_corrupted_images_from_gemini_payload
+        let purged = purge_corrupted_images_from_gemini_payload(&mut payload);
+        assert_eq!(purged, 1);
+
+        let parts = payload["request"]["contents"][0]["parts"]
+            .as_array()
+            .unwrap();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["text"], "Can you inspect this UI screenshot?");
+        assert_eq!(
+            parts[1]["text"],
+            "[Image: Corrupted or unprocessable image omitted to recover conversation]"
+        );
+
+        // 验证该图片的指纹已经被黑名单记录，直接阻止后续会话历史被该图片反复污染
+        assert!(is_corrupted_image(test_corrupt_png_b64));
+        assert!(
+            validate_and_sanitize_inline_data(Some("image/png"), test_corrupt_png_b64).is_none()
+        );
+
+        // 验证在后续轮次中，客户端哪怕重新带入该坏图片，前置清洗也能直接将其降级为占位符
+        let mut follow_up_payload = json!({
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        { "inlineData": { "mimeType": "image/png", "data": test_corrupt_png_b64 } }
+                    ]
+                }
+            ]
+        });
+        let sanitized = sanitize_gemini_payload_inline_data(&mut follow_up_payload);
+        assert_eq!(sanitized, 1);
+        assert_eq!(
+            follow_up_payload["contents"][0]["parts"][0]["text"],
+            "[Image/Data: invalid or corrupted inline payload omitted]"
+        );
+
+        // 测试完成后清理，保障全局测试套件纯净
+        clear_corrupted_image_hashes();
+    }
 }
 
 /// [FIX] Parse markdown base64 images from text and split into Gemini parts
@@ -1562,6 +1668,15 @@ pub fn validate_and_sanitize_inline_data(
         return None;
     }
 
+    // 优先检查坏图片黑名单：若已被上游判定为 Unable to process input image，直接拦截防御
+    if is_corrupted_image(clean_b64) {
+        tracing::warn!(
+            "[Image-Defense] Rejected known corrupted image by SHA-256 fingerprint (len: {})",
+            clean_b64.len()
+        );
+        return None;
+    }
+
     use base64::{engine::general_purpose::STANDARD, Engine as _};
 
     // Try decoding base64 to check validity and magic bytes
@@ -1797,6 +1912,74 @@ pub fn sanitize_gemini_payload_inline_data(body: &mut Value) -> usize {
     }
 
     total_sanitized
+}
+
+/// 遍历 Gemini JSON payload 中所有 inlineData/inline_data，将图像全部记录进损坏黑名单并替换为文本占位符。
+/// 用于在上游返回 400 Unable to process input image 时进行就地自愈与持久化免疫。
+/// 返回被降级替换的图像数量。
+pub fn purge_corrupted_images_from_gemini_payload(body: &mut Value) -> usize {
+    let mut total_purged = 0;
+
+    let mut purge_parts = |parts: &mut Vec<Value>| {
+        for part in parts.iter_mut() {
+            if let Some(obj) = part.as_object_mut() {
+                let inline_key = if obj.contains_key("inlineData") {
+                    Some("inlineData")
+                } else if obj.contains_key("inline_data") {
+                    Some("inline_data")
+                } else {
+                    None
+                };
+
+                if let Some(key) = inline_key {
+                    let inline_obj = obj.get(key).and_then(Value::as_object);
+                    let data = inline_obj
+                        .and_then(|o| o.get("data"))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+
+                    if !data.is_empty() {
+                        record_corrupted_image_hash(data);
+                    }
+                    total_purged += 1;
+                    tracing::warn!(
+                        "[Image-Defense] Purged corrupted image part (len: {}) into text placeholder and recorded to blacklist",
+                        data.len()
+                    );
+                    *part = json!({
+                        "text": "[Image: Corrupted or unprocessable image omitted to recover conversation]"
+                    });
+                }
+            }
+        }
+    };
+
+    if let Some(req) = body.get_mut("request").and_then(Value::as_object_mut) {
+        if let Some(contents) = req.get_mut("contents").and_then(Value::as_array_mut) {
+            for content in contents.iter_mut() {
+                if let Some(parts) = content.get_mut("parts").and_then(Value::as_array_mut) {
+                    purge_parts(parts);
+                }
+            }
+        }
+    } else if let Some(contents) = body.get_mut("contents").and_then(Value::as_array_mut) {
+        for content in contents.iter_mut() {
+            if let Some(parts) = content.get_mut("parts").and_then(Value::as_array_mut) {
+                purge_parts(parts);
+            }
+        }
+    }
+
+    if let Some(sys) = body
+        .get_mut("systemInstruction")
+        .and_then(Value::as_object_mut)
+    {
+        if let Some(parts) = sys.get_mut("parts").and_then(Value::as_array_mut) {
+            purge_parts(parts);
+        }
+    }
+
+    total_purged
 }
 
 /// Check if two model strings are compatible (same family)
