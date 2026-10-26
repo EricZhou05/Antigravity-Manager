@@ -8,6 +8,7 @@
             -   **Xlib 原生底层致命错误拦截 (XSetIOErrorHandler)**: 在 `linux_display_guard` 模块中动态挂载 X11 底层 `XSetIOErrorHandler`，当 xrdp / VNC 远程桌面断开连接、网络重置或端口被扫描导致 X Socket 管道破裂（Broken pipe / Connection reset）时，直接在第一现场拦截致命 XIO 错误，置位显示断开标记并仅安全退出主 GUI 线程，确保后台 Tokio 运行时与端口 8045 核心反代服务毫秒级平滑常驻。(Fixes #3752, Thanks to @hazerwin)
             -   **GLib 调试日志穿透与 X11 特征规则全覆盖**: 自动配置 `G_MESSAGES_DEBUG` 环境变量，彻底解决现代 GTK 3.24+ 下 `gdk_x_io_error` 发出的 `g_debug` 消息被 GLib 底层静默丢弃的问题；全面扩充 `is_display_disconnect_message` 判定规则，支持 `Fatal IO error`、`on X server`、`X connection to`、`Resource temporarily unavailable (errno 11)` 等全场景 X11 致命通信异常识别。(Fixes #3752, Thanks to @hazerwin)
             -   **_exit 拦截器主线程隔离与意图识别防误杀**: 记录主 GUI 线程 ID 并增加用户主动退出（`USER_INITIATED_EXIT`）意图感知，严格区分“用户明确退出”与“底层显示崩溃”，彻底消除因前置漏判导致直接调用 `SYS_exit_group` 误杀进程组的致命缺陷，让使用 GUI 模式的远程桌面用户在断开后完全无感，核心代理服务绝不闪退中断。(Fixes #3752, Thanks to @hazerwin)
+            -   **远程虚拟桌面（xrdp/VNC）精准感知与软件渲染安全适配 (治本根除崩溃)**: 在 `linux_graphics.rs` 中新增虚拟桌面环境判定，当显式检测到 xrdp / VNC / 远程虚拟环境时，自动注入 `WEBKIT_DISABLE_COMPOSITING_MODE=1`、`WEBKIT_DISABLE_DMABUF_RENDERER=1` 及软件光栅化，从根源消除 WebKit 硬件加速合成器在客户端断开时由于显存缓冲区交换失败而引发的 Broken pipe，GUI 界面在远程桌面断开重连中安然存活；本地有显卡的物理 Linux 桌面 100% 保持原有 GPU 硬件加速合成不变。(Fixes #3752, Thanks to @hazerwin)
 
     *   **v5.0.0-beta.4 (2026-10-26)**:
         -   **[出站谷歌风控提示词清洗深度重构与全生命周期身份归一化]**:

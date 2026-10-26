@@ -150,8 +150,8 @@ fn configure_linux_graphics() {
     linux_display_guard::init_display_guard();
 
     use linux_graphics::{
-        desktop_is_gnome, desktop_is_kde, desktop_is_wlroots_family, should_disable_webkit_dmabuf,
-        should_force_x11_backend,
+        desktop_is_gnome, desktop_is_kde, desktop_is_wlroots_family, is_remote_virtual_desktop,
+        should_disable_webkit_dmabuf, should_enable_software_compositing, should_force_x11_backend,
     };
 
     let is_wayland = is_wayland_session();
@@ -199,6 +199,29 @@ fn configure_linux_graphics() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         info!(
             "WEBKIT_DISABLE_DMABUF_RENDERER=1 (WebKit DMA-BUF workaround on this Wayland setup). Set it yourself to override."
+        );
+    }
+
+    // [Fix #3752] 针对 xrdp / VNC 等远程虚拟桌面会话，自动启用 WebKitGTK 软件安全合成与渲染
+    // 根除客户端断开时由于显存缓冲区交换失败引发的 XIO Error / Broken pipe 崩溃，普通本地桌面不受影响
+    let has_xrdp_env = std::env::var("XRDP_SESSION").is_ok()
+        || std::env::var("XRDP_SOCKET_PATH").is_ok()
+        || std::env::var("XRDP_PULSE_SINK_SOCKET").is_ok();
+    let has_vnc_env = std::env::var("VNCDESKTOP").is_ok() || std::env::var("VNC_PORT").is_ok();
+    let force_software = env_flag_enabled("ANTIGRAVITY_FORCE_SOFTWARE_RENDER");
+    let force_hardware = env_flag_enabled("ANTIGRAVITY_FORCE_HARDWARE_RENDER");
+    let is_remote_desktop =
+        is_remote_virtual_desktop(has_xrdp_env, has_vnc_env, force_software, force_hardware);
+
+    let compositing_already_disabled = std::env::var("WEBKIT_DISABLE_COMPOSITING_MODE").is_ok();
+    if should_enable_software_compositing(compositing_already_disabled, is_remote_desktop) {
+        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        if std::env::var("LIBGL_ALWAYS_SOFTWARE").is_err() {
+            std::env::set_var("LIBGL_ALWAYS_SOFTWARE", "1");
+        }
+        info!(
+            "Remote virtual desktop session detected (xrdp/VNC). Enabling safe software compositing to prevent XIO crashes on disconnect."
         );
     }
 }
