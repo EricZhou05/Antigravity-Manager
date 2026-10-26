@@ -1366,7 +1366,8 @@ mod tests {
     }
 
     #[test]
-    fn test_sanitize_gemini_payload_leading_user_turn_with_injected_system_prompts_and_real_query() {
+    fn test_sanitize_gemini_payload_leading_user_turn_with_injected_system_prompts_and_real_query()
+    {
         // 覆盖客户端把系统提示词放在 user 块中的场景：
         // user: [提示词1, 提示词2, 提示词3, 第一条用户消息]
         let mut payload = json!({
@@ -1401,22 +1402,43 @@ mod tests {
 
         let parts = payload["contents"][0]["parts"].as_array().unwrap();
         // Part 0：OpenClaw 身份被归一化为官方 Antigravity，后续工具说明保持完整
-        assert!(parts[0]["text"].as_str().unwrap().starts_with(OFFICIAL_ANTIGRAVITY_IDENTITY));
-        assert!(parts[0]["text"].as_str().unwrap().contains("## Tooling\nAvailable tools are listed."));
+        assert!(parts[0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with(OFFICIAL_ANTIGRAVITY_IDENTITY));
+        assert!(parts[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("## Tooling\nAvailable tools are listed."));
 
         // Part 1：XML 标签内部的 Cherry Studio 身份被归一化，标签结构保持无损
-        assert!(parts[1]["text"].as_str().unwrap().contains(OFFICIAL_ANTIGRAVITY_IDENTITY));
+        assert!(parts[1]["text"]
+            .as_str()
+            .unwrap()
+            .contains(OFFICIAL_ANTIGRAVITY_IDENTITY));
         assert!(parts[1]["text"].as_str().unwrap().contains("<environment>"));
-        assert!(parts[1]["text"].as_str().unwrap().contains("</environment>"));
+        assert!(parts[1]["text"]
+            .as_str()
+            .unwrap()
+            .contains("</environment>"));
 
         // Part 2：技能说明保持原样
-        assert_eq!(parts[2]["text"], "## Available Skills:\n- skill 1\n- skill 2");
+        assert_eq!(
+            parts[2]["text"],
+            "## Available Skills:\n- skill 1\n- skill 2"
+        );
 
         // Part 3：第一条真实用户提问绝对保持原汁原味
-        assert_eq!(parts[3]["text"], "请帮我实现一个高效的快速排序算法，语言使用 Rust。");
+        assert_eq!(
+            parts[3]["text"],
+            "请帮我实现一个高效的快速排序算法，语言使用 Rust。"
+        );
 
         // 后续对话轮次（model 之后）：用户后续提问保持 100% 原始文本
-        assert_eq!(payload["contents"][2]["parts"][0]["text"], "请问刚才那段代码能在 OpenClaw 插件环境下运行吗？");
+        assert_eq!(
+            payload["contents"][2]["parts"][0]["text"],
+            "请问刚才那段代码能在 OpenClaw 插件环境下运行吗？"
+        );
     }
 
     #[test]

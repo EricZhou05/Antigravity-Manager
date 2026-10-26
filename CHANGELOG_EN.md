@@ -3,6 +3,17 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.0-beta.4 (2026-10-26)**:
+        -   **[Egress Google Anti-Abuse Prompt Sanitization Overhaul & End-to-End Identity Harmonization]**:
+            -   **Internal Framework Whitelist Stripping & Harmonized Identity Alignment**: Thoroughly removed the legacy whitelist exemption for the JeikCode framework, standardizing all third-party AI agents and CLIs (JeikCode, OpenCode, OpenClaw, Cherry Studio, etc.) into official native Antigravity identity to eliminate upstream Google Cloud Code WAF 429 RESOURCE_EXHAUSTED false rate-limit strikes.
+            -   **Scan Window Elimination & Deep XML Tag Penetration**: Stripped the leading 8-sentence / 1500-char scan window restriction to enable exhaustive full-text scanning across root instructions and all nested `<tag>...</tag>` blocks, penetrating multi-paragraph plugin banners; broadly matched case-insensitive `*code`, `*studio`, `*claw`, and `pi` client introductions.
+            -   **Pre-Model User Block Intelligent Ingress Sanitization**: Enabled system-track identity normalization on all user parts preceding the first model response (intercepting injected system prompts bundled into early user turns like `user: [prompt1, prompt2, ..., actual_user_query]`), while guaranteeing fenced code blocks and subsequent user queries remain 100% pristine.
+            -   **Competitor Brand Harmonization**: Unified non-code mentions of competitor brands and models (OpenAI, Anthropic, Qwen, ByteDance, Tencent, Xiaomi, Huawei, DeepSeek, Baidu, etc.) to Google.
+        -   **[Inbound Request Gzip Decompression Support & Onion Layer Auth Hardening] (Ref #425, Ref #146, PR #3746, Thanks to @cubelikeplayDaniel)**:
+            -   **Mounted RequestDecompressionLayer**: Enabled tower-http's `decompression-gzip` feature to mount Gzip request decompression on Axum reverse proxy services, supporting gateways and clients that emit compressed HTTP request bodies. (Ref #425, Ref #146, PR #3746, Thanks to @cubelikeplayDaniel)
+            -   **Strict Onion Security Middleware Ordering**: Positioned decompression strictly after `auth_middleware` to prevent unauthenticated zip bomb attacks, and ahead of `monitor_middleware` to ensure accurate audit trail decoding and model metadata extraction. (Ref #3746, Thanks to @cubelikeplayDaniel)
+            -   **End-to-End Integration Test Coverage**: Added comprehensive test cases covering Gzip payload inflation, unauthenticated early rejection, and uncompressed plaintext fallback parity. (PR #3746)
+
     *   **v5.0.0-beta.3 (2026-10-25)**:
         -   **[macOS Mini View Deadlock Elimination & Foreground Cascading Jump Prevention] (Fixes #3744, Ref PR #3747, Ref #3748)**:
             -   **Cross-Thread Deadlock & Zero-Visible-Window Hang Eradication**: Dispatched `switch_to_main_window` strictly onto the native OS UI thread (`app.run_on_main_thread`), immediately executing `show()`, `unminimize()`, and `set_focus()` in `exit_lightweight_mode` for macOS to permanently eliminate the Mini window freeze and unopenable main console caused by cross-thread AppKit synchronization and WebKit message loop starvation. (Fixes #3744, Ref PR #3747)

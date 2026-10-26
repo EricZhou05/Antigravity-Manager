@@ -3,6 +3,17 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.0-beta.4 (2026-10-26)**:
+        -   **[出站谷歌风控提示词清洗深度重构与全生命周期身份归一化]**:
+            -   **全面取消内部框架豁免与统一官方身份对齐**: 彻底取消原先针对 JeikCode 框架的白名单短路豁免，将包括 JeikCode、OpenCode、OpenClaw、Cherry Studio 等跨平台主流第三方 AI Agent / CLI 的原生身份声明统一对齐为官方 Antigravity 原生助手，杜绝 Google Cloud Code 上游 WAF 针对第三方框架特征的 429 RESOURCE_EXHAUSTED 伪限流拦截。
+            -   **解除窗口限制与全量/XML标签深度穿透**: 移除原先扫描前 8 句/1500字符的窗口截断限制，支持整段文本以及任意嵌套 XML 标签内部（`<tag>...</tag>`）的全量深度扫描，穿透多行插件环境垫片；广谱支持 `*code`、`*studio`、`*claw`、`pi` 等各类大小写不敏感泛化开场白。
+            -   **首个 Model 轮次之前的 User 注入块智能清洗**: 增强对对话流首个 `model` 轮次之前的 `user` 提示词块识别（针对客户端将系统提示词作为前几个 Part 放入首个 user 块的场景进行识别清洗），同时严格确保代码块（```` ```` 与行内反引号）与用户后续真实提问 100% 原始无损。
+            -   **竞品厂牌统一归一化**: 对非代码区域出现的 OpenAI、Anthropic、Qwen、字节跳动、腾讯、小米、华为、DeepSeek、Baidu 等竞品厂牌统一替换为 Google。
+        -   **[入站请求 Gzip 解压缩支持与洋葱鉴权防御增强] (Ref #425, Ref #146, PR #3746, Thanks to @cubelikeplayDaniel)**:
+            -   **挂载 RequestDecompressionLayer**: 启用 `tower-http` 的 `decompression-gzip` 特性，为 Axum 反向代理服务挂载 Gzip 请求解压缩层，满足各类特定网关与客户端发送 Gzip 压缩 Body 的入站需求。(Ref #425, Ref #146, PR #3746, Thanks to @cubelikeplayDaniel)
+            -   **遵循安全洋葱模型执行次序**: 置于 `auth_middleware` 之后防止未鉴权的大体积解压缩炸弹攻击（Zip Bomb），置于 `monitor_middleware` 之前确保审计层获得真实解码请求文本与模型字段提取。(Ref #3746, Thanks to @cubelikeplayDaniel)
+            -   **集成测试全面覆盖**: 补充端到端测试用例，覆盖 Gzip 解压与模型提取、未鉴权请求在解压前拦截防御以及未压缩明文请求的无缝兼容性。(PR #3746)
+
     *   **v5.0.0-beta.3 (2026-10-25)**:
         -   **[macOS 悬浮窗唤起死锁根除与前台级联跳出修复] (Fixes #3744, Ref PR #3747, Ref #3748)**:
             -   **跨线程死锁与 0-可见窗口挂起修复**: 将 `switch_to_main_window` 统一调度到操作系统原生 UI 主线程 (`app.run_on_main_thread`) 执行，在 `exit_lightweight_mode` 中针对 macOS 立即执行 `show()`、`unminimize()` 与 `set_focus()`，根治因跨线程 AppKit 调度与 WebView2/WebKit 消息循环悬空导致的悬浮窗卡死及主控制台无法打开的问题。(Fixes #3744, Ref PR #3747)
