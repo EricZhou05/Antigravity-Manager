@@ -449,6 +449,9 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                     });
                 }
                 "quit" => {
+                    #[cfg(target_os = "linux")]
+                    crate::linux_display_guard::mark_user_initiated_exit();
+
                     let app_handle = app.clone();
                     tauri::async_runtime::spawn(async move {
                         tracing::info!("[Tray] 退出网关触发，开始全面清理服务与端口...");

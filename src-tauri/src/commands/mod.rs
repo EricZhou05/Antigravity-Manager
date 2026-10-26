@@ -1706,6 +1706,9 @@ pub async fn query_transit_info(url: String, key: String) -> Result<String, Stri
 /// 优雅关闭网关服务并退出应用
 #[tauri::command]
 pub async fn exit_app(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    crate::linux_display_guard::mark_user_initiated_exit();
+
     use tauri::Manager;
     tauri::async_runtime::spawn(async move {
         tracing::info!("[Command] 退出应用触发，开始全面清理服务与端口...");

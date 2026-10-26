@@ -1,9 +1,9 @@
 mod commands;
 pub mod constants;
 pub mod error;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub mod linux_display_guard;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 mod linux_graphics;
 mod models;
 mod modules;
@@ -142,6 +142,11 @@ fn nvidia_proprietary_loaded() -> bool {
 
 #[cfg(target_os = "linux")]
 fn configure_linux_graphics() {
+    // 确保 GLib 在未设置 G_MESSAGES_DEBUG 时不过滤底层 Gdk/Gtk 的 debug 日志
+    if std::env::var("G_MESSAGES_DEBUG").is_err() {
+        std::env::set_var("G_MESSAGES_DEBUG", "Gdk,Gtk");
+    }
+
     linux_display_guard::init_display_guard();
 
     use linux_graphics::{
@@ -290,6 +295,10 @@ fn greet(name: &str) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Record main thread ID on Linux for display disconnection guard
+    #[cfg(target_os = "linux")]
+    linux_display_guard::record_main_thread_id();
+
     // Disable Windows background throttling/EcoQoS
     #[cfg(target_os = "windows")]
     windows_api::disable_efficiency_mode();
@@ -668,6 +677,7 @@ pub fn run() {
                         } => {},
                     }
                     tracing::info!("[Linux Display Guard] Received termination signal in background mode, shutting down cleanly.");
+                    linux_display_guard::mark_user_initiated_exit();
                     std::process::exit(0);
                 });
             }
