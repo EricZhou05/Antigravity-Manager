@@ -3,6 +3,14 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.1-beta.1 (2026-10-26)**:
+        -   **[Web/Headless Update Settings 400 Fix & Partial Patch Merge Governance] (Fixes #3754)**:
+            -   **Dual-Shape Request Body Compatibility for Axum Admin API**: `POST /api/system/updates/save` now accepts both the `{"settings": {...}}` wrapper forwarded by the frontend `invoke` mapping and the flat JSON used by Headless/CLI clients, permanently fixing the deterministic 400 Bad Request (content-length: 0) when switching to the Beta channel or toggling auto-check in Web mode. (Fixes #3754)
+            -   **Update Settings Now Apply as Partial Patches**: Introduced `UpdateSettingsPatch` and `patch_update_settings` so only explicitly provided fields are overwritten; omitted fields (`last_check_time`, `update_channel`) retain their persisted values. This root-cause fixes the silent channel reset to the build default when toggling auto-check, and the last-check timestamp being zeroed on every save. (Fixes #3754)
+            -   **Error Propagation & Empty-Patch Guard**: Persistence failures now surface as 500 with an error body, and empty patches return 400 with the list of expected fields, eliminating the previous `let _ =` silent-success path. (Fixes #3754)
+            -   **Unified Semantics Across Web and Desktop**: The Tauri command now uses the same patch semantics; the frontend drops the hardcoded `last_check_time: 0` and submits only `update_channel` when switching channels. (Fixes #3754)
+            -   **Regression Test Coverage**: Added unit tests for wrapped/flat payload parsing, unknown-field empty-patch detection, patch field preservation, and empty-patch rejection. (Fixes #3754)
+
     *   **v5.0.1-beta.0 (2026-10-26)**:
         -   **[Linux X11/xrdp Remote Desktop Display Guard Hardening & Seamless Fallback] (Fixes #3752, Thanks to @hazerwin)**:
             -   **Native Xlib Fatal IO Error Interception (XSetIOErrorHandler)**: Dynamically hooked X11's native `XSetIOErrorHandler` in `linux_display_guard`. When xrdp / VNC remote desktop client disconnects, resets, or suffers network socket broken pipes (EPIPE / ECONNRESET), the fatal XIO error is trapped immediately at the lowest level, safely terminating only the failing GUI thread while keeping the background Tokio runtime and core port 8045 proxy service 100% active and uninterrupted. (Fixes #3752, Thanks to @hazerwin)

@@ -3,6 +3,14 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.1-beta.1 (2026-10-26)**:
+        -   **[Web/Headless 更新设置保存 400 修复与局部补丁合并治理] (Fixes #3754)**:
+            -   **Axum 管理接口请求体双形态兼容**: `POST /api/system/updates/save` 现同时接受前端 `invoke` 映射透传的 `{"settings": {...}}` 包装体与 Headless/CLI 的平铺 JSON，彻底修复 Web 端切换预览版通道或修改自动检查更新时必然返回 400 Bad Request（content-length: 0）的问题。(Fixes #3754)
+            -   **更新设置改为局部补丁合并**: 新增 `UpdateSettingsPatch` 与 `patch_update_settings`，仅覆盖显式提供的字段；未传字段（`last_check_time`、`update_channel`）保留磁盘现值，根治切换自动检查开关会把更新通道静默重置为构建默认值、以及每次保存都清空最近检查时间并触发立即检查的连带缺陷。(Fixes #3754)
+            -   **错误透传与空补丁防呆**: 持久化失败如实返回 500 与错误体，空补丁返回 400 并附带期望字段列表，不再出现 `let _ =` 吞错导致的“写入失败仍返回 200”假成功。(Fixes #3754)
+            -   **Web 与桌面双链路语义统一**: Tauri 命令同步切换为补丁语义，前端移除 `last_check_time: 0` 硬编码并在切换通道时仅提交 `update_channel`，两条链路行为完全一致。(Fixes #3754)
+            -   **回归测试覆盖**: 新增包装体/平铺体解析、未知字段空补丁识别、补丁字段保留与空补丁拒绝等单元测试，防止后续回归。(Fixes #3754)
+
     *   **v5.0.1-beta.0 (2026-10-26)**:
         -   **[Linux X11/xrdp 远程桌面显示守卫升级与无感保活] (Fixes #3752, Thanks to @hazerwin)**:
             -   **Xlib 原生底层致命错误拦截 (XSetIOErrorHandler)**: 在 `linux_display_guard` 模块中动态挂载 X11 底层 `XSetIOErrorHandler`，当 xrdp / VNC 远程桌面断开连接、网络重置或端口被扫描导致 X Socket 管道破裂（Broken pipe / Connection reset）时，直接在第一现场拦截致命 XIO 错误，置位显示断开标记并仅安全退出主 GUI 线程，确保后台 Tokio 运行时与端口 8045 核心反代服务毫秒级平滑常驻。(Fixes #3752, Thanks to @hazerwin)
