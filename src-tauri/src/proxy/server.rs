@@ -2999,15 +2999,54 @@ async fn admin_update_last_check_time(
     Ok(StatusCode::OK)
 }
 
-async fn admin_save_update_settings(Json(settings): Json<serde_json::Value>) -> impl IntoResponse {
-    if let Ok(s) =
-        serde_json::from_value::<crate::modules::update_checker::UpdateSettings>(settings)
-    {
-        let _ = crate::modules::update_checker::save_update_settings(&s);
-        StatusCode::OK
-    } else {
-        StatusCode::BAD_REQUEST
+/// Web 模式请求体：
+/// - `Wrapped`：前端 `invoke` 映射原样透传的 `{"settings": { ... }}`；
+/// - `Flat`：Headless/CLI 直接平铺的字段（保留既有调用方式）。
+///
+/// `UpdateSettingsPatch` 的字段全部可选，因此必须先尝试 `Wrapped`，
+/// 否则平铺变体会把外层 `settings` 当作未知字段忽略并得到空补丁。
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum SaveUpdateSettingsPayload {
+    Wrapped {
+        settings: crate::modules::update_checker::UpdateSettingsPatch,
+    },
+    Flat(crate::modules::update_checker::UpdateSettingsPatch),
+}
+
+impl SaveUpdateSettingsPayload {
+    fn into_patch(self) -> crate::modules::update_checker::UpdateSettingsPatch {
+        match self {
+            Self::Wrapped { settings } => settings,
+            Self::Flat(settings) => settings,
+        }
     }
+}
+
+async fn admin_save_update_settings(
+    Json(payload): Json<SaveUpdateSettingsPayload>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let patch = payload.into_patch();
+    if patch.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Empty update settings patch: expected at least one of \
+                        auto_check, last_check_time, check_interval_hours, update_channel"
+                    .to_string(),
+            }),
+        ));
+    }
+
+    // 局部合并后落盘，并把无效的持久化错误如实返回，避免“写了但没生效”的静默成功。
+    let settings = crate::modules::update_checker::patch_update_settings(patch).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+
+    Ok(Json(settings))
 }
 
 async fn admin_is_auto_launch_enabled() -> impl IntoResponse {
@@ -5029,5 +5068,50 @@ mod image_scheduler_tests {
         let listener_v6 = super::bind_tcp_listener("::", port)
             .expect("wildcard v6 dual-stack bind should succeed");
         drop(listener_v6);
+    }
+}
+
+#[cfg(test)]
+mod save_update_settings_payload_tests {
+    use super::SaveUpdateSettingsPayload;
+    use crate::modules::update_checker::UpdateChannel;
+
+    #[test]
+    fn accepts_wrapped_web_invoke_body() {
+        // 复现 Issue #3754：Web 模式前端经 invoke 映射发送的 {"settings": {...}}
+        let payload: SaveUpdateSettingsPayload = serde_json::from_value(serde_json::json!({
+            "settings": { "auto_check": false, "update_channel": "beta" }
+        }))
+        .expect("wrapped web body should deserialize");
+
+        let patch = payload.into_patch();
+        assert_eq!(patch.auto_check, Some(false));
+        assert_eq!(patch.update_channel, Some(UpdateChannel::Beta));
+        assert_eq!(patch.last_check_time, None);
+        assert!(!patch.is_empty());
+    }
+
+    #[test]
+    fn accepts_flat_headless_body() {
+        let payload: SaveUpdateSettingsPayload = serde_json::from_value(serde_json::json!({
+            "auto_check": true,
+            "last_check_time": 0,
+            "check_interval_hours": 12,
+            "update_channel": "stable"
+        }))
+        .expect("flat headless body should deserialize");
+
+        let patch = payload.into_patch();
+        assert_eq!(patch.auto_check, Some(true));
+        assert_eq!(patch.last_check_time, Some(0));
+        assert_eq!(patch.check_interval_hours, Some(12));
+        assert_eq!(patch.update_channel, Some(UpdateChannel::Stable));
+    }
+
+    #[test]
+    fn empty_patch_material_is_rejected() {
+        let payload: SaveUpdateSettingsPayload =
+            serde_json::from_value(serde_json::json!({ "unknown": 1 })).unwrap();
+        assert!(payload.into_patch().is_empty());
     }
 }

@@ -733,7 +733,6 @@ function Settings() {
                                                     await invoke('save_update_settings', {
                                                         settings: {
                                                             auto_check: enabled,
-                                                            last_check_time: 0,
                                                             check_interval_hours: formData.update_check_interval ?? 24
                                                         }
                                                     });
@@ -764,7 +763,6 @@ function Settings() {
                                                     await invoke('save_update_settings', {
                                                         settings: {
                                                             auto_check: formData.auto_check_update ?? true,
-                                                            last_check_time: 0,
                                                             check_interval_hours: formData.update_check_interval ?? 24
                                                         }
                                                     });
@@ -1816,9 +1814,6 @@ function Settings() {
                                                     try {
                                                         await invoke('save_update_settings', {
                                                             settings: {
-                                                                auto_check: formData.auto_check_update ?? true,
-                                                                last_check_time: 0,
-                                                                check_interval_hours: formData.update_check_interval ?? 24,
                                                                 update_channel: 'stable',
                                                             }
                                                         });
@@ -1843,9 +1838,6 @@ function Settings() {
                                                     try {
                                                         await invoke('save_update_settings', {
                                                             settings: {
-                                                                auto_check: formData.auto_check_update ?? true,
-                                                                last_check_time: 0,
-                                                                check_interval_hours: formData.update_check_interval ?? 24,
                                                                 update_channel: 'beta',
                                                             }
                                                         });

@@ -1422,12 +1422,12 @@ pub async fn get_update_settings() -> Result<crate::modules::update_checker::Upd
     crate::modules::update_checker::load_update_settings()
 }
 
-/// 保存更新设置
+/// 保存更新设置（局部更新：仅覆盖传入字段）
 #[tauri::command]
 pub async fn save_update_settings(
-    settings: crate::modules::update_checker::UpdateSettings,
+    settings: crate::modules::update_checker::UpdateSettingsPatch,
 ) -> Result<(), String> {
-    crate::modules::update_checker::save_update_settings(&settings)
+    crate::modules::update_checker::patch_update_settings(settings).map(|_| ())
 }
 
 /// 切换账号的反代禁用状态
