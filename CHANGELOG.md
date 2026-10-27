@@ -3,6 +3,14 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.1-beta.4 (2026-10-28)**:
+        -   **[大文件上传分阶段自适应超时与四协议签名/思考治理统一] (PR #3767, Fixes #3763, Thanks to @jeikl)**:
+            -   **分阶段超时与上传预算**: 将连接、上传、首响应头、大文件重试拆为独立阶段；上传预算按「请求体大小 ÷ 上传带宽 × (1 + 额外等待系数)」自适应计算（默认 2 Mbps + 0.4），停滞超时默认 45s 且不超过上传预算；首响应头按聊天 30/25s、图片 45/25s、视频 60/30s、其他 15/15s 调度；大文件默认只尝试一次，抑制端点 fallback 与跨账号重发造成的上行放大。(PR #3767, Fixes #3763, Thanks to @jeikl)
+            -   **Gemini 流式生命同周期统一**: Gemini 原生流式迁移到通用 `run_stream_lifecycle`，四协议共享 3s SSE 心跳与首字/状态切换/滑动三段守卫，移除手写 300s 与首包 peek，响应头返回后立即开始保活。(PR #3767, Fixes #3763, Thanks to @jeikl)
+            -   **签名重试与思考治理统一**: 400 签名错误后统一跳过 ThinkingStore hydration，由流水线清理全部真实签名、将思考块降级为普通正文（保留推理内容），Gemini 工具调用回填官方哨兵；finalize 新增 `untrusted_signatures` 模式，避免「先丢文本、再删签名」；删除 Claude `Thinking → Text` 与 OpenAI 请求体特化。(PR #3767, Fixes #3763, Thanks to @jeikl)
+            -   **自愈与预过滤对齐**: 分离 `tool_choice` 冲突与签名重试标志，Gemini 补齐 tool_choice/thinking 冲突自愈与入站签名预过滤；四协议在过载预算降级、坏图、签名错误、工具冲突四类自愈上完全对齐。(PR #3767, Fixes #3763, Thanks to @jeikl)
+            -   **配置与文案**: 前端「超时设置」精简为连接/上传/首响应头/首字四分区，新增 7 个超时字段；全部字段支持 `ANTIGRAVITY_TIMEOUT_*` 环境变量覆盖，并同步 12 国语言。(PR #3767, Fixes #3763, Thanks to @jeikl)
+
     *   **v5.0.1-beta.3 (2026-10-27)**:
         -   **[多模态坏图 400 端到端就地自愈与指纹黑名单免疫] (PR #3759, Fixes #3758, Thanks to @cubelikeplayDaniel)**:
             -   **400 坏图就地降级与原地重试**: 针对客户端在长程多模态会话中发送损坏或无法被上游视觉解码器处理的图片导致 `400 Unable to process input image` 会话死锁报废问题，流水线精准识别该错误，不锁定账号、不解绑粘性会话以保护原账号 Prefix Cache；并在原地自动将损坏图片降级替换为结构化占位符后即时重试，彻底救活会话生命周期。(PR #3759, Fixes #3758, Thanks to @cubelikeplayDaniel)
