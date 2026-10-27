@@ -86,6 +86,17 @@ pub async fn handle_generate(
     // 1. 验证方法
     // [NEW] :countTokens 冒号语法，直接代理到上游 v1internal:countTokens
     if method == "countTokens" {
+        // [MODEL GATE] 探测端点同样接入门禁（POST 也需要，不能只靠 GET 拦截）
+        if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate(
+            &state,
+            Some(model_name.as_str()),
+            "gemini",
+            upstream_recorder.as_ref().map(|recorder| &recorder.0),
+        )
+        .await
+        {
+            return Ok(rejection);
+        }
         return Ok(execute_count_tokens(
             state,
             headers,
@@ -166,6 +177,18 @@ pub async fn handle_generate(
         &*state.custom_mapping.read().await,
         client_effort,
     );
+
+    // [MODEL GATE] 入站模型闸门：缺失/不存在 → 404 model not exist；全池无配额 → 502 no quota accounts
+    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate(
+        &state,
+        Some(model_name.as_str()),
+        "gemini",
+        upstream_recorder.as_ref().map(|recorder| &recorder.0),
+    )
+    .await
+    {
+        return Ok(rejection);
+    }
 
     while let Some(attempt) = next_rotation_attempt(
         &mut used_attempts,
@@ -1253,6 +1276,18 @@ pub async fn handle_get_model(
         find_dynamic_model, get_all_dynamic_models_metadata,
     };
 
+    // [MODEL GATE] GET /v1beta/models/:model 探测端点同样接入门禁（含已下线模型族 404）
+    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate(
+        &state,
+        Some(model_name.as_str()),
+        "gemini",
+        None,
+    )
+    .await
+    {
+        return rejection;
+    }
+
     let only_raw = *state.only_raw_quota_models.read().await;
     if let Some(matched_id) = find_dynamic_model(
         &state.custom_mapping,
@@ -1332,6 +1367,18 @@ pub async fn handle_count_tokens(
     >,
     Json(body): Json<Value>,
 ) -> Response {
+    // [MODEL GATE] POST /v1beta/models/:model/countTokens 探测端点同样接入门禁
+    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate(
+        &state,
+        Some(model_name.as_str()),
+        "gemini",
+        None,
+    )
+    .await
+    {
+        return rejection;
+    }
+
     execute_count_tokens(
         state,
         headers,

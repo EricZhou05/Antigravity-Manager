@@ -590,10 +590,6 @@ fn apply_thinking_hints(
 
 const MAX_RETRY_ATTEMPTS: usize = 3;
 
-// ===== Model Constants for Background Tasks =====
-// These can be adjusted for performance/cost optimization or overridden by custom_mapping
-const INTERNAL_BACKGROUND_TASK: &str = "internal-background-task"; // Unified virtual ID for all background tasks
-
 // ===== Layer 3: XML Summary Prompt Template =====
 // Borrowed from Practical-Guide-to-Context-Engineering + Claude Code official practice
 // This prompt generates a structured 8-section XML summary for context compression
@@ -930,6 +926,18 @@ pub async fn handle_messages(
                     .into_response();
             }
         };
+
+    // [MODEL GATE] 入站模型闸门：缺失/不存在 → 404 model not exist；全池无配额 → 502 no quota accounts
+    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate(
+        &state,
+        Some(request.model.as_str()),
+        "claude",
+        upstream_recorder.as_ref().map(|recorder| &recorder.0),
+    )
+    .await
+    {
+        return rejection;
+    }
 
     // 0. 自定义映射优先拦截 (用户自定义路由与热更新规则拥有最高优先级，避免被后续变体推断抹平原模型意图)
     let custom_target = {
@@ -3122,6 +3130,18 @@ pub async fn handle_retrieve_model(
         find_dynamic_model, get_all_dynamic_models_metadata,
     };
 
+    // [MODEL GATE] GET /v1/models/claude/:model 探测端点同样接入门禁（含已下线模型族 404）
+    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate(
+        &state,
+        Some(model.as_str()),
+        "claude",
+        None,
+    )
+    .await
+    {
+        return rejection;
+    }
+
     let only_raw = *state.only_raw_quota_models.read().await;
     if let Some(matched_id) = find_dynamic_model(
         &state.custom_mapping,
@@ -3546,15 +3566,14 @@ fn extract_last_user_message_for_detection(request: &ClaudeRequest) -> Option<St
 }
 
 #[allow(dead_code)]
-fn select_background_model(task_type: BackgroundTaskType) -> &'static str {
-    match task_type {
-        BackgroundTaskType::TitleGeneration => INTERNAL_BACKGROUND_TASK,
-        BackgroundTaskType::SimpleSummary => INTERNAL_BACKGROUND_TASK,
-        BackgroundTaskType::SystemMessage => INTERNAL_BACKGROUND_TASK,
-        BackgroundTaskType::PromptSuggestion => INTERNAL_BACKGROUND_TASK,
-        BackgroundTaskType::EnvironmentProbe => INTERNAL_BACKGROUND_TASK,
-        BackgroundTaskType::ContextCompression => INTERNAL_BACKGROUND_TASK,
-    }
+/// 后台任务不再返回固定虚拟 ID：一律由 `model_gate::pick_background_model_from_pool`
+/// 在运行时从“当前号池最新 flash-low → 无后缀 flash”动态推导，避免硬编码模型下线即失效。
+fn select_background_model(
+    task_type: BackgroundTaskType,
+    token_manager: &crate::proxy::TokenManager,
+) -> Option<String> {
+    let _ = task_type;
+    crate::proxy::common::model_gate::pick_background_model_from_pool(token_manager)
 }
 
 // ===== [Issue #467 Fix] Warmup 请求拦截 =====
@@ -3789,8 +3808,13 @@ async fn try_compress_with_summary(
         )),
     });
 
+    // 兜底简单任务模型完全由当前号池动态推导（优先最新 flash-low，其次无后缀 flash），绝不硬编码
+    let background_model =
+        crate::proxy::common::model_gate::pick_background_model_from_pool(token_manager.as_ref())
+            .ok_or_else(|| "No flash model available in the current quota pool".to_string())?;
+
     let summary_request = ClaudeRequest {
-        model: INTERNAL_BACKGROUND_TASK.to_string(),
+        model: background_model.to_string(),
         messages: summary_messages,
         system: None,
         stream: false,
@@ -3809,12 +3833,12 @@ async fn try_compress_with_summary(
 
     debug!(
         "[{}] [Layer-3] Calling {} for summary generation",
-        trace_id, INTERNAL_BACKGROUND_TASK
+        trace_id, background_model
     );
 
     // 3. Call upstream using helper function (reuse existing infrastructure)
     let xml_summary = call_gemini_sync(
-        INTERNAL_BACKGROUND_TASK,
+        &background_model,
         &summary_request,
         token_manager,
         upstream,

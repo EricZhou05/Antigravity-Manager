@@ -603,7 +603,65 @@ pub async fn apply_retry_strategy(
     }
 }
 
+/// 入站模型闸门（协议无关）。
+///
+/// - 缺失 / 不存在的 model-id → 404 `model not exist`
+/// - 整池无配额 → 502 `no quota accounts`
+///
+/// 拒绝时：响应头带上 `X-Account-Email` 哨兵文案（日志账号列直接展示），
+/// 并把英文排障说明写入 `upstream_recorder`，使「转出报文」面板可展开查看。
+pub async fn enforce_model_gate(
+    state: &AppState,
+    requested_model: Option<&str>,
+    protocol: &str,
+    upstream_recorder: Option<&crate::proxy::monitor::UpstreamRequestBodyHolder>,
+) -> Result<String, Response> {
+    let decision = crate::proxy::common::model_gate::gate_inbound_model(
+        requested_model,
+        &state.custom_mapping,
+        &state.token_manager,
+    )
+    .await;
+
+    let Some((status, reason)) = decision.rejection() else {
+        return Ok(decision.allowed_model().unwrap_or_default().to_string());
+    };
+
+    let requested = requested_model.unwrap_or("").trim().to_string();
+    tracing::warn!(
+        "[ModelGate] Blocked inbound model '{}' ({}): HTTP {} - {}",
+        requested,
+        protocol,
+        status.as_u16(),
+        reason
+    );
+
+    // 把英文详细原因写入「转出报文」面板（原本这里会是空的“无中转报文”）
+    if let Some(holder) = upstream_recorder {
+        let explanation =
+            crate::proxy::common::model_gate::blocked_explanation(reason, &requested, protocol);
+        holder
+            .set(serde_json::to_string_pretty(&explanation).unwrap_or_else(|_| reason.to_string()));
+    }
+
+    let body = build_dual_track_error(protocol, status.as_u16(), &requested, reason);
+    Err((
+        status,
+        [
+            ("X-Account-Email", reason),
+            ("X-Mapped-Model", requested.as_str()),
+            ("X-Gateway-Error", reason),
+        ],
+        Json(body),
+    )
+        .into_response())
+}
+
 /// 判断是否应该轮换账号
+///
+/// [MODEL GATE] 网关自答（404 `model not exist` / 502 `no quota accounts`）永远不会到达这里：
+/// `enforce_model_gate` 在选号之前就返回，且 `UpstreamClassification::classify` 优先把它们
+/// 归为 `InternalGatewayMessage`（既不锁号也不解绑粘性会话）。此注释用于防止后续重构破防。
 pub fn should_rotate_account(status_code: u16, strategy: Option<&RetryStrategy>) -> bool {
     // [NEW] 如果识别为 Grace Retry，则显式要求不轮换账号
     if let Some(RetryStrategy::GraceRetry(_)) = strategy {

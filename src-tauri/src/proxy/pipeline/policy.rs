@@ -21,6 +21,12 @@ impl UpstreamClassification {
     /// 统一分类器：协议无关，全局唯一真理
     pub fn classify(status: u16, body: &str, retry_after_header: Option<&str>) -> Self {
         let lower = body.to_lowercase();
+        // 0. 网关自答（model not exist / no quota accounts）最高优先级豁免：
+        //    它们不对应任何账号，绝不允许触发换号、粘性解绑或账号冷却。
+        if crate::proxy::common::model_gate::is_gateway_self_answer(body) {
+            return UpstreamClassification::InternalGatewayMessage;
+        }
+
         // 1. 优先排除网关自身内部错误（防自噬死循环）
         if lower.contains("all accounts limited")
             || lower.contains("no accounts available")
@@ -243,5 +249,20 @@ mod tests {
             400,
             "Invalid signature in thinking block"
         ));
+    }
+
+    #[test]
+    fn test_gateway_self_answer_never_penalizes_accounts() {
+        // 404 model not exist：网关代答，绝不能解绑粘性会话或打入冷却
+        let not_found = UpstreamClassification::classify(404, "model not exist", None);
+        assert_eq!(not_found, UpstreamClassification::InternalGatewayMessage);
+        assert!(!not_found.should_lock_account());
+        assert!(!not_found.abandons_sticky_account());
+
+        // 502 no quota accounts：即使文本包含 quota 关键词，也必须豁免
+        let no_quota = UpstreamClassification::classify(502, "no quota accounts", None);
+        assert_eq!(no_quota, UpstreamClassification::InternalGatewayMessage);
+        assert!(!no_quota.should_lock_account());
+        assert!(!no_quota.abandons_sticky_account());
     }
 }

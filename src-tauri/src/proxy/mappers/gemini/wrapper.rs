@@ -1065,8 +1065,6 @@ pub fn inject_ids_to_response(response: &mut Value, model_name: &str) {
     }
 }
 
-const INTERNAL_BACKGROUND_TASK: &str = "gemini-3.1-flash-lite";
-
 /// Layer-3 后台摘要请求的超时（秒）。
 ///
 /// 上游客户端的默认超时是 600s，对"摘要整段对话"这种辅助任务过长 ——
@@ -1167,16 +1165,21 @@ async fn try_compress_gemini_with_summary(
         }]
     }));
 
+    // 兜底简单任务模型完全由当前号池动态推导（优先最新 flash-low，其次无后缀 flash），绝不硬编码
+    let background_model =
+        crate::proxy::common::model_gate::pick_background_model_from_pool(token_manager.as_ref())
+            .ok_or_else(|| "No flash model available in the current quota pool".to_string())?;
+
     let mut summary_request = original_request.clone();
     if let Some(obj) = summary_request.as_object_mut() {
         obj.insert("contents".to_string(), json!(summary_messages));
-        obj.insert("model".to_string(), json!(INTERNAL_BACKGROUND_TASK));
+        obj.insert("model".to_string(), json!(background_model));
         obj.remove("stream");
     }
 
     debug!(
         "[{}] [Layer-3] [Gemini] Calling {} for summary generation",
-        trace_id, INTERNAL_BACKGROUND_TASK
+        trace_id, background_model
     );
 
     let token_obj = token_manager.get_token_by_id(account_id);
@@ -1188,7 +1191,7 @@ async fn try_compress_gemini_with_summary(
     let wrapped_summary_body = wrap_request(
         &summary_request,
         project_id,
-        INTERNAL_BACKGROUND_TASK,
+        &background_model,
         Some(account_id),
         Some(session_id_str),
         token_obj.as_ref(),

@@ -417,6 +417,24 @@ pub async fn get_all_dynamic_models(
         model_ids.insert(bare);
     }
 
+    // 4.5 生图尺寸变体归一（仅默认模式，且必须账号**真实配额 > 0**）：
+    // 部分账号只上报 `gemini-3.1-flash-image-4k` 这类尺寸变体；
+    // 只要该变体真实配额 > 0，就把基底生图模型也登记进列表，避免“有额度却看不到模型”。
+    // 零配额账号不会因此凭空出现（“默认列表不显示无配额模型”）。
+    if !only_raw_quota_models {
+        if let Some(tm) = token_manager {
+            for raw in tm.models_with_positive_quota() {
+                let base = strip_image_variant_suffix(&raw);
+                if base != raw.to_lowercase()
+                    && base.contains("image")
+                    && is_model_compliant_with_baseline(&base)
+                {
+                    model_ids.insert(base);
+                }
+            }
+        }
+    }
+
     // 5. 应用官方基准线过滤，彻底剔除已淘汰的旧版模型与内部虚拟 ID
     let mut sorted_ids: Vec<_> = model_ids
         .into_iter()
@@ -424,6 +442,44 @@ pub async fn get_all_dynamic_models(
         .collect();
     sorted_ids.sort();
     sorted_ids
+}
+
+/// 生图模型族变体归一化：剔除尺寸/分辨率/预览后缀，得到基底生图模型 ID。
+///
+/// 例：`gemini-3-pro-image-preview` → `gemini-3-pro-image`；
+/// 　　`gemini-3.1-flash-image-4k-16x9` → `gemini-3.1-flash-image`。
+pub fn strip_image_variant_suffix(id: &str) -> String {
+    const SUFFIXES: &[&str] = &[
+        "-preview",
+        "-2k",
+        "-4k",
+        "-1k",
+        "-8k",
+        "-16x9",
+        "-9x16",
+        "-1x1",
+        "-3x4",
+        "-4x3",
+        "-high",
+        "-medium",
+        "-low",
+        "-extra-low",
+        "-tiered",
+    ];
+    let mut base = id.trim().to_lowercase();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for suffix in SUFFIXES {
+            if let Some(stripped) = base.strip_suffix(suffix) {
+                if !stripped.is_empty() {
+                    base = stripped.to_string();
+                    changed = true;
+                }
+            }
+        }
+    }
+    base
 }
 
 /// 去除模型展示名称中的档位括号后缀 (如 "Gemini 3.1 Pro (Low)" -> "Gemini 3.1 Pro")

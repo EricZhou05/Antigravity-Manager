@@ -27,6 +27,12 @@ enum TrackerParserMode {
 fn classify_rate_limit_reason(error_body: &str) -> crate::proxy::rate_limit::RateLimitReason {
     use crate::proxy::rate_limit::RateLimitReason;
 
+    // 网关自答错误不来自任何账号：一律视为 Unknown，
+    // 避免 “no quota accounts” 因包含 quota 关键词被误判为真实配额耗尽而连坐账号。
+    if crate::proxy::common::model_gate::is_gateway_self_answer(error_body) {
+        return RateLimitReason::Unknown;
+    }
+
     let body = error_body.to_lowercase();
     let generic_resource_exhausted =
         body.contains("resource has been exhausted") || body.contains("resource_exhausted");
@@ -3816,6 +3822,11 @@ impl TokenManager {
         retry_after_header: Option<&str>,
         error_body: &str,
     ) {
+        // 网关自答（model not exist / no quota accounts）不得计入任何账号限流。
+        if crate::proxy::common::model_gate::is_gateway_self_answer(error_body) {
+            return;
+        }
+
         // [NEW] 检查熔断是否启用 (使用内存缓存，极快)
         let config = self.circuit_breaker_config.read().await.clone();
         if !config.enabled {
@@ -4015,6 +4026,16 @@ impl TokenManager {
         cooldown_secs: u64,
         reason: &str,
     ) {
+        // 网关自答（model not exist / no quota accounts）不对应任何账号，
+        // 绝不能触发冷却锁定与粘性会话解绑。
+        if crate::proxy::common::model_gate::is_gateway_self_answer(reason) {
+            tracing::debug!(
+                "[ModelGate] Skipped transient-failure lock for gateway self-answer: {}",
+                reason
+            );
+            return;
+        }
+
         let resolved_id = self
             .email_to_account_id(account_id)
             .unwrap_or_else(|| account_id.to_string());
@@ -4035,6 +4056,62 @@ impl TokenManager {
             reason = %reason,
             "Account marked with transient failure cooldown in rate limit tracker and unbound from sticky sessions"
         );
+    }
+
+    /// 返回所有账号上「真实配额 > 0」的模型名（原始 ID，含尺寸/档位变体，不做归一）。
+    ///
+    /// 供模型列表归一使用：只有真实有额度的变体才会把基底模型带入列表。
+    pub fn models_with_positive_quota(&self) -> Vec<String> {
+        let mut positive: HashSet<String> = HashSet::new();
+        for entry in self.tokens.iter() {
+            for (model, quota) in entry.value().model_quotas.iter() {
+                if *quota > 0 {
+                    positive.insert(model.clone());
+                }
+            }
+        }
+        positive.into_iter().collect()
+    }
+
+    /// 统计「对目标模型拥有正配额（或已授权可用）」的账号数量。
+    ///
+    /// 用于入站模型的配额闸门：返回 0 表示整池都没有该模型额度，
+    /// 应当由网关直接 502 拒答，而不是把请求发往上游换回一个 429。
+    pub fn accounts_with_positive_quota(&self, model: &str) -> usize {
+        let normalized = crate::proxy::common::model_mapping::normalize_to_standard_id(model)
+            .unwrap_or_else(|| model.to_string());
+        // 生图基底：若账号只上报了尺寸变体（-4k / -2k / -preview …），同族变体配额即代表基底可用
+        let image_base = crate::proxy::common::model_mapping::strip_image_variant_suffix(model);
+        let is_image = image_base.contains("image") || image_base.starts_with("imagen");
+
+        self.tokens
+            .iter()
+            .filter(|entry| {
+                let token = entry.value();
+                if token.validation_blocked {
+                    return false;
+                }
+                if let Some(quota) = token
+                    .model_quotas
+                    .get(&normalized)
+                    .or_else(|| token.model_quotas.get(model))
+                {
+                    return *quota > 0;
+                }
+                if is_image
+                    && token.model_quotas.iter().any(|(known, quota)| {
+                        *quota > 0
+                            && crate::proxy::common::model_mapping::strip_image_variant_suffix(
+                                known,
+                            ) == image_base
+                    })
+                {
+                    return true;
+                }
+                token.available_models.contains(model)
+                    || token.available_models.contains(&normalized)
+            })
+            .count()
     }
 
     /// 检查是否有可用的 Google 账号
@@ -4699,6 +4776,12 @@ impl TokenManager {
         error_body: &str,
         model: Option<&str>,
     ) -> bool {
+        // 网关自答（model not exist / no quota accounts）不属于任何账号，
+        // 绝不参与限流记账与零配额标记，否则会连坐惩罚无辜账号。
+        if crate::proxy::common::model_gate::is_gateway_self_answer(error_body) {
+            return false;
+        }
+
         let normalized_model =
             model.and_then(crate::proxy::common::model_mapping::normalize_to_standard_id);
         let model_to_track = normalized_model.as_deref().or(model);
@@ -4836,8 +4919,10 @@ impl TokenManager {
         }
 
         // 关键门禁 2：内部错误文字（All accounts limited / No accounts available / Token pool is empty 等）严禁递归自锁！
+        // 网关自答哨兵（model not exist / no quota accounts）同样必须豁免，否则会连坐无辜账号。
         let lower_err = error_body.to_lowercase();
-        if lower_err.contains("all accounts limited")
+        if crate::proxy::common::model_gate::is_gateway_self_answer(error_body)
+            || lower_err.contains("all accounts limited")
             || lower_err.contains("no accounts available")
             || lower_err.contains("all accounts failed")
             || lower_err.contains("token pool is empty")
@@ -5410,53 +5495,141 @@ impl TokenManager {
         Self::send_pure_hello_probe_internal(&token).await
     }
 
-    async fn send_pure_hello_probe_internal(token: &ProxyToken) -> Result<f64, String> {
-        let body = serde_json::json!({
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [{ "text": "你好" }]
-                }
-            ],
-            "generationConfig": {
-                "maxOutputTokens": 10,
-                "temperature": 0.0
+    /// 选择探针模型：只挑账号真实可用、且配额为正的 Gemini 文本 Flash 档。
+    ///
+    /// 探针的唯一目的是测量「账号 → 上游」的链路首包时延，因此必须满足：
+    /// 1. 模型确实归属该账号（`model_quotas` / `available_models`），否则上游直接 400/429，
+    ///    探针永远失败、刑期只能逐级升级，账号永远回不到 Healthy；
+    /// 2. 走 Flash 档（单次成本最低、最不容易撞容量类 429，且不消耗 Pro / Argon 配额）。
+    fn select_probe_model(token: &ProxyToken) -> Option<String> {
+        let mut candidates: Vec<(String, i32)> = token
+            .model_quotas
+            .iter()
+            .map(|(name, quota)| (name.clone(), *quota))
+            .collect();
+        // 历史账号可能尚未同步配额表，用 available_models 兜底补全（未知配额视为 0，排在末位）
+        for name in &token.available_models {
+            if !candidates.iter().any(|(known, _)| known == name) {
+                candidates.push((name.clone(), 0));
             }
+        }
+
+        candidates.sort_by_key(|(name, quota)| {
+            let lower = name.to_lowercase();
+            let gemini_text =
+                lower.starts_with("gemini") && !lower.contains("image") && !lower.contains("argon");
+            (
+                if gemini_text { 0 } else { 1 },
+                if lower.contains("flash") { 0 } else { 1 },
+                if *quota > 0 { 0 } else { 1 },
+                lower.clone(),
+            )
         });
 
-        let endpoint =
-            "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse";
+        candidates.into_iter().next().map(|(name, _)| name)
+    }
+
+    /// 构造对齐官方 v1internal 信封的极简探针报文。
+    ///
+    /// [FIX] 修复历史缺陷：旧实现直接向 `v1internal:streamGenerateContent` 投递裸
+    /// `{contents, generationConfig}`，缺少 `project` / `requestId` / `request` 包装，
+    /// 上游恒定返回 `400 INVALID_ARGUMENT (Unknown name "contents")`，
+    /// 使 QoS 阶梯探针永远失败、账号刑期只能逐级升级而无法自愈。
+    fn build_probe_envelope(token: &ProxyToken, model: &str) -> serde_json::Value {
+        let project_id = token
+            .project_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .unwrap_or(DEFAULT_PROJECT_ID);
+
+        serde_json::json!({
+            "project": project_id,
+            "requestId": crate::proxy::mappers::common_utils::build_official_request_id(
+                &format!("qos-probe-{}", token.account_id),
+                0,
+            ),
+            "request": {
+                "contents": [{
+                    "role": "user",
+                    "parts": [{ "text": "你好" }]
+                }],
+                // 探针只测首包：输出预算与温度压到最低，避免占用真实配额
+                "generationConfig": {
+                    "maxOutputTokens": 10,
+                    "temperature": 0.0
+                }
+            },
+            "model": model,
+            "userAgent": "antigravity"
+        })
+    }
+
+    async fn send_pure_hello_probe_internal(token: &ProxyToken) -> Result<f64, String> {
+        let model = Self::select_probe_model(token)
+            .ok_or_else(|| format!("探针跳过：账号 {} 缺少可用模型元数据", token.email))?;
+        let body = Self::build_probe_envelope(token, &model);
 
         let client = rquest::Client::builder()
             .timeout(std::time::Duration::from_millis(8000))
             .build()
             .map_err(|e| format!("Client builder error: {}", e))?;
-
-        let start = std::time::Instant::now();
         let hub_ua = crate::modules::hub_version::get_current_hub_user_agent();
-        let resp = client
-            .post(endpoint)
-            .header("Authorization", format!("Bearer {}", token.access_token))
-            .header("Content-Type", "application/json")
-            .header("User-Agent", hub_ua)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| format!("Probe HTTP error: {}", e))?;
 
-        if !resp.status().is_success() {
-            return Err(format!("Probe HTTP status: {}", resp.status()));
+        // 与主链路共用端点优先级：Daily 主力 → Sandbox 灾备
+        let mut last_error = String::from("Probe attempted no endpoint");
+        for base in crate::proxy::upstream::client::V1_INTERNAL_BASE_URL_FALLBACKS {
+            let endpoint = format!("{}:streamGenerateContent?alt=sse", base);
+            let start = std::time::Instant::now();
+
+            let resp = match client
+                .post(endpoint.as_str())
+                .header("Authorization", format!("Bearer {}", token.access_token))
+                .header("Content-Type", "application/json")
+                .header("User-Agent", hub_ua.clone())
+                .json(&body)
+                .send()
+                .await
+            {
+                Ok(resp) => resp,
+                Err(e) => {
+                    // 网络层故障属于端点级问题，换下一个候选端点继续探
+                    last_error = format!("{} -> {}", endpoint, e);
+                    continue;
+                }
+            };
+
+            let status = resp.status();
+            if !status.is_success() {
+                last_error = format!("{} -> HTTP {} (model={})", endpoint, status, model);
+                // 与 should_try_next_endpoint 保持一致的终止语义：408 / 404 / 5xx 才回退，
+                // 400 / 401 / 403 / 429 属于账号或报文级结论，直接判失败，避免重试放大。
+                let code = status.as_u16();
+                if code == 408 || code == 404 || (500..600).contains(&code) {
+                    continue;
+                }
+                return Err(last_error);
+            }
+
+            use futures::StreamExt;
+            let mut stream = resp.bytes_stream();
+            if let Some(chunk_res) = stream.next().await {
+                let _ = chunk_res.map_err(|e| format!("{} -> stream error: {}", endpoint, e))?;
+                let ttft_ms = start.elapsed().as_micros() as f64 / 1000.0;
+                tracing::debug!(
+                    "🔍 [QoS Probe] {} via {} (model={}) TTFT={:.0}ms",
+                    token.email,
+                    endpoint,
+                    model,
+                    ttft_ms
+                );
+                return Ok(ttft_ms);
+            }
+
+            last_error = format!("{} -> empty stream (model={})", endpoint, model);
         }
 
-        use futures::StreamExt;
-        let mut stream = resp.bytes_stream();
-        if let Some(chunk_res) = stream.next().await {
-            let _ = chunk_res.map_err(|e| format!("Probe stream error: {}", e))?;
-            let ttft_ms = start.elapsed().as_micros() as f64 / 1000.0;
-            return Ok(ttft_ms);
-        }
-
-        Err("Probe received empty stream".to_string())
+        Err(last_error)
     }
 
     /// [NEW] 从账号配额信息中提取最近的刷新时间戳
@@ -9024,5 +9197,176 @@ mod tests {
         assert!(manager.rate_limit_tracker.is_rate_limited(acc_id, None));
         // 粘性绑定立即被解除
         assert!(manager.session_accounts.get(sid).is_none());
+    }
+
+    /// 生图变体归一：账号只上报 `-4k` 变体且真实配额 > 0 时，基底生图模型视为可用；
+    /// 0 配额变体不得把基底模型带入列表或配额闸门。
+    #[test]
+    fn image_variant_quota_counts_for_base_model() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+
+        let mut with_quota =
+            create_test_token("img1@example.com", Some("PRO"), 1.0, None, Some(100));
+        with_quota.account_id = "img_acc_quota".into();
+        with_quota
+            .model_quotas
+            .insert("gemini-3.1-flash-image-4k".into(), 33);
+        manager.tokens.insert("img_acc_quota".into(), with_quota);
+
+        let mut zero_quota =
+            create_test_token("img2@example.com", Some("PRO"), 1.0, None, Some(100));
+        zero_quota.account_id = "img_acc_zero".into();
+        zero_quota
+            .model_quotas
+            .insert("gemini-3.1-flash-image-2k".into(), 0);
+        manager.tokens.insert("img_acc_zero".into(), zero_quota);
+
+        assert_eq!(
+            manager.accounts_with_positive_quota("gemini-3.1-flash-image"),
+            1,
+            "只有真实配额 > 0 的变体账号才计入基底生图模型"
+        );
+        let positive = manager.models_with_positive_quota();
+        assert!(
+            positive.contains(&"gemini-3.1-flash-image-4k".to_string()),
+            "配额 > 0 的变体应被统计: {positive:?}"
+        );
+        assert!(
+            !positive.contains(&"gemini-3.1-flash-image-2k".to_string()),
+            "0 配额变体不得进入列表推导: {positive:?}"
+        );
+    }
+
+    /// 网关自答必须对全部惩罚入口免疫：不得锁号、不得解绑粘性会话、不得写入零配额。
+    #[tokio::test]
+    async fn gateway_self_answers_never_penalize_accounts() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+
+        let acc_id = "test_gate_exempt_acc";
+        let email = "gate@example.com";
+        let mut token = create_test_token(email, Some("PRO"), 1.0, None, Some(100));
+        token.account_id = acc_id.to_string();
+        manager.tokens.insert(acc_id.to_string(), token);
+
+        let sid = "sid-gate-exempt";
+        manager.commit_session(sid, acc_id);
+
+        // 1) 短时故障冷却入口：两个哨兵均不得触发冷却 / 解绑
+        manager.mark_account_transient_failure(acc_id, 30, "model not exist");
+        manager.mark_account_transient_failure(acc_id, 30, "no quota accounts");
+        assert!(
+            !manager.rate_limit_tracker.is_rate_limited(acc_id, None),
+            "网关自答不得计入账号冷却"
+        );
+        assert_eq!(
+            manager.session_accounts.get(sid).unwrap().as_str(),
+            acc_id,
+            "网关自答不得解绑粘性会话"
+        );
+
+        // 2) 快速限流标记入口：不得返回需要刷新配额，也不得写入限流记录
+        let needs_refresh = manager
+            .mark_rate_limited_fast(email, 404, None, "model not exist", Some("gemini-2.5-pro"))
+            .await;
+        assert!(!needs_refresh, "网关自答不得触发配额刷新锁定");
+        assert!(
+            !manager
+                .rate_limit_tracker
+                .is_rate_limited(acc_id, Some("gemini-2.5-pro")),
+            "网关自答不得为任何模型写入冷却"
+        );
+    }
+
+    /// 探针必须挑选账号真实可用且配额为正的 Gemini 文本 Flash 档，
+    /// 绝不能拿 Pro / Image / Argon 去探活（会直接撞 429 并把账号打进长冷却）。
+    #[test]
+    fn test_select_probe_model_prefers_positive_flash() {
+        let mut token = create_test_token("probe@example.com", Some("PRO"), 1.0, None, Some(100));
+        token
+            .model_quotas
+            .insert("gemini-3.8-flash-high".to_string(), 33);
+        token
+            .model_quotas
+            .insert("gemini-4-argon-medium".to_string(), 0);
+        token
+            .model_quotas
+            .insert("gemini-3.1-pro-high".to_string(), 80);
+        token
+            .model_quotas
+            .insert("gemini-3.1-flash-image".to_string(), 33);
+
+        assert_eq!(
+            TokenManager::select_probe_model(&token).as_deref(),
+            Some("gemini-3.8-flash-high"),
+            "必须优先选择正配额的 Gemini 文本 Flash 模型"
+        );
+    }
+
+    #[test]
+    fn test_select_probe_model_falls_back_to_available_models() {
+        let mut token = create_test_token("probe2@example.com", Some("PRO"), 1.0, None, Some(100));
+        // 历史账号未同步配额表时，用 available_models 兜底
+        token
+            .available_models
+            .insert("gemini-3.8-flash-tiered".to_string());
+
+        assert_eq!(
+            TokenManager::select_probe_model(&token).as_deref(),
+            Some("gemini-3.8-flash-tiered")
+        );
+    }
+
+    #[test]
+    fn test_select_probe_model_without_metadata_skips_probe() {
+        let token = create_test_token("probe3@example.com", Some("PRO"), 1.0, None, Some(100));
+        assert!(
+            TokenManager::select_probe_model(&token).is_none(),
+            "无模型元数据时必须放弃探针，而不是盲发任意模型"
+        );
+    }
+
+    /// [FIX] 探针报文必须是完整的 v1internal 官方信封；
+    /// 裸 {contents, generationConfig} 会被上游 400 拒绝，导致阶梯自愈永远失败。
+    #[test]
+    fn test_build_probe_envelope_matches_official_shape() {
+        let mut token = create_test_token("probe4@example.com", Some("PRO"), 1.0, None, Some(100));
+        token.project_id = Some("aicode-consumers".to_string());
+
+        let body = TokenManager::build_probe_envelope(&token, "gemini-3.8-flash-high");
+
+        assert_eq!(body["project"], "aicode-consumers");
+        assert_eq!(body["model"], "gemini-3.8-flash-high");
+        assert_eq!(body["userAgent"], "antigravity");
+        assert!(
+            body["requestId"]
+                .as_str()
+                .unwrap_or("")
+                .starts_with("agent/"),
+            "requestId 必须对齐官方 agent/ 前缀: {body}"
+        );
+
+        let request = &body["request"];
+        assert!(
+            request.get("contents").is_some(),
+            "contents 必须包裹在 request 内: {body}"
+        );
+        assert_eq!(request["generationConfig"]["maxOutputTokens"], 10);
+        assert_eq!(request["generationConfig"]["temperature"], 0.0);
+
+        let contents = request["contents"].as_array().unwrap();
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0]["role"], "user");
+        assert_eq!(contents[0]["parts"][0]["text"], "你好");
+    }
+
+    #[test]
+    fn test_build_probe_envelope_falls_back_to_default_project() {
+        let mut token = create_test_token("probe5@example.com", Some("PRO"), 1.0, None, Some(100));
+        token.project_id = None;
+
+        let body = TokenManager::build_probe_envelope(&token, "gemini-3-flash");
+        assert_eq!(body["project"], DEFAULT_PROJECT_ID);
     }
 }

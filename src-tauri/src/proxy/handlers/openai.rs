@@ -2075,6 +2075,18 @@ pub async fn handle_chat_completions(
         .await;
     }
 
+    // [MODEL GATE] 入站模型闸门：缺失/不存在 → 404 model not exist；全池无配额 → 502 no quota accounts
+    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate(
+        &state,
+        Some(body.get("model").and_then(|v| v.as_str()).unwrap_or("")),
+        "openai",
+        upstream_recorder.as_ref().map(|recorder| &recorder.0),
+    )
+    .await
+    {
+        return Ok(rejection);
+    }
+
     let debug_cfg = state.debug_logging.read().await.clone();
     let original_body = debug_logger::is_enabled(&debug_cfg).then(|| {
         crate::proxy::payload_audit::reorder_payload_fields(&debug_value_without_inline_data(&body))
@@ -5776,6 +5788,18 @@ pub async fn handle_retrieve_model(
         find_dynamic_model, get_all_dynamic_models_metadata,
     };
 
+    // [MODEL GATE] GET /v1/models/:model 探测端点同样接入门禁（含已下线模型族 404）
+    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate(
+        &state,
+        Some(model.as_str()),
+        "openai",
+        None,
+    )
+    .await
+    {
+        return rejection;
+    }
+
     let only_raw = *state.only_raw_quota_models.read().await;
     let resolved_id = if let Some(matched_id) = find_dynamic_model(
         &state.custom_mapping,
@@ -8317,7 +8341,6 @@ fn split_namespace_tool_name(qualified_name: &str) -> (String, Option<String>) {
     (name.to_string(), None)
 }
 
-const INTERNAL_BACKGROUND_TASK: &str = "gemini-3.1-flash-lite";
 const CONTEXT_SUMMARY_PROMPT: &str = r#"You are a context compression specialist. Your task is to create a structured XML snapshot of the conversation history.
 
 This snapshot will become the Agent's ONLY memory of the past. All key details, plans, errors, and user instructions MUST be preserved.
@@ -8486,20 +8509,25 @@ async fn try_compress_openai_with_summary(
         name: None,
     });
 
+    // 兜底简单任务模型完全由当前号池动态推导（优先最新 flash-low，其次无后缀 flash），绝不硬编码
+    let background_model =
+        crate::proxy::common::model_gate::pick_background_model_from_pool(token_manager.as_ref())
+            .ok_or_else(|| "No flash model available in the current quota pool".to_string())?;
+
     let mut summary_request = original_request.clone();
     summary_request.messages = summary_messages;
-    summary_request.model = INTERNAL_BACKGROUND_TASK.to_string();
+    summary_request.model = background_model.to_string();
     summary_request.stream = false;
     summary_request.max_tokens = Some(8000);
     summary_request.temperature = Some(0.3);
 
     debug!(
         "[{}] [Layer-3] [OpenAI] Calling {} for summary generation",
-        trace_id, INTERNAL_BACKGROUND_TASK
+        trace_id, background_model
     );
 
     let xml_summary = call_openai_gemini_sync(
-        INTERNAL_BACKGROUND_TASK,
+        &background_model,
         &summary_request,
         token_manager,
         upstream,

@@ -150,13 +150,9 @@ pub fn resolve_real_model(canonical: &str, tier: VariantTier) -> Option<RealMode
 pub fn resolve_non_variant_model(model: &str) -> Option<RealModelSpec> {
     let key = model.to_lowercase();
     // gemini-3.1-flash-lite: checkpoint-only model, no thinking.
-    if matches!(
-        key.as_str(),
-        "gemini-3.1-flash-lite"
-            | "gemini-2.5-flash-lite"
-            | "gemini-2.5-flash"
-            | "gemini-2.5-flash-thinking"
-    ) {
+    // [RETIRED] 旧版 Gemini 2.x（gemini-2.5-flash / 2.5-flash-lite / 2.5-flash-thinking）已全面下线，
+    // 不再保留任何内部别名映射，避免它们在门禁前被“升级”成合法模型而绕过校验。
+    if key == "gemini-3.1-flash-lite" {
         return Some(SPEC_31_FLASH_LITE);
     }
     if key == "claude-sonnet-4-6" {
@@ -1149,9 +1145,10 @@ mod tests {
             check(c, Some(7000), "gemini-3.1-flash-lite", 0, 16384);
         };
         check_lite("gemini-3.1-flash-lite");
-        check_lite("gemini-2.5-flash-lite");
-        check_lite("gemini-2.5-flash");
-        check_lite("gemini-2.5-flash-thinking");
+        // [RETIRED] Gemini 2.x 已下线，不得再命中任何内部别名映射
+        assert!(resolve("gemini-2.5-flash-lite", None).is_none());
+        assert!(resolve("gemini-2.5-flash", None).is_none());
+        assert!(resolve("gemini-2.5-flash-thinking", None).is_none());
 
         // ── Claude family ──────────────────────────────────────────────
         check("claude-sonnet-4-6", None, "claude-sonnet-4-6", 1024, 64000);

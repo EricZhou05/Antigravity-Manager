@@ -429,9 +429,28 @@ const LogTable: React.FC<LogTableProps> = ({
                                  {/* 4. 服务账号 */}
                                  <td style={{ width: `${colWidths.account}px`, maxWidth: `${colWidths.account}px` }} className="py-2.5 px-3 align-middle overflow-hidden box-border">
                                      <div className="flex items-center gap-1.5 min-w-0 max-w-full">
-                                         <span className="text-gray-700 dark:text-gray-300 font-sans text-xs truncate" title={log.account_email || ''}>
-                                             {log.account_email ? log.account_email.replace(/(.{3}).*(@.*)/, '$1***$2') : '-'}
-                                         </span>
+                                         {(() => {
+                                             const account = log.account_email || '';
+                                             // 网关前置拦截哨兵：账号列直接亮出拒答原因（亮色/暗色都保持高对比度）
+                                             if (account === 'model not exist' || account === 'no quota accounts') {
+                                                 const isNotFound = account === 'model not exist';
+                                                 return (
+                                                     <span
+                                                         className={`inline-flex items-center font-sans font-semibold text-[11px] leading-none px-1.5 py-0.5 rounded whitespace-nowrap ${isNotFound
+                                                             ? 'text-rose-600 bg-rose-50 dark:text-rose-300 dark:bg-rose-500/15'
+                                                             : 'text-amber-600 bg-amber-50 dark:text-amber-300 dark:bg-amber-500/15'}`}
+                                                         title={account}
+                                                     >
+                                                         {account}
+                                                     </span>
+                                                 );
+                                             }
+                                             return (
+                                                 <span className="text-gray-700 dark:text-gray-300 font-sans text-xs truncate" title={account}>
+                                                     {account ? account.replace(/(.{3}).*(@.*)/, '$1***$2') : '-'}
+                                                 </span>
+                                             );
+                                         })()}
                                          {log.account_email && accountQosByEmail.get(log.account_email.toLowerCase()) && (
                                              <QoSStatusBadge
                                                  status={accountQosByEmail.get(log.account_email.toLowerCase())}
