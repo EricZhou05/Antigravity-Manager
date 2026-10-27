@@ -1837,8 +1837,7 @@ pub async fn handle_messages(
                     session_id,
                     &config.final_model,
                 )
-                .await
-                .map(|(a, p, e, id)| (a, p, e, id, 0));
+                .await;
 
             if let Err(ref e) = res {
                 if crate::proxy::handlers::common::is_transient_token_error(e) {
@@ -1849,8 +1848,7 @@ pub async fn handle_messages(
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     res = token_manager
                         .get_token(&config.request_type, true, session_id, &config.final_model)
-                        .await
-                        .map(|(a, p, e, id)| (a, p, e, id, 0));
+                        .await;
                 }
             }
             res

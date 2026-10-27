@@ -18,7 +18,7 @@ use crate::proxy::mappers::openai::{
 use crate::proxy::debug_logger;
 use crate::proxy::pipeline::{
     extract_image_generation_diagnostic, response_has_inline_image_data,
-    stream_chunk_has_image_data, ImageDiagnostic,
+    stream_chunk_has_image_data,
 };
 use crate::proxy::server::AppState;
 use crate::proxy::upstream::client::mask_email;

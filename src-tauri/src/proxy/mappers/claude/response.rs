@@ -550,6 +550,7 @@ mod tests {
                 index: Some(0),
                 grounding_metadata: None,
             }]),
+            prompt_feedback: None,
             usage_metadata: Some(UsageMetadata {
                 prompt_token_count: Some(10),
                 candidates_token_count: Some(5),
@@ -613,6 +614,7 @@ mod tests {
                 index: Some(0),
                 grounding_metadata: None,
             }]),
+            prompt_feedback: None,
             usage_metadata: None,
             model_version: Some("gemini-2.5-flash".to_string()),
             response_id: Some("resp_456".to_string()),

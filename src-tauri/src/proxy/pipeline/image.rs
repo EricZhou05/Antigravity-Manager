@@ -137,7 +137,7 @@ pub fn extract_image_generation_diagnostic(json: &Value) -> ImageDiagnostic {
                         message: format!("Upstream model refused to generate image: {}", truncated),
                         block_reason: None,
                         finish_reason: finish_reason.map(str::to_string),
-                        refusal_text: Some(truncated),
+                        refusal_text: Some(truncated.to_string()),
                     };
                 }
             }
