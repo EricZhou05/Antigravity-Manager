@@ -1976,7 +1976,7 @@ pub fn finalize_gemini_contents_thinking_with_options(
             };
 
             let cached_tool_sig: Option<String> =
-                if turn_real_sig.is_none() {
+                if !is_in_compaction_history && turn_real_sig.is_none() {
                     let mut found_sig = None;
                     let mut fc_counter = 0usize;
                     for p in &other_parts {
