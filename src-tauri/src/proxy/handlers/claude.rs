@@ -1726,6 +1726,9 @@ pub async fn handle_messages(
     let global_deadline = request_start
         + std::time::Duration::from_secs(super::common::MAX_GATEWAY_REQUEST_BUDGET_SECS);
 
+    let image_scheduler = state.image_scheduler.clone();
+    let mut image_permit = None;
+
     for attempt in 0..max_attempts {
         // [Stage 2 Timing] 中转归一计时起点
         let norm_start = std::time::Instant::now();
@@ -1808,27 +1811,50 @@ pub async fn handle_messages(
         let client_session_id = session_scope.client_id.clone();
         let session_id = Some(affinity_key.as_str());
 
-        let mut token_result = token_manager
-            .get_token(
-                &config.request_type,
-                force_rotate,
-                session_id,
-                &config.final_model,
-            )
-            .await;
-
-        if let Err(ref e) = token_result {
-            if crate::proxy::handlers::common::is_transient_token_error(e) {
-                tracing::warn!(
-                    "Token acquisition transient error ({}), retrying once with force_rotate...",
-                    e
-                );
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                token_result = token_manager
-                    .get_token(&config.request_type, true, session_id, &config.final_model)
-                    .await;
+        drop(image_permit.take());
+        let mut token_result = if config.request_type == "image_gen" {
+            match token_manager
+                .get_image_token(
+                    force_rotate,
+                    session_id,
+                    &config.final_model,
+                    &image_scheduler,
+                    state.request_timeout,
+                )
+                .await
+            {
+                Ok((access_token, project_id, email, account_id, wait_ms, permit)) => {
+                    image_permit = Some(permit);
+                    Ok((access_token, project_id, email, account_id, wait_ms))
+                }
+                Err(err) => Err(err),
             }
-        }
+        } else {
+            let mut res = token_manager
+                .get_token(
+                    &config.request_type,
+                    force_rotate,
+                    session_id,
+                    &config.final_model,
+                )
+                .await
+                .map(|(a, p, e, id)| (a, p, e, id, 0));
+
+            if let Err(ref e) = res {
+                if crate::proxy::handlers::common::is_transient_token_error(e) {
+                    tracing::warn!(
+                        "Token acquisition transient error ({}), retrying once with force_rotate...",
+                        e
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    res = token_manager
+                        .get_token(&config.request_type, true, session_id, &config.final_model)
+                        .await
+                        .map(|(a, p, e, id)| (a, p, e, id, 0));
+                }
+            }
+            res
+        };
 
         let (access_token, project_id, email, account_id, _wait_ms) = match token_result {
             Ok(t) => t,
@@ -2100,9 +2126,12 @@ pub async fn handle_messages(
 
         // 成功
         if status.is_success() {
-            token_manager.commit_session(&affinity_key, &account_id);
-            // [智能限流] 请求成功，重置该账号的连续失败计数
-            token_manager.mark_account_success(&account_id);
+            let track_image_success = config.request_type == "image_gen";
+            if !track_image_success {
+                token_manager.commit_session(&affinity_key, &account_id);
+                // [智能限流] 请求成功，重置该账号的连续失败计数
+                token_manager.mark_account_success(&account_id);
+            }
 
             // Determine context limit based on model
             let context_limit = crate::proxy::mappers::claude::utils::get_context_limit_for_model(
@@ -2198,11 +2227,29 @@ pub async fn handle_messages(
                         holder.set_attempts(fallback_attempts.clone());
                     });
                     let in_flight_guard_for_stream = Arc::clone(&in_flight_guard);
+                    let image_permit_for_stream = image_permit.take();
+                    let track_image_success = config.request_type == "image_gen";
+                    let image_success_manager = token_manager.clone();
+                    let image_success_account = account_id.clone();
+                    let image_success_model = request_with_mapped.model.clone();
                     let stream_mapped =
                         claude_stream.map(move |result| -> Result<Bytes, std::io::Error> {
                             let _in_flight = &in_flight_guard_for_stream;
+                            let _permit = &image_permit_for_stream;
                             match result {
-                                Ok(b) => Ok(b),
+                                Ok(b) => {
+                                    if track_image_success
+                                        && crate::proxy::pipeline::stream_chunk_has_image_data(&b)
+                                    {
+                                        image_success_manager
+                                            .mark_account_success(&image_success_account);
+                                        image_success_manager.clear_persisted_live_limit(
+                                            &image_success_account,
+                                            Some(&image_success_model),
+                                        );
+                                    }
+                                    Ok(b)
+                                }
                                 Err(e) => {
                                     Err(std::io::Error::new(std::io::ErrorKind::ConnectionReset, e))
                                 }
@@ -2472,6 +2519,15 @@ pub async fn handle_messages(
 
                 // 解包 response 字段（v1internal 格式）
                 let raw = gemini_resp.get("response").unwrap_or(&gemini_resp);
+                let track_image_success = config.request_type == "image_gen";
+                if track_image_success
+                    && crate::proxy::pipeline::response_has_inline_image_data(raw)
+                {
+                    token_manager.commit_session(&affinity_key, &account_id);
+                    token_manager.mark_account_success(&account_id);
+                    token_manager
+                        .clear_persisted_live_limit(&account_id, Some(&request_with_mapped.model));
+                }
 
                 // 转换为 Gemini Response 结构
                 let gemini_response: crate::proxy::mappers::claude::models::GeminiResponse =

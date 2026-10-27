@@ -16,6 +16,10 @@ use crate::proxy::mappers::openai::{
 };
 // use crate::proxy::upstream::client::UpstreamClient; // 通过 state 获取
 use crate::proxy::debug_logger;
+use crate::proxy::pipeline::{
+    extract_image_generation_diagnostic, response_has_inline_image_data,
+    stream_chunk_has_image_data, ImageDiagnostic,
+};
 use crate::proxy::server::AppState;
 use crate::proxy::upstream::client::mask_email;
 
@@ -280,66 +284,6 @@ fn stream_chunk_has_error_event(bytes: &[u8]) -> bool {
             payload.get("type").and_then(Value::as_str),
             Some("error" | "response.failed")
         ) || payload.get("error").is_some_and(|error| !error.is_null())
-    })
-}
-
-fn response_has_inline_image_data(value: &Value) -> bool {
-    let response = value.get("response").unwrap_or(value);
-    response
-        .get("candidates")
-        .and_then(Value::as_array)
-        .is_some_and(|candidates| {
-            candidates.iter().any(|candidate| {
-                candidate
-                    .get("content")
-                    .and_then(|content| content.get("parts"))
-                    .and_then(Value::as_array)
-                    .is_some_and(|parts| {
-                        parts.iter().any(|part| {
-                            part.get("inlineData")
-                                .or_else(|| part.get("inline_data"))
-                                .and_then(|image| image.get("data"))
-                                .and_then(Value::as_str)
-                                .is_some_and(|data| !data.is_empty())
-                        })
-                    })
-            })
-        })
-}
-
-fn text_has_nonempty_image_data_url(text: &str) -> bool {
-    let mut remaining = text;
-    while let Some(start) = remaining.find("data:image/") {
-        let candidate = &remaining[start..];
-        if let Some((_, encoded)) = candidate.split_once(";base64,") {
-            if encoded.chars().next().is_some_and(|first| {
-                !first.is_whitespace() && !matches!(first, '"' | '\\' | ')' | ']' | '}')
-            }) {
-                return true;
-            }
-        }
-        remaining = &candidate["data:image/".len()..];
-    }
-    false
-}
-
-fn value_has_nonempty_image_data_url(value: &Value) -> bool {
-    match value {
-        Value::String(text) => text_has_nonempty_image_data_url(text),
-        Value::Array(values) => values.iter().any(value_has_nonempty_image_data_url),
-        Value::Object(values) => values.values().any(value_has_nonempty_image_data_url),
-        _ => false,
-    }
-}
-
-fn stream_chunk_has_image_data(bytes: &[u8]) -> bool {
-    String::from_utf8_lossy(bytes).lines().any(|line| {
-        let Some(data) = line.trim_start().strip_prefix("data:") else {
-            return false;
-        };
-        serde_json::from_str::<Value>(data.trim())
-            .ok()
-            .is_some_and(|payload| value_has_nonempty_image_data_url(&payload))
     })
 }
 
@@ -977,6 +921,7 @@ mod stream_peek_tests {
     use super::convert_codex_to_openai_request;
     use super::drop_leading_orphan_tool_history;
     use super::edit_size_input;
+    use super::extract_image_generation_diagnostic;
     use super::generation_image_size_param;
     use super::history_without_inline_media;
     use super::image_account_selection_target;
@@ -1101,6 +1046,71 @@ data: {"type":"response.failed","response":{"status":"failed","error":{"code":"u
 "#;
         assert!(!stream_chunk_has_image_data(empty_chunk));
         assert!(stream_chunk_has_image_data(image_chunk));
+    }
+
+    #[test]
+    fn test_extract_image_generation_diagnostic() {
+        use reqwest::StatusCode;
+
+        // 1. promptFeedback 安全策略拦截
+        let prompt_feedback = json!({
+            "promptFeedback": {
+                "blockReason": "SAFETY"
+            }
+        });
+        let diag = extract_image_generation_diagnostic(&prompt_feedback);
+        assert_eq!(diag.status, StatusCode::BAD_REQUEST);
+        assert!(diag.is_safety_or_policy);
+        assert!(diag.message.contains("blockReason: SAFETY"));
+
+        // 2. candidate finishReason 安全策略拦截
+        let cand_safety = json!({
+            "candidates": [{
+                "finishReason": "SAFETY"
+            }]
+        });
+        let diag = extract_image_generation_diagnostic(&cand_safety);
+        assert_eq!(diag.status, StatusCode::BAD_REQUEST);
+        assert!(diag.is_safety_or_policy);
+        assert!(diag.message.contains("finishReason: SAFETY"));
+
+        // 3. candidate 文本拒答部件
+        let text_refusal = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{
+                        "text": "I cannot create images of real people."
+                    }]
+                },
+                "finishReason": "STOP"
+            }]
+        });
+        let diag = extract_image_generation_diagnostic(&text_refusal);
+        assert_eq!(diag.status, StatusCode::BAD_REQUEST);
+        assert!(diag.is_safety_or_policy);
+        assert!(diag
+            .message
+            .contains("I cannot create images of real people."));
+
+        // 4. 空候选集
+        let empty_cand = json!({
+            "candidates": []
+        });
+        let diag = extract_image_generation_diagnostic(&empty_cand);
+        assert_eq!(diag.status, StatusCode::BAD_GATEWAY);
+        assert!(!diag.is_safety_or_policy);
+        assert!(diag.message.contains("empty candidates array"));
+
+        // 5. 嵌套 upstream error
+        let upstream_err = json!({
+            "error": {
+                "message": "Resource exhausted"
+            }
+        });
+        let diag = extract_image_generation_diagnostic(&upstream_err);
+        assert_eq!(diag.status, StatusCode::BAD_GATEWAY);
+        assert!(!diag.is_safety_or_policy);
+        assert!(diag.message.contains("Resource exhausted"));
     }
 
     #[test]
@@ -2663,9 +2673,12 @@ pub async fn handle_chat_completions(
         let upstream_url = response.url().to_string();
         let status = response.status();
         if status.is_success() {
-            token_manager.commit_session(&affinity_key, &account_id);
-            // [智能限流] 请求成功，重置该账号的连续失败计数
-            token_manager.mark_account_success(&account_id);
+            let track_image_success = config.request_type == "image_gen";
+            if !track_image_success {
+                token_manager.commit_session(&affinity_key, &account_id);
+                // [智能限流] 请求成功，重置该账号的连续失败计数
+                token_manager.mark_account_success(&account_id);
+            }
             // 5. 处理流式 vs 非流式
             if actual_stream {
                 use axum::body::Body;
@@ -4608,9 +4621,12 @@ pub async fn handle_completions(
         let upstream_url = response.url().to_string();
         let status = response.status();
         if status.is_success() {
-            token_manager.commit_session(&affinity_key, &account_id);
-            // [智能限流] 请求成功，重置该账号的连续失败计数
-            token_manager.mark_account_success(&account_id);
+            let track_image_success = config.request_type == "image_gen";
+            if !track_image_success {
+                token_manager.commit_session(&affinity_key, &account_id);
+                // [智能限流] 请求成功，重置该账号的连续失败计数
+                token_manager.mark_account_success(&account_id);
+            }
 
             if list_response {
                 use axum::body::Body;
@@ -6311,8 +6327,29 @@ pub async fn handle_images_generations_internal(
                                             &account_id,
                                             Some(&model_to_use),
                                         );
+                                    return Ok((json, email));
                                 }
-                                return Ok((json, email));
+
+                                // [Fixes #3756] 上游虽返回 200，但未包含合法图片数据（如安全策略拦截、拒答或空候选集）
+                                let diag = extract_image_generation_diagnostic(&json);
+                                tracing::warn!(
+                                    account = %email,
+                                    status = %diag.status,
+                                    reason = %diag.message,
+                                    "[Images] Upstream returned 200 OK without inline image data"
+                                );
+                                failure_statuses.record(diag.status);
+                                last_error = diag.message.clone();
+
+                                // 若被安全策略拦截（提示词违规或模型拒答），换账号重试相同 Prompt 毫无意义且会白白浪费额度，直接终态返回
+                                if diag.is_safety_or_policy {
+                                    return Err((diag.status, diag.message));
+                                }
+
+                                // 其它情况（如格式漂移或偶发空候选集）标记换号重试
+                                force_rotate = true;
+                                drop(image_permit.take());
+                                continue;
                             }
                             Err(e) => {
                                 return Err((
@@ -6802,8 +6839,27 @@ pub async fn handle_images_edits(
                                         &account_id,
                                         Some(&model_to_use),
                                     );
+                                    return Ok((json, response_format.clone(), email));
                                 }
-                                return Ok((json, response_format.clone(), email));
+
+                                // [Fixes #3756] 上游编辑接口虽返回 200，但未包含合法图片数据
+                                let diag = extract_image_generation_diagnostic(&json);
+                                tracing::warn!(
+                                    account = %email,
+                                    status = %diag.status,
+                                    reason = %diag.message,
+                                    "[Images] Upstream edit returned 200 OK without inline image data"
+                                );
+                                failure_statuses.record(diag.status);
+                                last_error = diag.message.clone();
+
+                                if diag.is_safety_or_policy {
+                                    return Err((diag.status, diag.message));
+                                }
+
+                                force_rotate = true;
+                                drop(image_permit.take());
+                                continue;
                             }
                             Err(e) => {
                                 return Err((

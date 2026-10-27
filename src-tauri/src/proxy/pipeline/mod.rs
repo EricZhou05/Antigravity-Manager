@@ -9,6 +9,7 @@
 
 pub mod auto_heal;
 pub mod estimator;
+pub mod image;
 pub mod inbound;
 #[cfg(test)]
 mod official_alignment_tests;
@@ -18,6 +19,11 @@ pub mod usage;
 
 pub use auto_heal::{wrap_stream_with_empty_thinking_auto_heal, ThinkingAutoHealContext};
 pub use estimator::{estimate_tokens, PipelineTokenEstimator};
+pub use image::{
+    extract_image_generation_diagnostic, response_has_inline_image_data,
+    stream_chunk_has_image_data, text_has_nonempty_image_data_url,
+    value_has_nonempty_image_data_url, ImageDiagnostic,
+};
 pub use inbound::{extract_client_thinking_switch, InboundThinkingPipeline};
 pub use policy::UpstreamClassification;
 pub use stream_lifecycle::{run_stream_lifecycle, ProtocolStreamHandler, StreamLifecycleConfig};

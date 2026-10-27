@@ -161,7 +161,7 @@ pub const MAX_GATEWAY_REQUEST_BUDGET_SECS: u64 = 240;
 
 /// [Issue #3634, #3693] 统一自适应计算流预读（Peek）阶段的超时时间。
 /// - Compaction 摘要请求：大 Prompt 处理，默认 180s；
-/// - 图像生成请求：图像生成耗时较长，默认 60s；
+/// - 图像生成请求：图像生成耗时较长（特别是 4K 高分辨率渲染），默认 90s；
 /// - 思考/深度推理模型请求：思考阶段 TTFT 较长，底线 60s（大上下文 90s/120s）；
 /// - 正常会话请求：根据估算 Token 数量动态自适应，避免大上下文 Prompt 预热（TTFT）超过 30s 被过早误杀导致全池轮换雪崩；
 ///   * > 100k tokens: 120s
@@ -185,7 +185,7 @@ pub fn calculate_adaptive_peek_timeout_full(
     if is_compaction {
         180
     } else if is_image_gen {
-        60
+        90
     } else if is_thinking {
         // [Issue #3693] 深度思考模型预热耗时长，设置 60s 宽限底线，防止过早误杀
         match estimated_tokens {
@@ -1090,8 +1090,8 @@ mod retry_after_tests {
             180
         );
 
-        // 2. 图像生成请求给予 60s
-        assert_eq!(calculate_adaptive_peek_timeout(false, true, None), 60);
+        // 2. 图像生成请求给予 90s
+        assert_eq!(calculate_adaptive_peek_timeout(false, true, None), 90);
 
         // 3. 正常会话根据 token 规模自适应阶梯分配
         assert_eq!(

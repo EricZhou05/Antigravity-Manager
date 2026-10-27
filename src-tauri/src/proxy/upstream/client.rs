@@ -505,49 +505,85 @@ impl UpstreamClient {
 
     /// 计算上游多端点调用的全链路总超时时间预算（秒）
     ///
-    /// 流式请求响应头基准保底 30s（超大 payload 弹性放宽至 45s），备用回退预算 25s，
-    /// 全链路总预算由原先的 150s 大幅收敛至 55~70s，杜绝主端点在排队拥塞时漫长挂起 85s~140s。
-    pub fn calculate_total_upstream_budget_secs(method: &str, body_len: usize) -> u64 {
-        let base_watchdog = if method == "streamGenerateContent" {
-            std::cmp::min(45, std::cmp::max(30, (body_len as u64) / (64 * 1024) + 30))
+    /// - 图片生成 (is_image_gen): 4K 图像渲染与排队计算开销大（耗时可能达 30s~60s+），首选端点享有 90s 宽限，
+    ///   备用端点 45s，全链路总预算设定为 135s，彻底杜绝端点被过早掐断误杀 (Fixes #3756)；
+    /// - 流式请求 (streamGenerateContent): 响应头基准保底 30s（超大 payload 弹性放宽至 45s），备用回退预算 25s，
+    ///   全链路总预算 55~70s，杜绝主端点在排队拥塞时漫长挂起 85s~140s；
+    /// - 非流式生成 (generateContent): 针对 stream: false 的深度思考模型与普通内容生成，首选端点 45s，
+    ///   备用预算 25s，全链路总预算 70s；
+    /// - 辅助轻量接口 (countTokens 等): 保持 15s 探活与 30s 总预算。
+    pub fn calculate_total_upstream_budget_secs(
+        method: &str,
+        body_len: usize,
+        is_image_gen: bool,
+    ) -> u64 {
+        if is_image_gen {
+            135
+        } else if method == "streamGenerateContent" {
+            let base_watchdog =
+                std::cmp::min(45, std::cmp::max(30, (body_len as u64) / (64 * 1024) + 30));
+            base_watchdog.saturating_add(25)
+        } else if method == "generateContent" {
+            let base_watchdog =
+                std::cmp::min(60, std::cmp::max(45, (body_len as u64) / (128 * 1024) + 45));
+            base_watchdog.saturating_add(25)
         } else {
-            std::cmp::min(30, std::cmp::max(15, (body_len as u64) / (256 * 1024) + 15))
-        };
-        let fallback_margin = if method == "streamGenerateContent" {
-            25
-        } else {
-            15
-        };
-        base_watchdog.saturating_add(fallback_margin)
+            let base_watchdog =
+                std::cmp::min(30, std::cmp::max(15, (body_len as u64) / (256 * 1024) + 15));
+            base_watchdog.saturating_add(15)
+        }
     }
 
     /// 动态计算当前端点尝试的看门狗单次超时时长（秒）
     ///
-    /// 1. 首选端点 (attempt_idx == 0): 分配基准响应头看门狗（流式 30s，超大 payload 弹性放宽至 45s），
-    ///    若已确权容量枯竭则极速收敛至 15s；
-    /// 2. 回退备用端点 (attempt_idx > 0): 采用快探活看门狗（流式上限 25s，非流式 15s，容量枯竭 15s）；
-    /// 3. 受限于全链路剩余时间预算 `remaining_budget_secs`，并设置 5s 终极保底，防止由于网络开销导致为 0。
+    /// 1. 若已确权容量枯竭 (is_capacity_exhausted)，极速收敛至 15s；
+    /// 2. 图片生成 (is_image_gen): 首选端点 60s，备用端点 30s；
+    /// 3. 流式生成: 首选端点 30s~45s，备选端点上限 25s；
+    /// 4. 非流式生成: 首选端点 45s~60s，备选端点上限 25s；
+    /// 5. 辅助轻量接口: 首选端点 15s~30s，备选端点上限 15s；
+    /// 6. 受限于全链路剩余时间预算 `remaining_budget_secs`，并设置 5s 终极保底，防止由于网络开销导致为 0。
     pub fn calculate_endpoint_watchdog_secs(
         method: &str,
         body_len: usize,
         attempt_idx: usize,
         remaining_budget_secs: u64,
         is_capacity_exhausted: bool,
+        is_image_gen: bool,
     ) -> u64 {
-        let base_watchdog = if method == "streamGenerateContent" {
-            std::cmp::min(45, std::cmp::max(30, (body_len as u64) / (64 * 1024) + 30))
-        } else {
-            std::cmp::min(30, std::cmp::max(15, (body_len as u64) / (256 * 1024) + 15))
-        };
+        if is_capacity_exhausted {
+            return 15.min(remaining_budget_secs).max(5);
+        }
 
-        let target_secs = if is_capacity_exhausted {
-            15
-        } else if attempt_idx == 0 {
-            base_watchdog
+        let target_secs = if is_image_gen {
+            if attempt_idx == 0 {
+                90
+            } else {
+                45
+            }
         } else if method == "streamGenerateContent" {
-            std::cmp::min(base_watchdog, 25)
+            let base_watchdog =
+                std::cmp::min(45, std::cmp::max(30, (body_len as u64) / (64 * 1024) + 30));
+            if attempt_idx == 0 {
+                base_watchdog
+            } else {
+                std::cmp::min(base_watchdog, 25)
+            }
+        } else if method == "generateContent" {
+            let base_watchdog =
+                std::cmp::min(60, std::cmp::max(45, (body_len as u64) / (128 * 1024) + 45));
+            if attempt_idx == 0 {
+                base_watchdog
+            } else {
+                std::cmp::min(base_watchdog, 25)
+            }
         } else {
-            std::cmp::min(base_watchdog, 15)
+            let base_watchdog =
+                std::cmp::min(30, std::cmp::max(15, (body_len as u64) / (256 * 1024) + 15));
+            if attempt_idx == 0 {
+                base_watchdog
+            } else {
+                std::cmp::min(base_watchdog, 15)
+            }
         };
 
         target_secs.min(remaining_budget_secs).max(5)
@@ -701,9 +737,21 @@ impl UpstreamClient {
         let mut has_triggered_downgrade = false;
         let mut fallback_attempts: Vec<FallbackAttemptLog> = Vec::new();
         let mut last_attempt_failed_at: Option<std::time::Instant> = None;
+        let is_image_gen = body
+            .get("requestType")
+            .and_then(|v| v.as_str())
+            .map(|rt| rt == "image_gen")
+            .unwrap_or(false)
+            || target_model_str.contains("image")
+            || target_model_str.starts_with("imagen-")
+            || body
+                .get("request")
+                .and_then(|r| r.get("generationConfig"))
+                .and_then(|g| g.get("imageConfig"))
+                .is_some();
         let body_bytes = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
         let total_budget_secs =
-            Self::calculate_total_upstream_budget_secs(method, body_bytes.len());
+            Self::calculate_total_upstream_budget_secs(method, body_bytes.len(), is_image_gen);
         let call_overall_start = std::time::Instant::now();
         let mut is_capacity_exhausted = false;
 
@@ -761,6 +809,7 @@ impl UpstreamClient {
                     idx,
                     remaining_budget,
                     is_capacity_exhausted,
+                    is_image_gen,
                 );
                 let send_future = req_builder.send();
                 let response = match tokio::time::timeout(
@@ -774,8 +823,8 @@ impl UpstreamClient {
                         self.endpoint_health.mark_failure(base_url);
                         last_attempt_failed_at = Some(std::time::Instant::now());
                         let err_msg = format!(
-                            "HTTP request timed out after {}s waiting for response headers at {} (method={}, body_len={}, total_elapsed={:.1}s)",
-                            watchdog_secs, base_url, method, body_bytes.len(), call_overall_start.elapsed().as_secs_f64()
+                            "HTTP request timed out after {}s waiting for response headers at {} (method={}, body_len={}, is_image_gen={}, total_elapsed={:.1}s)",
+                            watchdog_secs, base_url, method, body_bytes.len(), is_image_gen, call_overall_start.elapsed().as_secs_f64()
                         );
                         if has_next {
                             tracing::warn!(%err_msg, "Upstream candidate endpoint timed out, fast falling back to next endpoint");
@@ -1360,9 +1409,35 @@ mod tests {
 
     #[test]
     fn test_calculate_watchdog_and_budget() {
+        // Image generation request: 135s total budget, 90s primary, 45s fallback
+        let total_image_budget =
+            UpstreamClient::calculate_total_upstream_budget_secs("generateContent", 1024, true);
+        assert_eq!(total_image_budget, 135);
+        let wd_image_primary = UpstreamClient::calculate_endpoint_watchdog_secs(
+            "generateContent",
+            1024,
+            0,
+            135,
+            false,
+            true,
+        );
+        assert_eq!(wd_image_primary, 90);
+        let wd_image_fallback = UpstreamClient::calculate_endpoint_watchdog_secs(
+            "generateContent",
+            1024,
+            1,
+            45,
+            false,
+            true,
+        );
+        assert_eq!(wd_image_fallback, 45);
+
         // streamGenerateContent primary attempt with ample budget (recalibrated to 30s base, 55s total)
-        let total_budget =
-            UpstreamClient::calculate_total_upstream_budget_secs("streamGenerateContent", 1024);
+        let total_budget = UpstreamClient::calculate_total_upstream_budget_secs(
+            "streamGenerateContent",
+            1024,
+            false,
+        );
         assert_eq!(total_budget, 55); // 30 + 25
 
         let wd_primary = UpstreamClient::calculate_endpoint_watchdog_secs(
@@ -1370,6 +1445,7 @@ mod tests {
             1024,
             0,
             55,
+            false,
             false,
         );
         assert_eq!(wd_primary, 30);
@@ -1381,6 +1457,7 @@ mod tests {
             1,
             25,
             false,
+            false,
         );
         assert_eq!(wd_fallback, 25);
 
@@ -1391,6 +1468,7 @@ mod tests {
             1,
             25,
             true,
+            false,
         );
         assert_eq!(wd_exhausted, 15);
 
@@ -1400,6 +1478,7 @@ mod tests {
             1024,
             1,
             10,
+            false,
             false,
         );
         assert_eq!(wd_clamped, 10);
@@ -1411,15 +1490,36 @@ mod tests {
             1,
             2,
             false,
+            false,
         );
         assert_eq!(wd_min, 5);
 
-        // Non-stream methods have 15s base watchdog and 30s total budget
+        // Non-stream generateContent methods have 45s base watchdog and 70s total budget
         let total_non_stream =
-            UpstreamClient::calculate_total_upstream_budget_secs("generateContent", 1024);
-        assert_eq!(total_non_stream, 30); // 15 + 15
-        let wd_non_stream =
-            UpstreamClient::calculate_endpoint_watchdog_secs("generateContent", 1024, 0, 30, false);
-        assert_eq!(wd_non_stream, 15);
+            UpstreamClient::calculate_total_upstream_budget_secs("generateContent", 1024, false);
+        assert_eq!(total_non_stream, 70); // 45 + 25
+        let wd_non_stream = UpstreamClient::calculate_endpoint_watchdog_secs(
+            "generateContent",
+            1024,
+            0,
+            70,
+            false,
+            false,
+        );
+        assert_eq!(wd_non_stream, 45);
+
+        // Auxiliary methods (e.g. countTokens) have 15s base watchdog and 30s total budget
+        let total_aux =
+            UpstreamClient::calculate_total_upstream_budget_secs("countTokens", 1024, false);
+        assert_eq!(total_aux, 30); // 15 + 15
+        let wd_aux = UpstreamClient::calculate_endpoint_watchdog_secs(
+            "countTokens",
+            1024,
+            0,
+            30,
+            false,
+            false,
+        );
+        assert_eq!(wd_aux, 15);
     }
 }

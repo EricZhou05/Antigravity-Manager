@@ -18,54 +18,13 @@ use crate::proxy::handlers::common::{
     RetryStrategy,
 };
 use crate::proxy::mappers::gemini::{unwrap_response, wrap_request_v2};
+use crate::proxy::pipeline::response_has_inline_image_data;
 use crate::proxy::server::AppState;
 use crate::proxy::session_manager::SessionManager;
 use crate::proxy::upstream::client::mask_email;
 use axum::http::HeaderMap;
 
 const MAX_RETRY_ATTEMPTS: usize = 3;
-
-fn response_has_inline_image_data(value: &Value) -> bool {
-    let response = value.get("response").unwrap_or(value);
-    response
-        .get("candidates")
-        .and_then(Value::as_array)
-        .is_some_and(|candidates| {
-            candidates.iter().any(|candidate| {
-                candidate
-                    .get("content")
-                    .and_then(|content| content.get("parts"))
-                    .and_then(Value::as_array)
-                    .is_some_and(|parts| {
-                        parts.iter().any(|part| {
-                            part.get("inlineData")
-                                .or_else(|| part.get("inline_data"))
-                                .and_then(|image| image.get("data"))
-                                .and_then(Value::as_str)
-                                .is_some_and(|data| !data.is_empty())
-                        })
-                    })
-            })
-        })
-}
-
-#[cfg(test)]
-mod image_success_tests {
-    use super::response_has_inline_image_data;
-    use serde_json::json;
-
-    #[test]
-    fn task_gemini_image_success_requires_nonempty_payload() {
-        let empty = json!({
-            "response": {"candidates": [{"content": {"parts": [{"inlineData": {"data": ""}}]}}]}
-        });
-        let image = json!({
-            "response": {"candidates": [{"content": {"parts": [{"inlineData": {"data": "AQ=="}}]}}]}
-        });
-        assert!(!response_has_inline_image_data(&empty));
-        assert!(response_has_inline_image_data(&image));
-    }
-}
 
 /// 处理 generateContent 和 streamGenerateContent
 /// 路径参数: model_name, method (e.g. "gemini-pro", "generateContent")
@@ -521,9 +480,12 @@ pub async fn handle_generate(
             .map(|s| s.to_string());
 
         if status.is_success() {
-            token_manager.commit_session(&affinity_key, &account_id);
-            // [智能限流] 请求成功，重置该账号的连续失败计数
-            token_manager.mark_account_success(&account_id);
+            let track_image_success = config.request_type == "image_gen";
+            if !track_image_success {
+                token_manager.commit_session(&affinity_key, &account_id);
+                // [智能限流] 请求成功，重置该账号的连续失败计数
+                token_manager.mark_account_success(&account_id);
+            }
             // 6. 响应处理
             if is_stream {
                 use axum::body::Body;
@@ -883,6 +845,12 @@ pub async fn handle_generate(
                     {
                         Ok(gemini_resp) => {
                             let unwrapped = unwrap_response(&gemini_resp);
+                            if track_image_success && response_has_inline_image_data(&unwrapped) {
+                                token_manager.commit_session(&affinity_key, &account_id);
+                                token_manager.mark_account_success(&account_id);
+                                token_manager
+                                    .clear_persisted_live_limit(&account_id, Some(&mapped_model));
+                            }
                             if let Some(error_obj) = unwrapped.get("error") {
                                 let code = error_obj
                                     .get("code")
