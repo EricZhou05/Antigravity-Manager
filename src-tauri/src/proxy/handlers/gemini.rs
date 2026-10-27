@@ -141,6 +141,19 @@ pub async fn handle_generate(
         // debug!("[AutoConverter] Converting non-stream request to stream");
     }
 
+    // [MODEL GATE] 入站模型闸门：缺失/不存在 → 404 model not exist；全池无配额 → 502 no quota accounts
+    // 必须放在任何 `state.*` 字段被 move 之前，避免 borrow-after-partial-move。
+    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate(
+        &state,
+        Some(model_name.as_str()),
+        "gemini",
+        upstream_recorder.as_ref().map(|recorder| &recorder.0),
+    )
+    .await
+    {
+        return Ok(rejection);
+    }
+
     // 2. 获取 UpstreamClient 和 TokenManager
     let upstream = state.upstream.clone();
     let image_scheduler = state.image_scheduler.clone();
@@ -177,18 +190,6 @@ pub async fn handle_generate(
         &*state.custom_mapping.read().await,
         client_effort,
     );
-
-    // [MODEL GATE] 入站模型闸门：缺失/不存在 → 404 model not exist；全池无配额 → 502 no quota accounts
-    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate(
-        &state,
-        Some(model_name.as_str()),
-        "gemini",
-        upstream_recorder.as_ref().map(|recorder| &recorder.0),
-    )
-    .await
-    {
-        return Ok(rejection);
-    }
 
     while let Some(attempt) = next_rotation_attempt(
         &mut used_attempts,
