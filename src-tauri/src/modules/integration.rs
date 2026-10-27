@@ -458,12 +458,16 @@ pub(crate) fn write_to_system_keyring(account: &crate::models::Account) -> Resul
         token_type: String,
         refresh_token: String,
         expiry: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        expires_in: Option<i64>,
     }
 
     #[derive(serde::Serialize)]
     struct KeyringPayload {
         token: KeyringTokenDetails,
         auth_method: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id_token_email: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         id_token: Option<String>,
     }
@@ -474,8 +478,10 @@ pub(crate) fn write_to_system_keyring(account: &crate::models::Account) -> Resul
             token_type: "Bearer".to_string(),
             refresh_token: account.token.refresh_token.clone(),
             expiry: expiry_str,
+            expires_in: Some(3599),
         },
         auth_method: "consumer".to_string(),
+        id_token_email: Some(account.email.clone()),
         id_token: account.token.id_token.clone(),
     })
     .map_err(|e| format!("Failed to serialize keyring JSON: {}", e))?;
@@ -774,12 +780,16 @@ fn write_to_file_credentials(
             token_type: String,
             refresh_token: String,
             expiry: String,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            expires_in: Option<i64>,
         }
 
         #[derive(serde::Serialize)]
         struct AgyOAuthTokenFile {
             token: AgyTokenDetails,
             auth_method: String,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            id_token_email: Option<String>,
             #[serde(skip_serializing_if = "Option::is_none")]
             id_token: Option<String>,
         }
@@ -790,8 +800,10 @@ fn write_to_file_credentials(
                 token_type: "Bearer".to_string(),
                 refresh_token: account.token.refresh_token.clone(),
                 expiry: expiry_str,
+                expires_in: Some(3599),
             },
             auth_method: "consumer".to_string(),
+            id_token_email: Some(account.email.clone()),
             id_token: account.token.id_token.clone(),
         };
 

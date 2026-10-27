@@ -533,8 +533,15 @@ pub fn sweep_orphan_language_servers() {
             continue;
         }
 
-        if (name.contains("language_server") || exe_path.contains("language_server"))
-            && exe_path.contains("antigravity")
+        let is_ls = name.contains("language_server")
+            || exe_path.contains("language_server")
+            || name == "agy"
+            || name == "agy.exe"
+            || exe_path.ends_with("agy.exe")
+            || exe_path.ends_with("/agy");
+
+        if is_ls
+            && (exe_path.contains("antigravity") || exe_path.contains("gemini"))
             && !is_antigravity_ide_str(&exe_path)
         {
             let pid_u32 = pid.as_u32();
@@ -562,15 +569,20 @@ pub fn sweep_orphan_language_servers() {
 
 /// `language_server` 子进程判定。
 ///
-/// 覆盖面：Windows/Linux 为 `language_server` / `language_server.exe`，macOS 为
-/// `language_server_macos` / `language_server_macos_arm`（macOS 上进程名可能被系统截断，
-/// 因此名字与可执行路径任一命中即视为目标）。
+/// 覆盖面：Windows/Linux 为 `language_server` / `language_server.exe` / `agy` / `agy.exe`，
+/// macOS 为 `language_server_macos` / `language_server_macos_arm` / `agy`。
 ///
 /// 注意：这是**窄**判定（仅语言服务），与 [`is_helper_process`] 的"广义 helper"判定区分开 ——
 /// 热切号只允许终止语言服务，绝不触碰 renderer / gpu / crashpad 等其它 helper。
 pub(crate) fn is_language_server_process(name: &str, exe_path: &str) -> bool {
-    name.to_lowercase().contains("language_server")
-        || exe_path.to_lowercase().contains("language_server")
+    let name_lower = name.to_lowercase();
+    let exe_lower = exe_path.to_lowercase();
+    name_lower.contains("language_server")
+        || exe_lower.contains("language_server")
+        || name_lower == "agy"
+        || name_lower == "agy.exe"
+        || exe_lower.ends_with("agy.exe")
+        || exe_lower.ends_with("/agy")
 }
 
 /// 强制终止单个进程（Windows 用 `taskkill /F`，其余平台用 `kill -9`）。
@@ -1962,6 +1974,15 @@ mod tests {
         assert!(is_language_server_process(
             "LANGUAGE_SERVER.EXE",
             "C:\\Antigravity\\bin\\Language_Server.exe"
+        ));
+        // Antigravity IDE 2.6.0+ agy / agy.exe
+        assert!(is_language_server_process(
+            "agy.exe",
+            "C:\\Users\\me\\.gemini\\bin\\agy.exe"
+        ));
+        assert!(is_language_server_process(
+            "agy",
+            "/Users/me/.gemini/bin/agy"
         ));
 
         // 反例：其它 Antigravity 进程一律不得命中（否则热切会误杀渲染/GPU/崩溃处理器）
