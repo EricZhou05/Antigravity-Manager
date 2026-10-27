@@ -3,6 +3,16 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.1-beta.3 (2026-10-27)**:
+        -   **[多模态坏图 400 端到端就地自愈与指纹黑名单免疫] (PR #3759, Fixes #3758, Thanks to @cubelikeplayDaniel)**:
+            -   **400 坏图就地降级与原地重试**: 针对客户端在长程多模态会话中发送损坏或无法被上游视觉解码器处理的图片导致 `400 Unable to process input image` 会话死锁报废问题，流水线精准识别该错误，不锁定账号、不解绑粘性会话以保护原账号 Prefix Cache；并在原地自动将损坏图片降级替换为结构化占位符后即时重试，彻底救活会话生命周期。(PR #3759, Fixes #3758, Thanks to @cubelikeplayDaniel)
+            -   **单图持久免疫与多图防误杀机制**: 当请求中仅有 1 张图片时 100% 确认损坏源，记录 SHA-256 指纹至全局黑名单并在入站通用校验处前置拦截，阻断客户端历史重放污染；多图场景下在当前轮次全部就地替换为占位文本保证会话自愈，跳过写入全局持久黑名单以防止误杀正常架构图。(PR #3759, Ref #3758, Thanks to @cubelikeplayDaniel)
+            -   **FIFO 有限容量淘汰与结构全兼容**: 坏图黑名单采用 `ImageBlacklist`（HashSet + VecDeque，上限 2000），按 O(1) 逐项淘汰最旧条目防止满载清空引发长会话击穿；并在各协议 Handler 中增加零图熔断门禁，全面兼容顶层 `request` 信封及 `systemInstruction` / `system_instruction` 双重命名。(PR #3759, Ref #3758, Thanks to @cubelikeplayDaniel)
+        -   **[生图看门狗超时放宽与多协议统一空图诊断收敛] (Fixes #3756, Ref #3756, Thanks to @jeikl)**:
+            -   **看门狗与预算放宽**: 在 `upstream/client.rs` 中将生图请求（`is_image_gen`）首选端点看门狗超时放宽至 90s、备选端点 45s、总超时预算 135s，杜绝 4K 高分辨率长耗时生图被 15s 看门狗超时误杀。(Fixes #3756, Thanks to @jeikl)
+            -   **流水线空图诊断与拒答终态判定**: 建立统一且协议无关的生图响应合法性校验与深度脱敏诊断提取器（`extract_image_generation_diagnostic`）。当上游返回 200 但未包含有效图片时严禁视为假成功，精准提取 `promptFeedback.blockReason`、`finishReason` 与安全违规拒答文本，立即终态返回 400 并阻断盲目切号。(Fixes #3756, Thanks to @jeikl)
+            -   **多协议并发调度对齐**: 在 OpenAI、Gemini、Claude 与 Codex 四大协议中对齐生图延迟确权保护与调度器并发控制，彻底根除各适配器层的重复实现与类型编译缺陷。(Fixes #3756, Ref #3756, Thanks to @jeikl)
+
     *   **v5.0.1-beta.2 (2026-10-27)**:
         -   **[DeepSeek Harness (DSH) 一键全环境适配与 Agent 工具交互规范对齐] (PR #3761, Ref #3761, Thanks to @wakeupnotfound, @jeikl)**:
             -   **全环境一键双向同步**: 新增 `DeepSeekHarness` 支持，涵盖 macOS / Windows / Linux 路径探测，自动向 `~/.dsh/profiles/desktop/cordis.patch.yml`（CLI & 桌面）与 `profiles/web/cordis.patch.yml`（Web GUI: `dsh web`）注入 Antigravity 提供商与核心模型映射，并在 `~/.dsh/.credentials.yaml` 注入 API 密钥。(PR #3761, Thanks to @wakeupnotfound)
