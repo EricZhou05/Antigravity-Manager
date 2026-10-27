@@ -1827,7 +1827,7 @@ pub async fn handle_messages(
                     image_permit = Some(permit);
                     Ok((access_token, project_id, email, account_id, wait_ms))
                 }
-                Err(err) => Err(err),
+                Err((_status, err)) => Err(err),
             }
         } else {
             let mut res = token_manager
