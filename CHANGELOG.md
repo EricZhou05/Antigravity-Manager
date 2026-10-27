@@ -3,6 +3,18 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.1-beta.5 (2026-10-28)**:
+        -   **[提示词清洗按注入区/当前轮分轨，用户正文永久豁免] (Fixes #3764)**:
+            -   **当前轮 100% 透传**: 清洗轨道收敛为 System / Content，并为当前轮新增 Anchored 轨——只清洗 `<system*>` / `<identity*>` 标签内部，标签外用户正文逐字保留；单轮翻译、校对、代码审计类请求不再被整句改写为官方身份。(Fixes #3764)
+            -   **注入区边界按「最后一条 user 消息的最后一个 text part」裁定**: 兼容客户端把系统提示词放进首轮 user 多 part、以及在文本后追加图片/文件的形态；计费元数据 Part 在选轨道前剔除，避免下标漂移把当轮正文误判为注入区。(Fixes #3764)
+            -   **身份声明正则双重防护**: 桥接段不再跨行（消除 `You are ...` 与下一段 `Based on ...` 被整段吞噬），替换回调新增疑问句豁免与跨子句连词豁免，`你是基于什么模型开发的？` 与 `..., and it was created by ...` 均保持原样。(Fixes #3764)
+            -   **多轮清洗幂等**: 同一请求在适配层、handler 与发包前会多次清洗，新增幂等回归用例，保护 `compute_prefix_hash` 的前缀稳定性与 Prompt Caching。(Fixes #3764)
+        -   **[进程身份判定收敛为唯一入口，修复 Antigravity IDE 2.6.0 切号失败] (Fixes #3762, Thanks to @cubelikeplayDaniel)**:
+            -   **身份只来自可执行文件名/路径**: 新增 `classify_process`，命令行参数降级为 IDE / 经典判别器且只读取 Chromium `--user-data-dir` 的值；删除 `(antigravity && vscode)` 弱特征组合，杜绝把打开 antigravity 工程的 VS Code / 终端 / 资源管理器纳入 `taskkill /F /T` 关闭列表。(Fixes #3762)
+            -   **IDE 目标强制 SQLite 注入**: 目标确认为 IDE 时坚决写入 `state.vscdb`，不再因版本号 ≥ 2.0.0 误走系统 Keyring 而提示重新登录；显式 classic 选择优先。(Fixes #3762)
+            -   **Manager 守卫只看文件名**: `is_manager_or_tools_process` 的宽松兜底改为 file stem 判定，修复装在 `D:\Tools\Antigravity` / `C:\Tools\agy` 的客户端被误判为 Manager 导致的「检测不到 → 切号只写凭据不重启」静默失败。(Fixes #3762)
+            -   **孤儿语言服务按目标隔离**: `sweep_orphan_language_servers(target_ide)` 统一清理对应客户端，IDE 与经典版互不误杀。(Fixes #3762, Ref #3769)
+
     *   **v5.0.1-beta.4 (2026-10-28)**:
         -   **[大文件上传分阶段自适应超时与四协议签名/思考治理统一] (PR #3767, Fixes #3763, Thanks to @jeikl)**:
             -   **分阶段超时与上传预算**: 将连接、上传、首响应头、大文件重试拆为独立阶段；上传预算按「请求体大小 ÷ 上传带宽 × (1 + 额外等待系数)」自适应计算（默认 2 Mbps + 0.4），停滞超时默认 45s 且不超过上传预算；首响应头按聊天 30/25s、图片 45/25s、视频 60/30s、其他 15/15s 调度；大文件默认只尝试一次，抑制端点 fallback 与跨账号重发造成的上行放大。(PR #3767, Fixes #3763, Thanks to @jeikl)
