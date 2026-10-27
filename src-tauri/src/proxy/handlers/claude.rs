@@ -1705,6 +1705,7 @@ pub async fn handle_messages(
 
     let mut last_error = String::new();
     let mut retried_without_thinking = false;
+    let mut retried_tool_choice_conflict = false;
     let mut retried_with_budget_degraded = false;
     let mut retried_with_image_omitted = false;
     let mut degraded_gemini_body: Option<serde_json::Value> = None;
@@ -1951,6 +1952,15 @@ pub async fn handle_messages(
             }
             (b, timing)
         };
+
+        // [Signature-Retry] 400 签名错误后的重试：流水线统一去签名
+        if retried_without_thinking {
+            crate::proxy::pipeline::InboundThinkingPipeline::strip_signatures_for_retry(
+                &mut gemini_body,
+                Some(store_key.as_str()),
+                &mapped_model,
+            );
+        }
 
         let _ =
             crate::proxy::mappers::context_manager::ContextManager::apply_post_transit_context_mgmt(
@@ -2778,9 +2788,9 @@ pub async fn handle_messages(
         if crate::proxy::pipeline::UpstreamClassification::is_thinking_tool_choice_conflict(
             status_code,
             &error_text,
-        ) && !retried_without_thinking
+        ) && !retried_tool_choice_conflict
         {
-            retried_without_thinking = true;
+            retried_tool_choice_conflict = true;
             if let Some(req) = gemini_body
                 .get_mut("request")
                 .and_then(Value::as_object_mut)
@@ -2864,37 +2874,10 @@ pub async fn handle_messages(
                 trace_id
             );
 
-            // [IMPROVED] 不再禁用 Thinking 模式！
-            // 既然我们已经将历史 Thinking Block 转换为 Text，那么当前请求可以视为一个新的 Thinking 会话
-            // 保持 thinking 配置开启，让模型重新生成思维，避免退化为简单的 "OK" 回复
-            // request_for_body.thinking = None;
-
-            // 清理历史消息中的所有 Thinking Block，将其转换为 Text 以保留上下文
-            for msg in request_for_body.messages.iter_mut() {
-                if let crate::proxy::mappers::claude::models::MessageContent::Array(blocks) =
-                    &mut msg.content
-                {
-                    let mut new_blocks = Vec::with_capacity(blocks.len());
-                    for block in blocks.drain(..) {
-                        match block {
-                            crate::proxy::mappers::claude::models::ContentBlock::Thinking { thinking, .. } => {
-                                // 降级为 text
-                                if !thinking.is_empty() {
-                                    tracing::debug!("[Fallback] Converting thinking block to text (len={})", thinking.len());
-                                    new_blocks.push(crate::proxy::mappers::claude::models::ContentBlock::Text {
-                                        text: thinking
-                                    });
-                                }
-                            },
-                            crate::proxy::mappers::claude::models::ContentBlock::RedactedThinking { .. } => {
-                                // Redacted thinking 没什么用，直接丢弃
-                            },
-                            _ => new_blocks.push(block),
-                        }
-                    }
-                    *blocks = new_blocks;
-                }
-            }
+            // [Pipeline First] 不再在适配器里做 Thinking → Text。
+            // 正常轮次：有合法签名时由流水线保留官方思考块 / 签名连续性；
+            // 仅当签名失效或缺失时，流水线才把历史思考降级为正文（保留推理内容）。
+            // 这里只标记重试状态并保持 thinking 配置不变。
 
             // 精准定向净化 ThinkingStore 中当前 session 的异构污染签名，保留思考文本与健康历史签名，
             // 彻底防止重试阶段再次把坏签名还原回 contents

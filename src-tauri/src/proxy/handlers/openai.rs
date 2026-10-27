@@ -1654,6 +1654,7 @@ data: {"type":"response.failed","response":{"status":"failed","error":{"code":"u
             "sess-test",
             Some("sess-test"),
             true,
+            false,
         );
 
         let inner_req = &mut gemini_payload["request"];
@@ -2348,6 +2349,7 @@ pub async fn handle_chat_completions(
     let mut failure_statuses = FailureStatusTracker::default();
     let mut used_attempts = 0;
     let mut retried_without_thinking = false;
+    let mut retried_tool_choice_conflict = false;
     let mut retried_with_budget_degraded = false;
     let mut retried_with_image_omitted = false;
     let mut degraded_gemini_body: Option<Value> = None;
@@ -2497,6 +2499,7 @@ pub async fn handle_chat_completions(
                     &affinity_key,
                     None,
                     false,
+                    retried_without_thinking,
                 );
                 if retried_with_budget_degraded {
                     crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(
@@ -2506,6 +2509,14 @@ pub async fn handle_chat_completions(
                 (b, s, c, p)
             };
         let session_id = store_key.clone();
+        // [Signature-Retry] 400 签名错误后的重试：流水线统一去签名
+        if retried_without_thinking {
+            crate::proxy::pipeline::InboundThinkingPipeline::strip_signatures_for_retry(
+                &mut gemini_body,
+                Some(session_id.as_str()),
+                &mapped_model,
+            );
+        }
         let tf_micros = tf_start.elapsed().as_micros() as u64;
         let norm_total_micros = norm_start.elapsed().as_micros() as u64;
         norm_ms = norm_total_micros.saturating_sub(tf_micros) as f64 / 1000.0;
@@ -3249,9 +3260,9 @@ pub async fn handle_chat_completions(
         if crate::proxy::pipeline::UpstreamClassification::is_thinking_tool_choice_conflict(
             status_code,
             &error_text,
-        ) && !retried_without_thinking
+        ) && !retried_tool_choice_conflict
         {
-            retried_without_thinking = true;
+            retried_tool_choice_conflict = true;
             if let Some(req) = gemini_body
                 .get_mut("request")
                 .and_then(Value::as_object_mut)
@@ -3346,30 +3357,7 @@ pub async fn handle_chat_completions(
                 );
                 // 1. 精准定向净化 ThinkingStore 中的异构污染签名（保留思考文本与健康签名）
                 session_scope.purge_signatures(&mapped_model);
-                // 2. 剥离消息中的 signature，将 reasoning_content 降级为 text，阻断无签名 thought 重新生成
-                for msg in openai_req.messages.iter_mut() {
-                    msg.signature = None;
-                    if let Some(tool_calls) = &mut msg.tool_calls {
-                        for tc in tool_calls {
-                            tc.signature = None;
-                        }
-                    }
-                    if let Some(rc) = msg.reasoning_content.take() {
-                        if !crate::proxy::thinking_store::is_placeholder_thought(&rc) {
-                            match &mut msg.content {
-                                Some(OpenAIContent::String(s)) => {
-                                    *s = format!("{}\n\n{}", s, rc);
-                                }
-                                Some(OpenAIContent::Array(blocks)) => {
-                                    blocks.insert(0, OpenAIContentBlock::Text { text: rc });
-                                }
-                                None => {
-                                    msg.content = Some(OpenAIContent::String(rc));
-                                }
-                            }
-                        }
-                    }
-                }
+                // 2. 请求体不做特化：重试轮次由流水线统一将思考块降级为正文并清理签名
                 // 3. 保持同一账号原地重试
                 force_rotate = false;
                 continue;
@@ -4374,6 +4362,8 @@ pub async fn handle_completions(
 
     let mut force_rotate = false;
     let mut retried_with_budget_degraded = false;
+    let mut retried_without_thinking = false;
+    let mut retried_tool_choice_conflict = false;
     let mut retried_with_image_omitted = false;
     let mut degraded_gemini_body: Option<Value> = None;
 
@@ -4471,6 +4461,7 @@ pub async fn handle_completions(
                         &affinity_key,
                         signature_read_key.as_deref(),
                         true, // is_responses_api
+                        retried_without_thinking,
                     )
                 } else {
                     transform_openai_request_with_session(
@@ -4481,6 +4472,7 @@ pub async fn handle_completions(
                         &affinity_key,
                         None,
                         false,
+                        retried_without_thinking,
                     )
                 };
                 if retried_with_budget_degraded {
@@ -4491,6 +4483,14 @@ pub async fn handle_completions(
                 (b, r, m, p)
             };
         let session_id = session_id_str.clone();
+        // [Signature-Retry] 400 签名错误后的重试：流水线统一去签名
+        if retried_without_thinking {
+            crate::proxy::pipeline::InboundThinkingPipeline::strip_signatures_for_retry(
+                &mut gemini_body,
+                Some(session_id.as_str()),
+                &mapped_model,
+            );
+        }
         let tf_micros = tf_start.elapsed().as_micros() as u64;
         let norm_total_micros = norm_start.elapsed().as_micros() as u64;
         let norm_ms = norm_total_micros.saturating_sub(tf_micros) as f64 / 1000.0;
@@ -5386,9 +5386,9 @@ pub async fn handle_completions(
         if crate::proxy::pipeline::UpstreamClassification::is_thinking_tool_choice_conflict(
             status_code,
             &error_text,
-        ) && !retried_with_budget_degraded
+        ) && !retried_tool_choice_conflict
         {
-            retried_with_budget_degraded = true;
+            retried_tool_choice_conflict = true;
             if let Some(req) = gemini_body
                 .get_mut("request")
                 .and_then(Value::as_object_mut)
@@ -5413,6 +5413,26 @@ pub async fn handle_completions(
             );
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             continue;
+        }
+
+        // [FIX Signature] 400 思考签名无效：清库 + 流水线去签名，同账号原地重试
+        if classification.is_thought_signature_error() {
+            if !retried_without_thinking {
+                retried_without_thinking = true;
+                tracing::warn!(
+                    "[{}] Pipeline: Thinking signature error detected on upstream (HTTP {}). Purging corrupted signatures and retrying on same account.",
+                    trace_id, status_code
+                );
+                session_scope.purge_signatures(&mapped_model);
+                force_rotate = false;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                continue;
+            } else {
+                tracing::warn!(
+                    "[{}] Pipeline: Thinking signature error persisted after retry without thinking. Terminating retry loop.",
+                    trace_id
+                );
+            }
         }
 
         // [FIX Corrupted Image] 400 多模态图像解码/处理失败：自愈剔除损坏图片并在同账号原地重试

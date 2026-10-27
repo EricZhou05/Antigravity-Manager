@@ -14,6 +14,7 @@ pub fn wrap_request_v2(
     // 内容压缩已不再在网关执行。参数保留，避免改动各协议调用点。
     _upstream: Option<&std::sync::Arc<crate::proxy::upstream::client::UpstreamClient>>,
     upstream_session_id: Option<&str>,
+    is_retry: bool,
 ) -> Value {
     // 优先使用传入的 mapped_model，其次尝试从 body 获取
     let original_model = body
@@ -120,6 +121,13 @@ pub fn wrap_request_v2(
         .map(|b| b > 0)
         .unwrap_or(false);
     let is_thinking_active = should_inject || has_explicit_thinking;
+
+    // [Inbound Pre-filter] 在转换前预清洗客户端自带签名（与 Claude AST 预过滤对齐）：
+    // 提前剔除空/过短/异构签名，避免其进入后续映射与 finalize。
+    crate::proxy::pipeline::InboundThinkingPipeline::sanitize_inbound_signatures(
+        &mut inner_request,
+        final_model_name,
+    );
 
     if let Some(contents) = inner_request
         .get_mut("contents")
@@ -323,7 +331,7 @@ pub fn wrap_request_v2(
             &final_model_name,
             should_inject,
             session_id,
-            false,
+            is_retry,
         );
     }
 
@@ -1300,6 +1308,7 @@ pub fn wrap_request(
         None, // token_manager：不带 → Layer-3 本就不会触发
         None, // upstream：同上，无需客户端
         None,
+        false,
     )
 }
 static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
