@@ -32,6 +32,17 @@ export interface ProxyConfig {
     proxy_pool?: ProxyPoolConfig;
     multimodal?: MultimodalConfig;
     stream_timeouts?: StreamTimeoutConfig;
+    upload_timeouts?: UploadTimeoutConfig;
+}
+
+export interface UploadTimeoutConfig {
+    connect_secs?: number;
+    min_upload_mbps?: number;
+    extra_wait_ratio?: number;
+    stall_secs?: number;
+    header_wait_secs?: number;
+    large_body_threshold_mb?: number;
+    large_body_endpoint_attempts?: number;
 }
 
 export interface StreamTimeoutConfig {

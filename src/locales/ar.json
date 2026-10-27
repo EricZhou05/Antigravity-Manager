@@ -1113,11 +1113,11 @@
                 "clear_error": "فشل مسح كتل التفكير: {{error}}",
                 "gemini_soft_budget_note": "⚠️ سلوك ميزانية التفكير: يعتبر Google Gemini ميزانية التفكير thinkingBudget هدفاً مرناً (Soft Target). في المهام المعقدة أو التوجيهات الطويلة، قد يوسع النموذج سلسلة التفكير تلقائياً ويتجاوز القيمة المحددة؛ اضبطه على 0 لتعطيل التفكير تماماً."
             },
-            "stream_timeout_settings": {
-                "title": "إعدادات مهلة التدفق (Stream Timeout Settings)"
+            "timeout_settings": {
+                "title": "إعدادات المهل الزمنية"
             },
             "thinking_settings": {
-                "title": "إعدادات التفكير (Thinking Settings)"
+                "title": "إعدادات التفكير"
             },
             "prompt_multimodal": {
                 "title": "الموجه العام وإعدادات الوسائط المتعددة"
@@ -1192,7 +1192,7 @@
                 }
             },
             "agent_settings": {
-                "title": "إعدادات Agent المخصصة (Specific Agent Settings)"
+                "title": "إعدادات Agent المخصصة"
             },
             "hub": {
                 "title": "بصمة عميل Hub الرسمية",
@@ -1211,17 +1211,53 @@
         "stream_timeouts": {
             "banner_title": "آلية مهلة التدفق المتدرجة ثلاثية المراحل وإبقاء الاتصال نشطاً",
             "banner_desc": "مصممة لنماذج التفكير العميق، والـ Prefill للسياقات الضخمة، وضغط السجل وكتابة الملفات الكبيرة. توفر 3 فترات مستقلة مع إرسال نبضات مستمرة (: ping) لمنع انقطاع البوابة وحلقات إعادة المحاولة.",
-            "ttft_title": "مهلة الاستجابة الأولى (TTFT)",
+            "ttft_title": "مهلة الاستجابة الأولى",
             "default_badge": "الافتراضي: 180s",
             "ttft_desc": "تغطي قائمة انتظار التشغيل البارد، وحساب الـ Prefill لأكثر من 100 ألف رمز، ومهام التلخيص. ترسل نبضات كل 3 ثوانٍ للحفاظ على الاتصال.",
             "transition_title": "مهلة الانتقال (إعادة ضبط المؤقت)",
             "transition_desc": "فترة السماح بين انتهاء التفكير وظهور أول رمز للمحتوى أو استدعاء الأداة. تعيد ضبط المؤقت تلقائياً عند انتهاء التفكير.",
-            "sliding_title": "المهلة المنزلقة أثناء التدفق (Streaming)",
+            "sliding_title": "المهلة المنزلقة أثناء التدفق",
             "default_badge_sliding": "الافتراضي: 120s",
             "sliding_desc": "أقصى فترة صمت مسموح بها بين الرموز المتتالية. في حالة الانقطاع، تغلق التدفق بأمان لحماية المخرجات المولدة.",
             "toast_reset": "تمت استعادة إعدادات المهلة إلى القيم الافتراضية",
             "btn_reset": "استعادة الافتراضي",
             "btn_save": "حفظ إعدادات المهلة"
+        },
+        "upload_timeouts": {
+            "adaptive_title": "مهلة الرفع: تُحدد تلقائياً حسب عرض النطاق",
+            "min_speed_title": "عرض نطاق الرفع (Mbps)",
+            "min_speed_desc": "مستخدمو VPN عادةً لديهم تنزيل عالٍ ورفع منخفض؛ يُنصح بـ 1–5 Mbps.",
+            "extra_wait_title": "معامل الانتظار الإضافي",
+            "extra_wait_desc": "يؤثر هذا المعامل في أقصى وقت انتظار للرفع.",
+            "formula_title": "أقصى انتظار = حجم الجسم ÷ عرض نطاق الرفع × (1 + معامل الانتظار)",
+            "stall_title": "مهلة التوقف (ثانية)",
+            "stall_desc": "مهلة توقف الشبكة الكامل أثناء الرفع؛ إذا كان أقصى انتظار أقصر يُستخدم الأقصر.",
+            "header_wait_title": "مهلة أول ترويسة (ثانية)",
+            "header_wait_desc": "0 = استخدام القيم المدمجة: 30 ثانية للنقطة الأساسية / 25 ثانية للاحتياطية؛ أي قيمة غير 0 ترفع الحد الأدنى فقط.",
+            "large_body_desc": "الملفات التي تتجاوز الحد تُرسل مرة واحدة افتراضياً، لتجنب إعادة الإرسال التي تشبع الرفع.",
+            "large_body_threshold_title": "حد الملف الكبير (MB)",
+            "endpoint_attempts_title": "أقصى عدد محاولات",
+            "toast_reset": "تمت استعادة المهل الافتراضية",
+            "btn_reset": "استعادة الافتراضي",
+            "btn_save": "حفظ إعدادات المهلة"
+        },
+        "timeouts": {
+            "banner_title": "إعدادات المهل الزمنية",
+            "banner_desc": "سلسلة المهل الكاملة لطلب واحد: الاتصال → الرفع → أول ترويسة → أول رمز / إخراج مستمر.",
+            "section_connect": "① اتصال نقطة النهاية (تبديل تلقائي)",
+            "connect_label": "مهلة الاتصال (ثانية)",
+            "connect_desc": "مهلة إنشاء اتصال TCP مع نقطة النهاية؛ عادةً سريعة جداً.",
+            "connect_restart": "يتطلب إعادة تشغيل خدمة الوسيط.",
+            "section_upload": "② الرفع (إرسال الجسم)",
+            "section_large_body": "إعادة محاولة الملفات الكبيرة",
+            "section_header": "③ أول ترويسة استجابة (تبديل تلقائي)",
+            "header_primary_title": "النقطة الأساسية:",
+            "header_primary_items": "دردشة نص/كود: 30　صورة: 45　فيديو: 60　أخرى: 15 (مثل توليد العناوين)",
+            "header_fallback_title": "النقطة الاحتياطية:",
+            "header_fallback_items": "دردشة نص/كود: 25　صورة: 25　فيديو: 30　أخرى: 15 (مثل توليد العناوين)",
+            "section_stream": "④ أول رمز والإخراج المستمر",
+            "stream_desc": "لا يتم تبديل نقطة النهاية؛ يُنهى البث بأمان أو يعيد العميل المحاولة.",
+            "auto_summary": "مثال: أقصى انتظار = 47MB ÷ 2Mbps × 1.4 ≈ {{big}} ثانية;"
         },
         "cloudflared": {
             "title": "الوصول العام (Cloudflared)",
@@ -1647,7 +1683,7 @@
             "out_tokens_title": "رموز الإخراج",
             "ttft_prefix": "أول رمز:",
             "total_duration_title": "إجمالي الوقت",
-            "ttft_title": "زمن استجابة أول رمز (TTFT)"
+            "ttft_title": "زمن استجابة أول رمز"
         },
         "details": {
             "title": "تفاصيل الطلب",
@@ -1702,7 +1738,7 @@
             "norm_desc": "Model routing / account scheduling / Gemini format conversion",
             "thinking": "Thinking & Signature Fill",
             "thinking_desc": "ThinkingStore hydration / sentinel signature injection",
-            "ttft": "Time To First Token (TTFT)",
+            "ttft": "Time To First Token",
             "ttft_desc": "Gateway dispatch to first thinking/tool/content SSE chunk",
             "stream": "Stream Transfer Duration",
             "stream_desc": "First chunk arrival to stream completion",

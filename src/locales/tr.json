@@ -1162,11 +1162,11 @@
                 "clear_error": "Düşünce blokları temizlenemedi: {{error}}",
                 "gemini_soft_budget_note": "⚠️ Düşünme Bütçesi Davranışı: Google Gemini upstream, thinkingBudget'ı esnek bir hedef (soft target) olarak kabul eder. Uzun komutlar veya karmaşık kod muhakemesi görevlerinde model düşünme zincirini genişleterek yapılandırılan değeri aşabilir; düşünmeyi tamamen kapatmak için 0 ayarlayın."
             },
-            "stream_timeout_settings": {
-                "title": "Akış Zaman Aşımı Ayarları (Stream Timeout Settings)"
+            "timeout_settings": {
+                "title": "Zaman Aşımı Ayarları"
             },
             "thinking_settings": {
-                "title": "Düşünme Ayarları (Thinking Settings)"
+                "title": "Düşünme Ayarları"
             },
             "prompt_multimodal": {
                 "title": "Genel İstem ve Çok Modlu Ayarlar"
@@ -1241,7 +1241,7 @@
                 }
             },
             "agent_settings": {
-                "title": "Özel Agent Ayarları (Specific Agent Settings)"
+                "title": "Özel Agent Ayarları"
             },
             "hub": {
                 "title": "Resmi Hub İstemci Parmak İzi",
@@ -1260,17 +1260,53 @@
         "stream_timeouts": {
             "banner_title": "3 Kademeli Akış Zaman Aşımı ve Canlı Tutma Mekanizması",
             "banner_desc": "Derin düşünme modelleri, büyük bağlamlı Prefill'ler, geçmiş sıkıştırma ve büyük dosya yazımı için tasarlanmıştır. Üç bağımsız aşama ve kesintisiz arka plan sinyali (: ping) ile ağ geçidi kopmalarını ve yeniden deneme döngülerini önler.",
-            "ttft_title": "İlk Yanıt Toleransı (TTFT)",
+            "ttft_title": "İlk Yanıt Toleransı",
             "default_badge": "Varsayılan: 180s",
             "ttft_desc": "Soğuk başlatma kuyruğu, 100k+ belirteç Prefill ve sıkıştırma özetleme görevlerini kapsar. Bağlantıyı korumak için 3 saniyede bir ping gönderir.",
             "transition_title": "Geçiş Toleransı (Zamanlayıcı Sıfırlama)",
             "transition_desc": "Düşünmenin bitişi ile ilk içerik veya araç çağrısı belirtecinin çıkışı arasındaki süre. Düşünme bittiğinde zamanlayıcıyı otomatik olarak sıfırlar.",
-            "sliding_title": "Kayan Akış Zaman Aşımı (Streaming)",
+            "sliding_title": "Kayan Akış Zaman Aşımı",
             "default_badge_sliding": "Varsayılan: 120s",
             "sliding_desc": "Ardışık belirteçler arasında izin verilen maksimum sessizlik aralığı. Kesinti durumunda oluşturulan çıktıyı koruyarak akışı güvenle tamamlar.",
             "toast_reset": "Akış zaman aşımı ayarları varsayılanlara sıfırlandı",
             "btn_reset": "Varsayılana Sıfırla",
             "btn_save": "Zaman Aşımı Ayarlarını Kaydet"
+        },
+        "upload_timeouts": {
+            "adaptive_title": "Yükleme zaman aşımı: bant genişliğinden otomatik belirlenir",
+            "min_speed_title": "Yükleme bant genişliği (Mbps)",
+            "min_speed_desc": "VPN kullanıcılarında indirme yüksek, yükleme düşüktür; 1–5 Mbps önerilir.",
+            "extra_wait_title": "Ek bekleme katsayısı",
+            "extra_wait_desc": "Bu parametre maksimum yükleme bekleme süresini etkiler.",
+            "formula_title": "Maks. bekleme = gövde boyutu ÷ yükleme hızı × (1 + ek bekleme katsayısı)",
+            "stall_title": "Takılma zaman aşımı (saniye)",
+            "stall_desc": "Yükleme sırasında ağ tamamen durursa uygulanacak süre; maksimum bekleme daha kısaysa o kullanılır.",
+            "header_wait_title": "İlk başlık zaman aşımı (saniye)",
+            "header_wait_desc": "0 = yerleşik değerler: birincil uç nokta 30 sn / yedek 25 sn; 0 dışı değer yalnızca alt sınırı yükseltir.",
+            "large_body_desc": "Eşiği aşan dosyalar varsayılan olarak bir kez gönderilir; tekrarların hattı doldurması önlenir.",
+            "large_body_threshold_title": "Büyük dosya eşiği (MB)",
+            "endpoint_attempts_title": "Maksimum deneme",
+            "toast_reset": "Zaman aşımı ayarları sıfırlandı",
+            "btn_reset": "Varsayılana sıfırla",
+            "btn_save": "Zaman aşımı ayarlarını kaydet"
+        },
+        "timeouts": {
+            "banner_title": "Zaman Aşımı Ayarları",
+            "banner_desc": "Bir isteğin tam zaman aşımı zinciri: bağlantı → yükleme → ilk yanıt başlığı → ilk token / sürekli çıktı.",
+            "section_connect": "① Uç nokta bağlantısı (otomatik yedekleme)",
+            "connect_label": "Bağlantı zaman aşımı (saniye)",
+            "connect_desc": "Uç noktaya TCP bağlantısı kurma zaman aşımı; genellikle çok hızlıdır.",
+            "connect_restart": "Proxy hizmetini yeniden başlatın.",
+            "section_upload": "② Yükleme (gövdeyi gönder)",
+            "section_large_body": "Büyük dosya yeniden deneme",
+            "section_header": "③ İlk yanıt başlığı (otomatik yedekleme)",
+            "header_primary_title": "Birincil uç nokta:",
+            "header_primary_items": "Metin/kod sohbeti: 30　Görsel: 45　Video: 60　Diğer: 15 (ör. başlık üretimi)",
+            "header_fallback_title": "Yedek uç nokta:",
+            "header_fallback_items": "Metin/kod sohbeti: 25　Görsel: 25　Video: 30　Diğer: 15 (ör. başlık üretimi)",
+            "section_stream": "④ İlk token ve sürekli çıktı",
+            "stream_desc": "Uç nokta değiştirilmez; akış güvenle biter veya istemci yeniden dener.",
+            "auto_summary": "Örn.: maks. bekleme = 47MB ÷ 2Mbps × 1.4 ≈ {{big}} sn;"
         },
         "example": {
             "title": "Kullanım Örnekleri",
@@ -1697,7 +1733,7 @@
             "out_tokens_title": "Çıkış Belirteçleri",
             "ttft_prefix": "TTFT:",
             "total_duration_title": "Toplam Gecikme",
-            "ttft_title": "İlk Belirteç Gecikmesi (TTFT)"
+            "ttft_title": "İlk Belirteç Gecikmesi"
         },
         "details": {
             "title": "İstek Detayları",
@@ -1754,7 +1790,7 @@
             "norm_desc": "Model routing / account scheduling / Gemini format conversion",
             "thinking": "Thinking & Signature Fill",
             "thinking_desc": "ThinkingStore hydration / sentinel signature injection",
-            "ttft": "Time To First Token (TTFT)",
+            "ttft": "Time To First Token",
             "ttft_desc": "Gateway dispatch to first thinking/tool/content SSE chunk",
             "stream": "Stream Transfer Duration",
             "stream_desc": "First chunk arrival to stream completion",

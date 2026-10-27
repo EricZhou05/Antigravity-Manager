@@ -1145,6 +1145,42 @@ impl ThinkingStore {
         purged_count
     }
 
+    /// [Signature-Retry] 让一个会话的全部签名失效（保留思考文本）。
+    ///
+    /// 与 `purge_corrupted_signatures`（只清异构签名）不同：上游已经明确判定签名无效时，
+    /// 无法区分哪一轮有问题，保守做法是整会话失效，由调用方在重试载荷中移除签名后再发。
+    pub fn invalidate_session_signatures(&self, store_key: &str) -> usize {
+        if store_key.is_empty() {
+            return 0;
+        }
+
+        let mut cleared = 0;
+        if let Some(mut entry) = self.sessions.get_mut(store_key) {
+            let mut new_turns = Vec::with_capacity(entry.turns.len());
+            for rec in &entry.turns {
+                if rec.signature.is_some() {
+                    cleared += 1;
+                    let mut cleaned = (**rec).clone();
+                    cleaned.signature = None;
+                    new_turns.push(Arc::new(cleaned));
+                } else {
+                    new_turns.push(rec.clone());
+                }
+            }
+            entry.turns = new_turns;
+        }
+
+        let _ = crate::modules::proxy_db::clear_thinking_signatures_for_session(store_key);
+
+        if cleared > 0 {
+            tracing::warn!(
+                "[ThinkingStore] Invalidated {} signature(s) for session {} after upstream signature error",
+                cleared, store_key
+            );
+        }
+        cleared
+    }
+
     /// Drop thinking records that no longer appear in the (possibly compressed) history.
     /// Always keeps the newest 2 turns so the latest unused response thinking is not lost.
     pub fn prune_orphaned_records(&self, store_key: &str, contents: &[Value]) {
@@ -1809,6 +1845,24 @@ pub fn finalize_gemini_contents_thinking_with_session(
     target_model: Option<&str>,
     session_id: Option<&str>,
 ) {
+    finalize_gemini_contents_thinking_with_options(
+        contents,
+        is_thinking_enabled,
+        target_model,
+        session_id,
+        false,
+    );
+}
+
+/// `untrusted_signatures = true` 用于重试轮次：不信任任何客户端/缓存签名，
+/// 思考块直接降级为正文，工具调用只保留哨兵，避免“先丢文本、再删签名”。
+pub fn finalize_gemini_contents_thinking_with_options(
+    contents: &mut [Value],
+    is_thinking_enabled: bool,
+    target_model: Option<&str>,
+    session_id: Option<&str>,
+    untrusted_signatures: bool,
+) {
     let compaction_boundary = determine_compaction_boundary(contents, session_id);
 
     // 预先计算每一轮的前置因果锚点 (causal anchor)，以便无 ID 的 Gemini 原生工具调用也能合成确定性 ID
@@ -2026,7 +2080,19 @@ pub fn finalize_gemini_contents_thinking_with_session(
 
             // 2. 签名归位（终审出站门禁 Gatekeeper）：
             // 签名只写在该轮第一个非思考 part 上。Gemini 与 Claude 桌面端都是这个落点。
-            if is_in_compaction_history {
+            if untrusted_signatures {
+                // 重试轮次：客户端/缓存签名一律不可信，直接清空；
+                // Gemini 工具调用仅保留官方哨兵，Claude 目标不带任何签名。
+                for p in other_parts.iter_mut() {
+                    if let Some(obj) = p.as_object_mut() {
+                        obj.remove("thought_signature");
+                        obj.remove("thoughtSignature");
+                        if !is_claude_turn && obj.contains_key("functionCall") {
+                            obj.insert("thoughtSignature".to_string(), json!(SENTINEL_SIGNATURE));
+                        }
+                    }
+                }
+            } else if is_in_compaction_history {
                 // 压缩历史轮次治理：
                 // 彻底剥离历史失效签名，Gemini 缺失签名的工具调用统一以官方哨兵锁定（防 400）。
                 // 注意：Claude 模型上游严禁携带 Gemini 哨兵 (避免 400 Invalid signature)，故仅对非 Claude 目标设置哨兵；
@@ -2114,51 +2180,59 @@ pub fn finalize_gemini_contents_thinking_with_session(
             }
 
             // 3. 治理思考块 (thinking_parts)
-            // 思考块不挂签名。Claude 保留思考正文（Mac IDE 与 Windows 桌面端都回传）。
-            // Gemini 在已有非思考 part 时丢掉思考正文，连续只靠签名。
-            // 【守卫法则】：对于 Claude 模型，上游 Google 严格校验签名，若本轮未能安置有效签名，
-            // 严禁送出 `thought: true` 块（否则必报 messages.N.content.0.thinking.signature: Field required 400）。
-            // 此时必须将思考正文安全降级为普通正文（包裹 <think>）以纯文本出站。
-            let claude_has_signature = is_claude_turn
+            // 思考块不挂签名，签名只落在非思考锚点上。
+            // 策略（只在签名不可信/缺失时降级，不影响正常签名轮次）：
+            // - 有目标家族的合法签名：
+            //   · Claude 目标 → 保留 thought 块；
+            //   · Gemini 目标且有正文/工具 → 丢弃思考文本（签名已承载连续性，官方形态）；
+            //   · Gemini 纯思考轮 → 保留 thought 块；
+            // - 无合法签名（含哨兵）→ 降级为普通正文，保留推理内容（思考关闭时同样保留）；
+            // - 压缩历史 → 直接丢弃，避免 token 膨胀。
+            let turn_has_real_signature = !untrusted_signatures
                 && other_parts.iter().any(|p| {
                     p.get("thoughtSignature")
                         .or_else(|| p.get("thought_signature"))
                         .and_then(|s| s.as_str())
-                        .map_or(false, |s| is_real_signature(s) && is_claude_signature(s))
+                        .map_or(false, |s| {
+                            is_real_signature(s)
+                                && !is_sentinel_signature(s)
+                                && (if is_claude_turn {
+                                    is_claude_signature(s)
+                                } else {
+                                    is_likely_gemini_signature(s)
+                                })
+                        })
                 });
 
-            if is_thinking_enabled && (!is_claude_turn || claude_has_signature) {
+            let keep_thought = !untrusted_signatures
+                && is_thinking_enabled
+                && ((is_claude_turn && turn_has_real_signature)
+                    || (!is_claude_turn && other_parts.is_empty()));
+            let drop_with_signature = is_thinking_enabled
+                && !is_claude_turn
+                && !other_parts.is_empty()
+                && turn_has_real_signature;
+            let degrade_unsigned_thought =
+                !is_in_compaction_history && !keep_thought && !drop_with_signature;
+
+            if keep_thought {
                 for tp in thinking_parts.iter_mut() {
                     if let Some(obj) = tp.as_object_mut() {
                         obj.remove("thoughtSignature");
                         obj.remove("thought_signature");
                     }
                 }
-                if is_claude_turn || other_parts.is_empty() {
-                    parts.extend(thinking_parts);
-                }
-            } else {
-                // 当思考模式为关，或者 Claude 缺少签名无法通过上游合法性检验时：
-                // 【已废除注释】废除降维包装 <think> 注入正文的逻辑。
-                // 官方抓包铁证：无签名或切模型时，思考块直接完全丢弃，不伪造也不向正文中注入 <think> 标签，
-                // 彻底杜绝正文污染、模型格式模仿幻觉及 Token 膨胀。
-                /*
-                for tp in thinking_parts {
-                    let text = tp.get("text").and_then(|t| t.as_str()).unwrap_or("");
-                    if is_meaningful_thought(text) {
-                        let wrapped = if is_claude_turn {
-                            if text.trim_start().starts_with("<think>") {
-                                text.to_string()
-                            } else {
-                                format!("<think>\n{}\n</think>\n\n", text.trim())
-                            }
-                        } else {
-                            text.to_string()
-                        };
-                        parts.push(json!({ "text": wrapped }));
+                parts.extend(thinking_parts);
+            } else if degrade_unsigned_thought {
+                // 无合法签名时不再丢弃思考内容：降级为普通正文，保留推理连续性。
+                // 不注入 <think> 标签，避免污染正文与模型格式模仿。
+                for tp in &thinking_parts {
+                    if let Some(text) = tp.get("text").and_then(|t| t.as_str()) {
+                        if !text.trim().is_empty() && !is_placeholder_thought(text) {
+                            parts.push(json!({ "text": text }));
+                        }
                     }
                 }
-                */
             }
 
             parts.extend(other_parts);
@@ -5057,7 +5131,7 @@ mod tests {
     }
 
     #[test]
-    fn test_gemini_to_claude_wraps_foreign_thought_in_think_tags_and_strips_tool_sig() {
+    fn test_gemini_to_claude_degrades_foreign_thought_to_text_and_strips_tool_sig() {
         let gemini_sig = "Ep4MCpsMARFNMg9NDlK9RXXz5Mzq9mniX9KSQBBzbUx3k85w/qDgtcE+28NH+1EvPeULAprqUquvYXGMzUXGy1xJoMnqdkC4vqebuhyd2Xhs0oz+OhqcOTwLhGYOG0KBKQ87Hfw4q/sMCSgf2gz4vFMa6V6kKMJepYlPXKFJJF4ok+W6lUt3PfYln8K9Dh7wB/40iHiZ2BnJd++6hfUwu9Bz1n795S50l0yCj84EaSCDDF334Erxq7Fo";
         let thought_text = "Step 1: Check database schema. Step 2: Query tables.";
         let visible_answer = "Found 3 matching records in the database.";
@@ -5084,7 +5158,7 @@ mod tests {
             ]
         })];
 
-        // 目标模型切为 Claude
+        // 目标模型切为 Claude 后，Gemini 签名不可用：思考内容降级为普通正文
         finalize_gemini_contents_thinking_with_model(
             &mut contents,
             true,
@@ -5092,11 +5166,11 @@ mod tests {
         );
 
         let parts = contents[0]["parts"].as_array().expect("parts array");
-        assert_eq!(parts[0]["thought"], true);
         assert_eq!(parts[0]["text"], thought_text);
+        assert!(parts[0].get("thought").is_none());
         assert!(parts[0].get("thoughtSignature").is_none());
         assert_eq!(parts[1]["text"], visible_answer);
-        assert_eq!(parts[1]["thoughtSignature"], gemini_sig);
+        assert!(parts[1].get("thoughtSignature").is_none());
         assert_eq!(parts[2]["functionCall"]["id"], "call_db_1");
         assert!(parts[2].get("thoughtSignature").is_none());
     }

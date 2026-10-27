@@ -1161,14 +1161,14 @@
                 "clear_error": "清空思考區塊失敗: {{error}}",
                 "gemini_soft_budget_note": "⚠️ 思考預算特性說明：Google Gemini 上游將 thinkingBudget 視為啟發式偏好（Soft Target）。面對超長 Prompt、複雜程式碼推演或 Agent 任務時，上游推理引擎會自動深入展開思考鏈，可能突破所設數值；設定為 0 則徹底關閉思考。"
             },
-            "stream_timeout_settings": {
-                "title": "串流逾時設定 (Stream Timeout Settings)"
+            "timeout_settings": {
+                "title": "逾時設定"
             },
             "thinking_settings": {
-                "title": "思考設定 (Thinking Settings)"
+                "title": "思考設定"
             },
             "prompt_multimodal": {
-                "title": "全域提示詞與多模態設定 (Prompt & Multimodal)"
+                "title": "全域提示詞與多模態設定"
             },
             "log_retention_title": "請求日誌保留",
             "log_retention_body_hours": "請求主體保留小時數",
@@ -1232,10 +1232,10 @@
                 }
             },
             "multimodal_settings": {
-                "title": "多模態交互設定 (Multimodal Settings)"
+                "title": "多模態交互設定"
             },
             "agent_settings": {
-                "title": "特定 Agent 設定 (Specific Agent Settings)"
+                "title": "特定 Agent 設定"
             },
             "hub": {
                 "title": "官方 Hub 客戶端指紋",
@@ -1254,17 +1254,53 @@
         "stream_timeouts": {
             "banner_title": "三階段串流梯度逾時與保活機制",
             "banner_desc": "針對深度思考模型、超大上下文 Prefill、長歷史壓縮摘要及大檔案程式碼寫入場景，透過三階段獨立計時與全程底層心跳保活（: ping），徹底杜絕中間閘道切斷、過渡斷崖誤殺與客戶端重試死循環。",
-            "ttft_title": "首字回應寬限 (TTFT)",
+            "ttft_title": "首字回應寬限",
             "default_badge": "預設: 180s",
             "ttft_desc": "涵蓋上游冷啟動排隊、超大提示詞 Prefill 與長歷史壓縮摘要任務的最大容忍時間。期間每 3 秒下發心跳保活。",
             "transition_title": "狀態切換寬限 (全新輪迴)",
             "transition_desc": "思考完畢至首個內文或工具調用出字的過渡期。思考結束時自適應重置計時器，為大檔案寫入等裝配留出充分時間。",
-            "sliding_title": "推流滑動逾時 (Streaming)",
+            "sliding_title": "推流滑動逾時",
             "default_badge_sliding": "預設: 120s",
             "sliding_desc": "持續吐字過程中相鄰 Token 的最大允許靜默間隔。若中途意外斷流超過此時長，自動優雅截斷收尾並保全已產生的程式碼。",
             "toast_reset": "已恢復逾時設定預設值",
             "btn_reset": "恢復預設值",
             "btn_save": "儲存逾時設定"
+        },
+        "upload_timeouts": {
+            "adaptive_title": "上傳逾時：自動依頻寬判定",
+            "min_speed_title": "上傳頻寬 (Mbps)",
+            "min_speed_desc": "VPN使用者通常高下行、低上行、建議填1-5Mbps。",
+            "extra_wait_title": "額外等待係數",
+            "extra_wait_desc": "此參數影響上傳最大等待時間。",
+            "formula_title": "最大等待時間 = 請求內容大小 ÷ 上傳頻寬 × (1 + 額外等待係數)",
+            "stall_title": "停滯逾時 (秒)",
+            "stall_desc": "上傳時因網路錯誤持續卡死的逾時時間；若最大等待時間更短，則自動取最大等待時間。",
+            "header_wait_title": "首回應標頭逾時 (秒)",
+            "header_wait_desc": "0 = 使用內建值：首選端點 30 秒 / 備用端點 25 秒；填非 0 時只作為下限往上抬。",
+            "large_body_desc": "超過閾值的檔案預設只送一次，避免反覆重傳佔滿上行。",
+            "large_body_threshold_title": "大檔案閾值 (MB)",
+            "endpoint_attempts_title": "最多嘗試次數",
+            "toast_reset": "已恢復逾時預設值",
+            "btn_reset": "恢復預設值",
+            "btn_save": "儲存逾時設定"
+        },
+        "timeouts": {
+            "banner_title": "逾時設定",
+            "banner_desc": "一次請求的完整逾時鏈路：建立連線 → 上傳 → 首回應標頭 → 首字/連續輸出。",
+            "section_connect": "① 端點建立連線 （自動故障切換端點）",
+            "connect_label": "連線逾時 (秒)",
+            "connect_desc": "和端點的TCP連線建立逾時時間，通常速度極快。",
+            "connect_restart": "改完需重新啟動代理服務。",
+            "section_upload": "② 上傳（送出請求內容）",
+            "section_large_body": "大檔案重試",
+            "section_header": "③ 首回應標頭（自動故障切換端點）",
+            "header_primary_title": "首選端點：",
+            "header_primary_items": "文字程式碼聊天：30　圖片：45　影片：60　其他：15（如標題生成）",
+            "header_fallback_title": "備選端點：",
+            "header_fallback_items": "文字程式碼聊天：25　圖片：25　影片：30　其他：15（如標題生成）",
+            "section_stream": "④ 首字與連續輸出",
+            "stream_desc": "不會切換端點，只安全收尾或交給用戶端重試。",
+            "auto_summary": "例：最大等待時間= 47MB ÷ 2Mbps ×1.4 ≈ {{big}} 秒；"
         },
         "example": {
             "title": "使用示例",
@@ -1772,7 +1808,7 @@
             "out_tokens_title": "輸出 Token",
             "ttft_prefix": "首字:",
             "total_duration_title": "總耗時",
-            "ttft_title": "首字延遲 (TTFT)"
+            "ttft_title": "首字延遲"
         },
         "details": {
             "title": "請求詳情",

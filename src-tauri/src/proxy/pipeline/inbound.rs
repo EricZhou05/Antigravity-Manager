@@ -567,11 +567,12 @@ impl InboundThinkingPipeline {
         }
 
         // 3. 终审把关与脱敏规范化 (Finalize)
-        crate::proxy::thinking_store::finalize_gemini_contents_thinking_with_session(
+        crate::proxy::thinking_store::finalize_gemini_contents_thinking_with_options(
             contents,
             is_thinking_enabled,
             Some(target_model),
             session_id,
+            is_retry,
         );
 
         // 4. 工具回执 role 归一化（对齐官方 Antigravity 形态，Gemini -> model, Claude -> user）。
@@ -582,6 +583,191 @@ impl InboundThinkingPipeline {
         // 5. 全协议多模态保鲜滑动窗口与累积容量治理（Pipeline First）：
         let multimodal_cfg = crate::proxy::config::get_multimodal_config();
         Self::apply_multimodal_sliding_window_and_limits(contents, &multimodal_cfg);
+    }
+
+    /// [Signature-Retry] 流水线统一处理签名（协议无关）。
+    ///
+    /// 收到上游 400 签名错误后、同账号重试前调用：
+    /// 1. 思考块降级为普通正文（保留推理连续性，不再丢弃）；
+    /// 2. 移除所有 `thoughtSignature` / `thought_signature`，保留正文与工具调用；
+    /// 3. Gemini 目标的工具调用回填/保留官方哨兵；
+    /// 4. 让该会话的 ThinkingStore / SignatureCache 签名全部失效。
+    ///
+    /// 不依赖具体协议 AST，任何协议只要最终落到 Gemini 载荷都适用。
+    pub fn strip_signatures_for_retry(
+        body: &mut Value,
+        session_id: Option<&str>,
+        target_model: &str,
+    ) -> usize {
+        let root = if body.get("request").is_some() {
+            body.get_mut("request").unwrap()
+        } else {
+            body
+        };
+
+        let is_claude_target = target_model.to_lowercase().contains("claude");
+        let mut stripped = 0usize;
+        let mut degraded_thoughts = 0usize;
+        let mut strip_parts = |parts: &mut Vec<Value>| {
+            // 思考块降级为普通正文：无签名时 Claude 目标会 400，Gemini 目标也无需保留
+            // thought 语义；但思考内容本身是有效上下文，降级为 text 可保留推理连续性。
+            for part in parts.iter_mut() {
+                if part.get("thought").and_then(|v| v.as_bool()) == Some(true) {
+                    if let Some(obj) = part.as_object_mut() {
+                        for key in ["thoughtSignature", "thought_signature"] {
+                            if obj.remove(key).is_some() {
+                                stripped += 1;
+                            }
+                        }
+                        obj.remove("thought");
+                        degraded_thoughts += 1;
+                    }
+                }
+            }
+            for part in parts.iter_mut() {
+                if let Some(obj) = part.as_object_mut() {
+                    for key in ["thoughtSignature", "thought_signature"] {
+                        // 官方哨兵不是真实签名，是让上游跳过验签的合法占位，重试时必须保留
+                        let keep = obj
+                            .get(key)
+                            .and_then(|v| v.as_str())
+                            .map(crate::proxy::thinking_store::is_sentinel_signature)
+                            .unwrap_or(false);
+                        if !keep && obj.remove(key).is_some() {
+                            stripped += 1;
+                        }
+                    }
+                    // Gemini 目标的工具调用失去真实签名后，回填官方哨兵，避免重试再次 400
+                    if !is_claude_target
+                        && obj.contains_key("functionCall")
+                        && !obj.contains_key("thoughtSignature")
+                        && !obj.contains_key("thought_signature")
+                    {
+                        obj.insert(
+                            "thoughtSignature".to_string(),
+                            serde_json::json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE),
+                        );
+                    }
+                }
+            }
+            // 去除降级后可能留下的空部件
+            parts.retain(|p| p.as_object().map_or(true, |o| !o.is_empty()));
+        };
+
+        if let Some(contents) = root.get_mut("contents").and_then(Value::as_array_mut) {
+            for content in contents.iter_mut() {
+                if let Some(parts) = content.get_mut("parts").and_then(Value::as_array_mut) {
+                    strip_parts(parts);
+                }
+            }
+            // 降级/清理后可能留下空轮，空 parts 会触发上游 400
+            contents.retain(|c| {
+                c.get("parts")
+                    .and_then(Value::as_array)
+                    .map_or(true, |p| !p.is_empty())
+            });
+        }
+
+        let sys_key = if root.get("systemInstruction").is_some() {
+            "systemInstruction"
+        } else {
+            "system_instruction"
+        };
+        if let Some(parts) = root
+            .get_mut(sys_key)
+            .and_then(|s| s.get_mut("parts"))
+            .and_then(Value::as_array_mut)
+        {
+            strip_parts(parts);
+        }
+
+        if let Some(sid) = session_id.filter(|s| !s.is_empty()) {
+            let cleared = crate::proxy::thinking_store::ThinkingStore::global()
+                .invalidate_session_signatures(sid);
+            crate::proxy::SignatureCache::global().delete_session_signature(sid);
+            tracing::warn!(
+                "[Signature-Retry] target={} stripped {} signature field(s), degraded {} thought block(s) to text, invalidated {} stored signature(s) for session {}",
+                target_model,
+                stripped,
+                degraded_thoughts,
+                cleared,
+                sid
+            );
+        } else if stripped > 0 || degraded_thoughts > 0 {
+            tracing::warn!(
+                "[Signature-Retry] target={} stripped {} signature field(s), degraded {} thought block(s) to text",
+                target_model,
+                stripped,
+                degraded_thoughts
+            );
+        }
+
+        stripped
+    }
+
+    /// [Inbound Pre-filter] 在协议转换前预清洗 Gemini 载荷签名（与 Claude AST 预过滤对齐）。
+    ///
+    /// 只处理 `contents` 中 part 的签名字段：
+    /// - 保留目标家族合法签名 / Gemini 官方哨兵；
+    /// - 删除空、过短、异构签名；
+    /// - 思考文本、工具调用、functionResponse 一律保留；
+    /// - 蛇形 `thought_signature` 统一归一为 `thoughtSignature`。
+    pub fn sanitize_inbound_signatures(request: &mut Value, target_model: &str) -> usize {
+        let root = if request.get("request").is_some() {
+            request.get_mut("request").unwrap()
+        } else {
+            request
+        };
+        let is_claude_target = target_model.to_lowercase().contains("claude");
+        let mut stripped = 0usize;
+
+        let Some(contents) = root.get_mut("contents").and_then(Value::as_array_mut) else {
+            return 0;
+        };
+        for content in contents.iter_mut() {
+            let Some(parts) = content.get_mut("parts").and_then(Value::as_array_mut) else {
+                continue;
+            };
+            for part in parts.iter_mut() {
+                let Some(obj) = part.as_object_mut() else {
+                    continue;
+                };
+                let sig = obj
+                    .get("thoughtSignature")
+                    .or_else(|| obj.get("thought_signature"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let Some(sig) = sig else {
+                    obj.remove("thought_signature");
+                    continue;
+                };
+
+                let keep = if is_claude_target {
+                    crate::proxy::thinking_store::is_claude_signature(&sig)
+                } else {
+                    crate::proxy::thinking_store::is_sentinel_signature(&sig)
+                        || crate::proxy::thinking_store::is_likely_gemini_signature(&sig)
+                };
+
+                if keep {
+                    obj.insert("thoughtSignature".to_string(), json!(sig));
+                    obj.remove("thought_signature");
+                } else {
+                    obj.remove("thoughtSignature");
+                    obj.remove("thought_signature");
+                    stripped += 1;
+                }
+            }
+        }
+
+        if stripped > 0 {
+            tracing::warn!(
+                "[Signature-Prefilter] target={} stripped {} invalid/foreign signature(s) from inbound payload",
+                target_model,
+                stripped
+            );
+        }
+        stripped
     }
 
     /// 全协议多模态历史保鲜滑动窗口与累积容量治理（Pipeline First）：
@@ -4880,5 +5066,152 @@ mod tests {
             tc["thinkingBudget"], 1000,
             "Gemini 模型思考预算允许 1000，不得强制改写为 1024"
         );
+    }
+
+    #[test]
+    fn test_strip_signatures_for_retry_removes_known_keys_only() {
+        let mut body = json!({
+            "request": {
+                "contents": [
+                    {
+                        "role": "model",
+                        "parts": [
+                            { "text": "think", "thought": true, "thoughtSignature": "sig_a" },
+                            { "functionCall": { "name": "f", "args": {} }, "thoughtSignature": "sig_b" },
+                            { "text": "hi", "thought_signature": "sig_c" },
+                            { "functionResponse": { "name": "f", "response": { "signature": "business_data" } } },
+                            { "functionCall": { "name": "g", "args": {} }, "thoughtSignature": "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=" }
+                        ]
+                    },
+                    { "role": "user", "parts": [{ "text": "go" }] }
+                ],
+                "systemInstruction": {
+                    "parts": [{ "text": "sys", "thoughtSignature": "sig_d" }]
+                }
+            }
+        });
+
+        let stripped =
+            InboundThinkingPipeline::strip_signatures_for_retry(&mut body, None, "gemini-3.0-pro");
+        assert_eq!(
+            stripped, 4,
+            "should strip thought + tool + system signatures"
+        );
+
+        let serialized = body.to_string();
+        assert!(!serialized.contains("sig_a"));
+        assert!(!serialized.contains("sig_b"));
+        assert!(!serialized.contains("sig_c"));
+        assert!(!serialized.contains("sig_d"));
+        // 官方哨兵必须保留，且失去真实签名的工具调用应回填哨兵
+        assert!(serialized.contains("c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="));
+        assert_eq!(
+            serialized
+                .matches("c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=")
+                .count(),
+            2,
+            "real tool signature must be replaced by sentinel; existing sentinel must be preserved"
+        );
+        // 思考块降级为普通正文：保留内容，但去掉 thought 标记与签名
+        assert!(!serialized.contains("\"thought\":true"));
+        assert!(serialized.contains("\"text\":\"think\""));
+        assert!(serialized.contains("business_data"));
+
+        // 幂等：二次清洗不应再计数
+        assert_eq!(
+            InboundThinkingPipeline::strip_signatures_for_retry(&mut body, None, "gemini-3.0-pro",),
+            0
+        );
+    }
+
+    #[test]
+    fn test_strip_signatures_for_retry_degrades_thought_for_claude_target() {
+        let mut body = json!({
+            "request": {
+                "contents": [
+                    {
+                        "role": "model",
+                        "parts": [
+                            { "text": "thinking", "thought": true, "thoughtSignature": "sig_t" },
+                            { "text": "answer", "thoughtSignature": "sig_a" }
+                        ]
+                    },
+                    {
+                        "role": "model",
+                        "parts": [
+                            { "text": "pure thought", "thought": true, "thoughtSignature": "sig_p" }
+                        ]
+                    },
+                    { "role": "user", "parts": [{ "text": "next" }] }
+                ]
+            }
+        });
+
+        let stripped = InboundThinkingPipeline::strip_signatures_for_retry(
+            &mut body,
+            None,
+            "claude-sonnet-4-6",
+        );
+        assert_eq!(stripped, 3);
+
+        let contents = body["request"]["contents"].as_array().unwrap();
+        // 思考块降级为正文，不再删除整轮
+        assert_eq!(contents.len(), 3);
+        assert_eq!(contents[0]["parts"].as_array().unwrap().len(), 2);
+        assert_eq!(contents[0]["parts"][0]["text"], "thinking");
+        assert_eq!(contents[0]["parts"][1]["text"], "answer");
+        assert!(contents[0]["parts"][0].get("thought").is_none());
+        assert!(contents[0]["parts"][0].get("thoughtSignature").is_none());
+        assert_eq!(contents[1]["parts"][0]["text"], "pure thought");
+        assert!(contents[1]["parts"][0].get("thought").is_none());
+        assert!(contents[2]["parts"][0].get("thought").is_none());
+    }
+
+    #[test]
+    fn test_sanitize_inbound_signatures_prefilters_by_target_family() {
+        use crate::proxy::thinking_store::SENTINEL_SIGNATURE;
+        let gemini_sig = "Ep4MCpsMARFNMg9NDlK9RXXz5Mzq9mniX9KSQBBzbUx3k85w/qDgtcE+28NH+1EvPeULAprqUquvYXGMzUXGy1xJoMnqdkC4vqebuhyd2Xhs0oz+OhqcOTwLhGYOG0KBKQ87Hfw4q/sMCSgf2gz4vFMa6V6kKMJepYlPXKFJJF4ok+W6lUt3PfYln8K9Dh7wB/40iHiZ2BnJd++6hfUwu9Bz1n795S50l0yCj84EaSCDDF334Erxq7Fo";
+        let claude_sig = "Y2xhdWRl"; // base64("claude")
+
+        let mut body = json!({"contents":[{"role":"model","parts":[
+            {"text":"t1","thought":true,"thoughtSignature":gemini_sig},
+            {"text":"t2","thought":true,"thoughtSignature":claude_sig},
+            {"text":"a","thoughtSignature":"short"},
+            {"functionCall":{"name":"f"},"thoughtSignature":gemini_sig},
+            {"functionCall":{"name":"g"},"thoughtSignature":claude_sig},
+            {"functionCall":{"name":"h"},"thoughtSignature":SENTINEL_SIGNATURE}
+        ]}]});
+
+        // Gemini 目标：保留 Gemini 签名 + 哨兵，剔除 Claude/过短签名
+        let stripped =
+            InboundThinkingPipeline::sanitize_inbound_signatures(&mut body, "gemini-3.0-pro");
+        assert_eq!(stripped, 3);
+        let parts = body["contents"][0]["parts"].as_array().unwrap();
+        assert_eq!(parts[0]["thoughtSignature"], gemini_sig);
+        assert!(parts[1].get("thoughtSignature").is_none());
+        assert!(parts[2].get("thoughtSignature").is_none());
+        assert_eq!(parts[3]["thoughtSignature"], gemini_sig);
+        assert!(parts[4].get("thoughtSignature").is_none());
+        assert_eq!(parts[5]["thoughtSignature"], SENTINEL_SIGNATURE);
+        // 思考文本保留
+        assert_eq!(parts[0]["text"], "t1");
+
+        // Claude 目标：只保留 Claude 签名，剔除 Gemini/哨兵/过短签名
+        let mut body2 = json!({"contents":[{"role":"model","parts":[
+            {"text":"t","thought":true,"thoughtSignature":gemini_sig},
+            {"text":"u","thought":true,"thoughtSignature":claude_sig},
+            {"functionCall":{"name":"f"},"thoughtSignature":gemini_sig},
+            {"functionCall":{"name":"g"},"thoughtSignature":claude_sig},
+            {"functionCall":{"name":"h"},"thoughtSignature":SENTINEL_SIGNATURE}
+        ]}]});
+        let stripped2 =
+            InboundThinkingPipeline::sanitize_inbound_signatures(&mut body2, "claude-sonnet-4-6");
+        assert_eq!(stripped2, 3);
+        let parts2 = body2["contents"][0]["parts"].as_array().unwrap();
+        assert!(parts2[0].get("thoughtSignature").is_none());
+        assert_eq!(parts2[1]["thoughtSignature"], claude_sig);
+        assert!(parts2[2].get("thoughtSignature").is_none());
+        assert_eq!(parts2[3]["thoughtSignature"], claude_sig);
+        assert!(parts2[4].get("thoughtSignature").is_none());
     }
 }

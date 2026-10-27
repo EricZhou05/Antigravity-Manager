@@ -248,6 +248,96 @@ pub fn update_stream_timeout_config(config: StreamTimeoutConfig) {
     }
 }
 
+// ============================================================================
+// 全局上游发送阶段分级超时配置存储 (Fixes #3763)
+// ============================================================================
+static GLOBAL_UPLOAD_TIMEOUT_CONFIG: OnceLock<RwLock<UploadTimeoutConfig>> = OnceLock::new();
+
+/// 获取当前上传阶段超时配置（支持环境变量覆盖，保证 Headless/CLI 一致性）
+pub fn get_upload_timeout_config() -> UploadTimeoutConfig {
+    let base = GLOBAL_UPLOAD_TIMEOUT_CONFIG
+        .get()
+        .and_then(|lock| lock.read().ok())
+        .map(|cfg| cfg.clone())
+        .unwrap_or_default();
+
+    // 允许通过环境变量覆盖，符合 AGENTS.md Headless & CLI Parity 纪律
+    let connect_secs = env_u64("ANTIGRAVITY_TIMEOUT_CONNECT_SECS", base.connect_secs);
+    let min_upload_mbps = std::env::var("ANTIGRAVITY_TIMEOUT_UPLOAD_MIN_MBPS")
+        .ok()
+        .and_then(|s| s.trim().parse::<f64>().ok())
+        .unwrap_or(base.min_upload_mbps);
+    let extra_wait_ratio = std::env::var("ANTIGRAVITY_TIMEOUT_UPLOAD_EXTRA_WAIT_RATIO")
+        .ok()
+        .and_then(|s| s.trim().parse::<f64>().ok())
+        .unwrap_or(base.extra_wait_ratio);
+    let stall_secs = env_u64("ANTIGRAVITY_TIMEOUT_UPLOAD_STALL_SECS", base.stall_secs);
+    let header_wait_secs = env_u64(
+        "ANTIGRAVITY_TIMEOUT_HEADER_WAIT_SECS",
+        base.header_wait_secs,
+    );
+    let large_body_threshold_mb = env_u64(
+        "ANTIGRAVITY_TIMEOUT_LARGE_BODY_MB",
+        base.large_body_threshold_mb,
+    );
+    let large_body_endpoint_attempts = env_u64(
+        "ANTIGRAVITY_TIMEOUT_LARGE_BODY_ENDPOINT_ATTEMPTS",
+        base.large_body_endpoint_attempts as u64,
+    ) as usize;
+
+    UploadTimeoutConfig {
+        connect_secs,
+        min_upload_mbps,
+        extra_wait_ratio,
+        stall_secs,
+        header_wait_secs,
+        large_body_threshold_mb,
+        large_body_endpoint_attempts,
+    }
+    .normalized()
+}
+
+fn env_u64(key: &str, fallback: u64) -> u64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(fallback)
+}
+
+/// 更新全局上传阶段超时配置
+pub fn update_upload_timeout_config(config: UploadTimeoutConfig) {
+    let config = config.normalized();
+    if let Some(lock) = GLOBAL_UPLOAD_TIMEOUT_CONFIG.get() {
+        if let Ok(mut cfg) = lock.write() {
+            if *cfg != config {
+                *cfg = config.clone();
+                tracing::info!(
+                    "[Upstream-Timeouts] Global config updated: connect={}s, min_mbps={:.2}, extra_ratio={:.2}, stall={}s, header_wait={}s, large_body={}MB/{}",
+                    config.connect_secs,
+                    config.min_upload_mbps,
+                    config.extra_wait_ratio,
+                    config.stall_secs,
+                    config.header_wait_secs,
+                    config.large_body_threshold_mb,
+                    config.large_body_endpoint_attempts
+                );
+            }
+        }
+    } else {
+        let _ = GLOBAL_UPLOAD_TIMEOUT_CONFIG.set(RwLock::new(config.clone()));
+        tracing::info!(
+            "[Upstream-Timeouts] Global config initialized: connect={}s, min_mbps={:.2}, extra_ratio={:.2}, stall={}s, header_wait={}s, large_body={}MB/{}",
+            config.connect_secs,
+            config.min_upload_mbps,
+            config.extra_wait_ratio,
+            config.stall_secs,
+            config.header_wait_secs,
+            config.large_body_threshold_mb,
+            config.large_body_endpoint_attempts
+        );
+    }
+}
+
 static GLOBAL_PAYLOAD_STORAGE_MODE: OnceLock<RwLock<String>> = OnceLock::new();
 static GLOBAL_LOG_RETENTION_DAYS: OnceLock<RwLock<u32>> = OnceLock::new();
 static GLOBAL_THINKING_STORE_ENABLED: OnceLock<RwLock<bool>> = OnceLock::new();
@@ -746,6 +836,108 @@ impl Default for MultimodalConfig {
     }
 }
 
+/// 上游超时配置（连接期 / 上传阶段 / 首响应头 / 大文件重试）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct UploadTimeoutConfig {
+    /// 连接期看门狗（每个端点独立建连时限，秒，默认 10s）；超时即切换下一端点。
+    /// 该值在 HTTP 客户端构建时生效，修改后需重启代理服务
+    #[serde(default = "default_connect_secs")]
+    pub connect_secs: u64,
+
+    /// 上传带宽（Mbps，默认 2.0，推荐 1-5 Mbps）
+    #[serde(default = "default_min_upload_mbps")]
+    pub min_upload_mbps: f64,
+
+    /// 额外等待系数（默认 0.4；最大等待时间 = 大小 ÷ 带宽 × (1 + 系数)）
+    #[serde(default = "default_extra_wait_ratio")]
+    pub extra_wait_ratio: f64,
+
+    /// 停滞超时（秒，默认 45s）。完全没有字节进展超过该时长中断；若最大等待时间更短则取较短者
+    #[serde(default = "default_upload_stall_secs")]
+    pub stall_secs: u64,
+
+    /// 首响应头超时（秒，默认 0 = 使用场景内置值：聊天 30/25s、图片 45/25s、视频 60/30s、其他 15/15s）
+    #[serde(default = "default_header_wait_secs")]
+    pub header_wait_secs: u64,
+
+    /// 大文件判定阈值（MB，默认 8MB）
+    #[serde(default = "default_large_body_threshold_mb")]
+    pub large_body_threshold_mb: u64,
+
+    /// 大文件最多尝试次数（默认 1；默认只发一次，避免反复重传占满上行）
+    #[serde(default = "default_large_body_endpoint_attempts")]
+    pub large_body_endpoint_attempts: usize,
+}
+
+fn default_connect_secs() -> u64 {
+    10
+}
+
+fn default_min_upload_mbps() -> f64 {
+    2.0
+}
+
+fn default_extra_wait_ratio() -> f64 {
+    0.4
+}
+
+fn default_upload_stall_secs() -> u64 {
+    45
+}
+
+fn default_header_wait_secs() -> u64 {
+    0
+}
+
+fn default_large_body_threshold_mb() -> u64 {
+    8
+}
+
+fn default_large_body_endpoint_attempts() -> usize {
+    1
+}
+
+impl Default for UploadTimeoutConfig {
+    fn default() -> Self {
+        Self {
+            connect_secs: default_connect_secs(),
+            min_upload_mbps: default_min_upload_mbps(),
+            extra_wait_ratio: default_extra_wait_ratio(),
+            stall_secs: default_upload_stall_secs(),
+            header_wait_secs: default_header_wait_secs(),
+            large_body_threshold_mb: default_large_body_threshold_mb(),
+            large_body_endpoint_attempts: default_large_body_endpoint_attempts(),
+        }
+    }
+}
+
+impl UploadTimeoutConfig {
+    /// 归一化非法配置，避免 0 值或倒挂阈值导致发送阶段瞬间自断
+    pub fn normalized(mut self) -> Self {
+        self.connect_secs = self.connect_secs.clamp(3, 120);
+        self.min_upload_mbps = if self.min_upload_mbps.is_finite() {
+            self.min_upload_mbps.clamp(0.1, 1000.0)
+        } else {
+            default_min_upload_mbps()
+        };
+        self.extra_wait_ratio = if self.extra_wait_ratio.is_finite() {
+            self.extra_wait_ratio.clamp(0.0, 10.0)
+        } else {
+            default_extra_wait_ratio()
+        };
+        self.stall_secs = self.stall_secs.clamp(5, 600);
+        self.header_wait_secs = self.header_wait_secs.min(600);
+        self.large_body_threshold_mb = self.large_body_threshold_mb.max(1);
+        self.large_body_endpoint_attempts = self.large_body_endpoint_attempts.max(1);
+        self
+    }
+
+    /// 大体积请求阈值（字节）
+    pub fn large_body_threshold_bytes(&self) -> usize {
+        (self.large_body_threshold_mb as usize).saturating_mul(1024 * 1024)
+    }
+}
+
 /// 流式梯度超时配置 (首字响应、状态切换、推流滑动)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StreamTimeoutConfig {
@@ -1002,6 +1194,10 @@ pub struct ProxyConfig {
     /// 流式梯度超时配置 (首字响应、状态切换、推流滑动)
     #[serde(default)]
     pub stream_timeouts: StreamTimeoutConfig,
+
+    /// 上游发送阶段分级超时配置 (连接 → 上传 → 等待响应头)
+    #[serde(default)]
+    pub upload_timeouts: UploadTimeoutConfig,
 }
 
 /// Request log retention policy.
@@ -1143,6 +1339,7 @@ impl Default for ProxyConfig {
             proxy_pool: ProxyPoolConfig::default(),
             multimodal: MultimodalConfig::default(),
             stream_timeouts: StreamTimeoutConfig::default(),
+            upload_timeouts: UploadTimeoutConfig::default(),
             image_thinking_mode: None,
             image_scheduler: ImageSchedulerConfig::default(),
         }

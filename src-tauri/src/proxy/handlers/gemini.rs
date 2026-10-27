@@ -148,6 +148,7 @@ pub async fn handle_generate(
     let mut failure_statuses = FailureStatusTracker::default();
     let mut used_attempts = 0;
     let mut retried_without_thinking = false;
+    let mut retried_tool_choice_conflict = false;
     let mut retried_with_budget_degraded = false;
     let mut retried_with_image_omitted = false;
     let mut degraded_wrapped_body: Option<Value> = None;
@@ -322,6 +323,7 @@ pub async fn handle_generate(
                 Some(&token_manager),
                 Some(&state.upstream),
                 Some(&affinity_key),
+                retried_without_thinking,
             );
             if retried_with_budget_degraded {
                 crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(
@@ -330,6 +332,14 @@ pub async fn handle_generate(
             }
             wb
         };
+        // [Signature-Retry] 400 签名错误后的重试：由流水线统一清除签名（包含客户端自带的 thoughtSignature）
+        if retried_without_thinking {
+            crate::proxy::pipeline::InboundThinkingPipeline::strip_signatures_for_retry(
+                &mut wrapped_body,
+                Some(session_id.as_str()),
+                &mapped_model,
+            );
+        }
         let tf_micros = tf_start.elapsed().as_micros() as u64;
         let norm_total_micros = norm_start.elapsed().as_micros() as u64;
         norm_ms = norm_total_micros.saturating_sub(tf_micros) as f64 / 1000.0;
@@ -425,6 +435,13 @@ pub async fn handle_generate(
                     max_attempts,
                     e
                 );
+                // [Fixes #3763] 大体积上传阶段终止：不再跨账号重发同一大 body
+                if crate::proxy::upstream::client::is_upload_stage_failure(&e) {
+                    tracing::warn!(
+                        "Large-body upload aborted before completion; stopping account rotation to avoid re-upload amplification"
+                    );
+                    break;
+                }
                 continue;
             }
         };
@@ -490,7 +507,6 @@ pub async fn handle_generate(
             if is_stream {
                 use axum::body::Body;
                 use axum::response::Response;
-                use bytes::{Bytes, BytesMut};
                 use futures::StreamExt;
 
                 let meta = json!({
@@ -522,286 +538,72 @@ pub async fn handle_generate(
                     account_id: Some(account_id.clone()),
                     trace_id: trace_id.clone(),
                 };
-                let mut response_stream =
+                let response_stream =
                     crate::proxy::pipeline::auto_heal::wrap_stream_with_empty_thinking_auto_heal(
                         Box::pin(response_stream),
                         auto_heal_ctx,
                     );
-                let mut buffer = BytesMut::new();
                 let s_id = session_id.clone(); // Clone for stream closure
 
-                // [FIX #859] Implement peek logic for Gemini stream to prevent 0-token 200 OK
-                let mut first_chunk = None;
-                let mut retry_gemini = false;
-
-                // [NEW] 实施双阶段超时：第一阶段为 FirstChunkTimeout (300s / 5min)
-                // 这精准对齐了官方 Worker 在模型冷启动（Initialization）阶段的极度耐心
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(300),
-                    response_stream.next(),
-                )
-                .await
+                // [对齐其他协议] 上游已返回 200：立即向客户端返回响应头，
+                // 由流生命周期的 InitialTtft 负责首字宽限；不再阻塞式 peek 首包，
+                // 避免响应头被推迟、peek 期间无心跳。
+                ttft_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
+                let is_thinking = body
+                    .get("generationConfig")
+                    .and_then(|g| g.get("thinkingConfig"))
+                    .is_some()
+                    || mapped_model.to_lowercase().contains("thinking");
+                crate::proxy::handlers::common::report_qos_ttft(
+                    &token_manager,
+                    &account_id,
+                    Some(&affinity_key),
+                    ttft_ms,
+                    is_thinking,
+                    Some(estimated_input_tokens),
+                );
+                if let Some(effective_item) = fallback_attempts.iter_mut().find(|a| a.is_effective)
                 {
-                    Ok(Some(Ok(bytes))) => {
-                        if bytes.is_empty() {
-                            tracing::warn!("[Gemini] Empty first chunk received, retrying...");
-                            retry_gemini = true;
-                        } else {
-                            ttft_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
-                            let is_thinking = body
-                                .get("generationConfig")
-                                .and_then(|g| g.get("thinkingConfig"))
-                                .is_some()
-                                || mapped_model.to_lowercase().contains("thinking");
-                            crate::proxy::handlers::common::report_qos_ttft(
-                                &token_manager,
-                                &account_id,
-                                Some(&affinity_key),
-                                ttft_ms,
-                                is_thinking,
-                                Some(estimated_input_tokens),
-                            );
-                            if let Some(effective_item) =
-                                fallback_attempts.iter_mut().find(|a| a.is_effective)
-                            {
-                                effective_item.duration_s = ttft_ms / 1000.0;
-                            }
-                            let _ = crate::proxy::monitor::CURRENT_UPSTREAM_CAPTURE.try_with(
-                                |holder| {
-                                    holder.set_attempts(fallback_attempts.clone());
-                                },
-                            );
-                            first_chunk = Some(bytes);
-                        }
-                    }
-                    Ok(Some(Err(e))) => {
-                        tracing::warn!("[Gemini] Stream error during peek: {}, retrying...", e);
-                        last_error = format!("Stream error: {}", e);
-                        retry_gemini = true;
-                    }
-                    Ok(None) => {
-                        tracing::warn!("[Gemini] Stream ended immediately, retrying...");
-                        last_error = "Empty response".to_string();
-                        retry_gemini = true;
-                    }
-                    Err(_) => {
-                        tracing::warn!("[Gemini] First chunk timeout after 300s, retrying...");
-                        last_error = "First chunk timeout".to_string();
-                        retry_gemini = true;
-                    }
+                    effective_item.duration_s = ttft_ms / 1000.0;
                 }
-
-                if retry_gemini {
-                    failure_statuses.record(StatusCode::BAD_GATEWAY);
-                    continue;
-                }
-                let s_id_for_stream = s_id.clone();
-                let model_name_for_stream = mapped_model.clone();
+                let _ = crate::proxy::monitor::CURRENT_UPSTREAM_CAPTURE.try_with(|holder| {
+                    holder.set_attempts(fallback_attempts.clone());
+                });
                 let image_permit_for_stream = image_permit.take();
                 let track_image_success = config.request_type == "image_gen";
-                let image_success_manager = token_manager.clone();
-                let image_success_account = account_id.clone();
-                let image_success_model = mapped_model.clone();
-                let causal_anchor_clone = causal_anchor.clone();
-                let message_count_for_stream = message_count;
                 let in_flight_guard_for_stream = Arc::clone(&in_flight_guard);
+                let lifecycle_cfg = crate::proxy::pipeline::StreamLifecycleConfig::new(
+                    "gemini",
+                    "handle_generate",
+                    format!(
+                        "model={} session={} messages={}",
+                        mapped_model, session_id, message_count
+                    ),
+                );
+                let handler = crate::proxy::mappers::gemini::streaming::GeminiStreamHandler::new(
+                    cloud_code_trace_id.clone(),
+                    s_id.clone(),
+                    mapped_model.clone(),
+                    message_count,
+                    causal_anchor.clone(),
+                    track_image_success,
+                    Some(token_manager.clone()),
+                    account_id.clone(),
+                    mapped_model.clone(),
+                );
+                let upstream_stream = response_stream.map(|r| r.map_err(|e| e.to_string()));
+                let lifecycle_stream = crate::proxy::pipeline::run_stream_lifecycle(
+                    Box::pin(upstream_stream),
+                    handler,
+                    lifecycle_cfg,
+                );
+                // 仅保留请求级守卫（in-flight / 图片并发配额），流式策略全部交给流水线
                 let stream = async_stream::stream! {
                     let _in_flight = in_flight_guard_for_stream;
                     let _image_permit = image_permit_for_stream;
-                    let mut first_data = first_chunk;
-                    let mut meta_sent = false;
-                    let mut saw_image_data = false;
-                    let mut stream_failed = false;
-                    let mut thinking_acc =
-                        crate::proxy::thinking_store::TurnAccumulator::with_anchor(&causal_anchor_clone);
-
-                    loop {
-                        // [NEW] 阶段 6.2: 补全 __cloudCodeMeta 响应元数据透传
-                        // 官方 Worker 会将 TraceID 作为 SSE 流的第 0 个数据包下发
-                        if !meta_sent {
-                            if let Some(tid) = &cloud_code_trace_id {
-                                let meta_pkg = serde_json::json!({
-                                    "__cloudCodeMeta": {
-                                        "traceId": tid
-                                    }
-                                });
-                                yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&meta_pkg).unwrap())));
-                            }
-                            meta_sent = true;
-                        }
-
-                        let item = if let Some(fd) = first_data.take() {
-                            Some(Ok(fd))
-                        } else {
-                            // [NEW] 第二阶段为 StreamIdleTimeout (300s / 5min)
-                            match tokio::time::timeout(std::time::Duration::from_secs(300), response_stream.next()).await {
-                                Ok(next_item) => next_item,
-                                Err(_) => {
-                                    let report = crate::proxy::mappers::error_classifier::report_stream_error(
-                                        "gemini",
-                                        "handle_generate",
-                                        &"stream idle timeout",
-                                        format!(
-                                            "model={} session={} buffer_bytes={} idle_secs=300",
-                                            model_name_for_stream,
-                                            s_id_for_stream,
-                                            buffer.len()
-                                        ),
-                                    );
-                                    stream_failed = true;
-                                    let error_json = serde_json::json!({
-                                        "error": {
-                                            "code": 504,
-                                            "message": report.client_message(),
-                                            "status": "DEADLINE_EXCEEDED",
-                                            "function": report.function,
-                                            "call_site": report.call_site(),
-                                            "params": report.params
-                                        }
-                                    });
-                                    yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&error_json).unwrap_or_default())));
-                                    yield Ok::<Bytes, String>(Bytes::from("data: [DONE]\n\n"));
-                                    None
-                                }
-                            }
-                        };
-
-                        let bytes = match item {
-                            Some(Ok(b)) => b,
-                            Some(Err(e)) => {
-                                let report = crate::proxy::mappers::error_classifier::report_stream_error(
-                                    "gemini",
-                                    "handle_generate",
-                                    &e,
-                                    format!(
-                                        "model={} session={} buffer_bytes={}",
-                                        model_name_for_stream,
-                                        s_id_for_stream,
-                                        buffer.len()
-                                    ),
-                                );
-                                stream_failed = true;
-                                let error_json = serde_json::json!({
-                                    "error": {
-                                        "code": 503,
-                                        "message": report.client_message(),
-                                        "status": "UNAVAILABLE",
-                                        "function": report.function,
-                                        "call_site": report.call_site(),
-                                        "params": report.params
-                                    }
-                                });
-                                yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&error_json).unwrap_or_default())));
-                                yield Ok::<Bytes, String>(Bytes::from("data: [DONE]\n\n"));
-                                break;
-                            }
-                            None => break,
-                        };
-
-                        debug!("[Gemini-SSE] Received chunk: {} bytes", bytes.len());
-                        buffer.extend_from_slice(&bytes);
-                        while let Some(pos) = buffer.iter().position(|&b| b == b'\n') {
-                            let line_raw = buffer.split_to(pos + 1);
-                            let line_str = String::from_utf8_lossy(&line_raw);
-                            let line = line_str.trim();
-                            if line.is_empty() { continue; }
-
-                                if line.starts_with("data: ") {
-                                    let json_part = line.trim_start_matches("data: ").trim();
-                                    if json_part == "[DONE]" {
-                                        yield Ok::<Bytes, String>(Bytes::from("data: [DONE]\n\n"));
-                                        continue;
-                                    }
-
-                                    match serde_json::from_str::<Value>(json_part) {
-                                        Ok(mut json) => {
-                                            if track_image_success && response_has_inline_image_data(&json) {
-                                                saw_image_data = true;
-                                            }
-                                            // [FIX #765] Extract thoughtSignature from stream
-                                            let inner_val = if json.get("response").is_some() {
-                                                json.get("response")
-                                            } else {
-                                                Some(&json)
-                                            };
-
-                                            if let Some(resp) = inner_val {
-                                                if let Some(candidates) = resp.get("candidates").and_then(|c| c.as_array()) {
-                                                    for cand in candidates {
-                                                        if let Some(parts) = cand.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
-                                                            for part in parts {
-                                                                thinking_acc.ingest_part(part);
-                                                                if let Some(sig) = part.get("thoughtSignature").and_then(|s| s.as_str()) {
-                                                                    crate::proxy::SignatureCache::global()
-                                                                        .cache_session_signature(&s_id_for_stream, sig.to_string(), message_count_for_stream);
-                                                                    debug!("[Gemini-SSE] Cached session signature (len: {}) for session: {} at count {}", sig.len(), s_id_for_stream, message_count_for_stream);
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                            // [FIX #1522] Inject Tool ID into Stream Response
-                                            crate::proxy::mappers::gemini::wrapper::inject_ids_to_response(&mut json, &model_name_for_stream);
-
-                                            // Unwrap v1internal response wrapper
-                                            if let Some(inner) = json.get_mut("response").map(|v| v.take()) {
-                                                let new_line = format!("data: {}\n\n", serde_json::to_string(&inner).unwrap_or_default());
-                                                yield Ok::<Bytes, String>(Bytes::from(new_line));
-                                            } else {
-                                                yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&json).unwrap_or_default())));
-                                            }
-                                        }
-                                        Err(e) => {
-                                            let report = crate::proxy::mappers::error_classifier::report_stream_error(
-                                                "gemini",
-                                                "handle_generate",
-                                                &format!("json parse error: {e}"),
-                                                format!(
-                                                    "model={} session={} buffer_bytes={} line_bytes={} preview={}",
-                                                    model_name_for_stream,
-                                                    s_id_for_stream,
-                                                    buffer.len(),
-                                                    json_part.len(),
-                                                    crate::proxy::mappers::error_classifier::preview_payload(json_part)
-                                                ),
-                                            );
-                                            stream_failed = true;
-                                            let error_json = serde_json::json!({
-                                                "error": {
-                                                    "code": 502,
-                                                    "message": report.client_message(),
-                                                    "status": "INTERNAL",
-                                                    "function": report.function,
-                                                    "call_site": report.call_site(),
-                                                    "params": report.params
-                                                }
-                                            });
-                                            yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&error_json).unwrap_or_default())));
-                                        }
-                                    }
-                                } else {
-                                    // Non-data lines (comments, etc.)
-                                    yield Ok::<Bytes, String>(Bytes::from(format!("{}\n\n", line)));
-                                }
-                        }
-                    }
-
-                    // 仅在流式完整传输、没有发生网络中断或异常失败时，才原子提交思维链到持久化存储
-                    // 防止因 connection reset by peer / unexpected EOF 导致半截残废思维块污染历史记忆
-                    if !stream_failed {
-                        thinking_acc.commit(&s_id_for_stream);
-                    } else {
-                        warn!("[Gemini-SSE] Stream terminated prematurely or failed, discarding partial thinking block to prevent context poisoning: session={}", s_id_for_stream);
-                    }
-                    if track_image_success && saw_image_data && !stream_failed {
-                        image_success_manager.mark_account_success(&image_success_account);
-                        image_success_manager
-                            .clear_persisted_live_limit(
-                                &image_success_account,
-                                Some(&image_success_model),
-                            );
+                    let mut inner = lifecycle_stream;
+                    while let Some(item) = inner.next().await {
+                        yield item;
                     }
                 };
 
@@ -1151,6 +953,39 @@ pub async fn handle_generate(
                 status_code, email
             );
             tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            continue;
+        }
+
+        // [FIX #3721] 400 强制工具调用与思考冲突：自愈剔除 thinkingConfig 原地重试 (Pipeline First)
+        if crate::proxy::pipeline::UpstreamClassification::is_thinking_tool_choice_conflict(
+            status_code,
+            &error_text,
+        ) && !retried_tool_choice_conflict
+        {
+            retried_tool_choice_conflict = true;
+            if let Some(req) = wrapped_body
+                .get_mut("request")
+                .and_then(Value::as_object_mut)
+            {
+                if let Some(gc) = req
+                    .get_mut("generationConfig")
+                    .and_then(Value::as_object_mut)
+                {
+                    gc.remove("thinkingConfig");
+                }
+            } else if let Some(gc) = wrapped_body
+                .get_mut("generationConfig")
+                .and_then(Value::as_object_mut)
+            {
+                gc.remove("thinkingConfig");
+            }
+            degraded_wrapped_body = Some(wrapped_body);
+            force_rotate = false;
+            tracing::warn!(
+                "[Gemini] Upstream 400 tool_choice/thinking conflict detected. In-place self-healing: stripped thinkingConfig on account {}, retrying.",
+                email
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             continue;
         }
 

@@ -171,6 +171,7 @@ pub fn transform_openai_request(
         &session_id,
         Some(&session_id),
         false, // is_responses_api (Chat completions protocol)
+        false, // is_retry
     )
 }
 
@@ -182,6 +183,7 @@ pub fn transform_openai_request_with_session(
     routing_session_id: &str,
     signature_read_key: Option<&str>,
     _is_responses_api: bool,
+    is_retry: bool,
 ) -> (Value, String, usize, String) {
     let remember_cwd =
         |text: &str| crate::proxy::adapters::apply_patch_preflight::remember_cwd_from_text(text);
@@ -865,7 +867,7 @@ pub fn transform_openai_request_with_session(
         mapped_model,
         actual_include_thinking,
         Some(&thinking_store_key),
-        false,
+        is_retry,
     );
     let mut contents = merged_contents;
 
@@ -1788,6 +1790,7 @@ mod tests {
             "resp-routing-root",
             None,
             true,
+            false,
         );
         let system_instruction = body["request"].get("systemInstruction");
 
@@ -1877,6 +1880,7 @@ mod tests {
             &routing_session_id,
             Some(&previous_response_id),
             true,
+            false,
         );
         let contents = body["request"]["contents"].as_array().unwrap();
         let model_msg = contents
@@ -2974,6 +2978,7 @@ mod tests {
             "routing-1",
             None,
             true,
+            false,
         );
         let (chat_result, _, _, _) = transform_openai_request_with_session(
             &req,
@@ -2982,6 +2987,7 @@ mod tests {
             None,
             "routing-chat",
             None,
+            false,
             false,
         );
         let model_parts = |body: &serde_json::Value| {
@@ -3041,6 +3047,7 @@ mod tests {
             None,
             "routing-1",
             None,
+            false,
             false,
         );
 
@@ -3166,6 +3173,7 @@ mod tests {
             &sid,
             Some(&prev_resp_id),
             true, // is_responses_api
+            false,
         );
 
         let contents = result["request"]["contents"].as_array().unwrap();

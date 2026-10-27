@@ -1,6 +1,6 @@
 //! 出站流生命周期通用驱动器（模板方法模式）
 //!
-//! 统一接管所有出站协议（Claude、OpenAI 等）的通用流式生命周期：
+//! 统一接管所有出站协议（Claude、OpenAI、Gemini）的通用流式生命周期：
 //! 1. 3s 细粒度保活心跳（`: ping\n\n`）；
 //! 2. 120s 空闲静默安全熔断（`streaming_sliding_secs = 120`）；
 //! 3. 网络中断统一拦截与状态判断（`has_content` / `has_thinking`）；

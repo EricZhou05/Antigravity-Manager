@@ -1383,6 +1383,21 @@ pub fn purge_foreign_signatures_for_session(session_key: &str) -> Result<usize, 
     purge_foreign_signatures_for_session_with_model(session_key, "gemini")
 }
 
+/// [Signature-Retry] 让一个会话的全部签名失效（保留思考文本），用于上游 400 签名错误后的重试。
+pub fn clear_thinking_signatures_for_session(session_key: &str) -> Result<usize, String> {
+    if session_key.is_empty() {
+        return Ok(0);
+    }
+    let conn = thinking_db()?;
+    let updated = conn
+        .execute(
+            "UPDATE thinking_records SET signature = NULL WHERE session_key = ?1 AND signature IS NOT NULL",
+            params![session_key],
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(updated)
+}
+
 /// 全量清空思考块数据库 (仅清空 thinking_records / thinking_sessions / tool_signatures，绝不触碰 request_logs 日志)
 pub fn clear_all_thinking_data() -> Result<usize, String> {
     let mut total_deleted = 0;

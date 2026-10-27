@@ -1204,20 +1204,20 @@
                 "guide_preset_cluster_desc": "推荐填写 <1>50 ~ 100 轮</1>。单机无压承载数万并发会话，WAL 高速索引并发无锁秒级响应。",
                 "gemini_soft_budget_note": "⚠️ 思考预算特性说明：Google Gemini 上游将 thinkingBudget 视为启发式偏好（Soft Target）。面对超长 Prompt、复杂代码推演或 Agent 任务时，上游推理引擎会自动深入展开思考链，可能突破所设数值；设置为 0 则彻底关闭思考。"
             },
-            "stream_timeout_settings": {
-                "title": "流式超时设置 (Stream Timeout Settings)"
+            "timeout_settings": {
+                "title": "超时设置"
             },
             "thinking_settings": {
-                "title": "思考设置 (Thinking Settings)"
+                "title": "思考设置"
             },
             "prompt_multimodal": {
-                "title": "全局提示词与多模态设置 (Prompt & Multimodal)"
+                "title": "全局提示词与多模态设置"
             },
             "multimodal_settings": {
-                "title": "多模态交互设置 (Multimodal Settings)"
+                "title": "多模态交互设置"
             },
             "agent_settings": {
-                "title": "特定 Agent 配置 (Specific Agent Settings)"
+                "title": "特定 Agent 配置"
             },
             "hub": {
                 "title": "官方 Hub 客户端指纹",
@@ -1236,17 +1236,53 @@
         "stream_timeouts": {
             "banner_title": "三阶段流式梯度超时与保活机制",
             "banner_desc": "针对深度思考模型、超大上下文 Prefill、长历史压缩摘要及大文件代码写入场景，通过三阶段独立计时与全程底层心跳保活（: ping），彻底杜绝中间网关掐断、过渡断崖误杀与客户端重试死循环。",
-            "ttft_title": "首字响应宽限 (TTFT)",
+            "ttft_title": "首字响应宽限",
             "default_badge": "默认: 180s",
             "ttft_desc": "涵盖上游冷启动排队、超大提示词 Prefill 与长历史压缩摘要任务的最大容忍时间。期间每 3 秒下发心跳保活。",
             "transition_title": "状态切换宽限 (全新轮回)",
             "transition_desc": "思考完毕至首个正文或工具调用出字的过渡期。思考结束时自适应重置计时器，为大文件写入等装配留出充分时间。",
-            "sliding_title": "推流滑动超时 (Streaming)",
+            "sliding_title": "推流滑动超时",
             "default_badge_sliding": "默认: 120s",
             "sliding_desc": "持续吐字过程中相邻 Token 的最大允许静默间隔。若中途意外断流超过此时长，自动优雅截断收尾并保全已生成的代码。",
             "toast_reset": "已恢复超时配置默认值",
             "btn_reset": "恢复默认值",
             "btn_save": "保存超时设置"
+        },
+        "upload_timeouts": {
+            "adaptive_title": "上传超时：自动根据带宽判定",
+            "min_speed_title": "上传带宽 (Mbps)",
+            "min_speed_desc": "VPN用户通常高下行、低上行、推荐填1-5Mbps。",
+            "extra_wait_title": "额外等待系数",
+            "extra_wait_desc": "该参数影响上传最大等待时间。",
+            "formula_title": "最大等待时间 = 请求体大小 ÷ 上传带宽 × (1 + 额外等待系数)",
+            "stall_title": "停滞超时 (秒)",
+            "stall_desc": "上传时因网络错误持续卡死的超时时间；若最大等待时间更短，则自动取最大等待时间。",
+            "header_wait_title": "首响应头超时 (秒)",
+            "header_wait_desc": "0 = 使用内置值：首选端点 30 秒 / 备用端点 25 秒；填非 0 时只作为下限往上抬。",
+            "large_body_desc": "超过阈值的文件默认只发一次，避免反复重传占满上行。",
+            "large_body_threshold_title": "大文件阈值 (MB)",
+            "endpoint_attempts_title": "最多尝试次数",
+            "toast_reset": "已恢复超时默认值",
+            "btn_reset": "恢复默认值",
+            "btn_save": "保存超时设置"
+        },
+        "timeouts": {
+            "banner_title": "超时设置",
+            "banner_desc": "一次请求的完整超时链路：建立连接 → 上传 → 首响应头 → 首字/连续输出。",
+            "section_connect": "① 端点建立连接 （自动故障切换端点）",
+            "connect_label": "连接超时 (秒)",
+            "connect_desc": "和端点的TCP连接建立超时时间，通常速度极快。",
+            "connect_restart": "改完需重启代理服务。",
+            "section_upload": "② 上传（发送请求体）",
+            "section_large_body": "大文件重试",
+            "section_header": "③ 首响应头（自动故障切换端点）",
+            "header_primary_title": "首选端点：",
+            "header_primary_items": "文字代码聊天：30　图片：45　视频：60　其他：15（如标题生成）",
+            "header_fallback_title": "备选端点：",
+            "header_fallback_items": "文字代码聊天：25　图片：25　视频：30　其他：15（如标题生成）",
+            "section_stream": "④ 首字与连续输出",
+            "stream_desc": "不会切换端点，只安全收尾或交给客户端重试。",
+            "auto_summary": "例：最大等待时间= 47MB ÷ 2Mbps ×1.4 ≈ {{big}} 秒；"
         },
         "cloudflared": {
             "title": "公网访问 (Cloudflared)",
@@ -1758,7 +1794,7 @@
             "out_tokens_title": "输出 Token",
             "ttft_prefix": "首字:",
             "total_duration_title": "总耗时",
-            "ttft_title": "首字延迟 (TTFT)"
+            "ttft_title": "首字延迟"
         },
         "details": {
             "title": "请求详情",

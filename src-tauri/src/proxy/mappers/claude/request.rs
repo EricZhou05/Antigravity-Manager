@@ -1653,7 +1653,7 @@ fn build_google_contents(
         mapped_model,
         should_finalize_thinking,
         Some(session_id),
-        false,
+        is_retry,
     );
     timing.think_fill_micros = think_start.elapsed().as_micros() as u64;
 
