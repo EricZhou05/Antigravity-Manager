@@ -84,7 +84,18 @@ fn apply_account_credentials(
 ) -> Result<(), String> {
     let mut use_keyring = false;
 
-    if !is_ide {
+    // 硬防护（issue #3762）：目标一旦确认为 IDE，坚决走 SQLite state.vscdb 注入。
+    // IDE（VS Code OSS 架构）的 2.6.0+ 版本号会被误判为「经典版 >= 2.0.0」而走系统 Keyring，
+    // 导致 IDE 启动后读不到凭据并提示重新登录。Keyring 仅供原生经典版 Standalone 使用。
+    // 显式的 classic 选择优先：只有未显式指定经典版时，才允许按可执行文件路径提升为 IDE。
+    let is_target_ide = is_ide
+        || effective_target == Some("ide")
+        || (effective_target != Some("classic")
+            && active_exe_path
+                .map(process::is_antigravity_ide_path)
+                .unwrap_or(false));
+
+    if !is_target_ide {
         // 经典原生版：自动探测版本号（优先使用预快照路径）
         match version::get_antigravity_version_with_path(
             effective_target,
@@ -128,6 +139,10 @@ fn apply_account_credentials(
                 }
             }
         }
+    } else {
+        crate::modules::logger::log_info(
+            "[Desktop] Target is Antigravity IDE (VS Code architecture); enforcing SQLite state.vscdb injection.",
+        );
     }
 
     if use_keyring {
@@ -1486,5 +1501,31 @@ mod tests {
         let (is_ide, effective) = resolve_effective_target(None, false, false, false, None);
         assert!(!is_ide);
         assert_eq!(effective, None);
+    }
+
+    #[test]
+    fn test_resolve_effective_target_detects_windows_ide_260_install_path() {
+        // [FIX #3762] Windows 2.6.0 IDE 安装在 AppData\Local\Programs\Antigravity IDE，
+        // 可执行文件名仍为 Antigravity.exe，必须靠安装目录的 IDE 命名推导为 IDE 目标。
+        let (is_ide, effective) = resolve_effective_target(
+            None,
+            false,
+            false,
+            false,
+            Some(r"C:\Users\user\AppData\Local\Programs\Antigravity IDE\Antigravity.exe"),
+        );
+        assert!(is_ide);
+        assert_eq!(effective, Some("ide"));
+
+        // 经典版同路径不得被推导为 IDE
+        let (is_ide_classic, effective_classic) = resolve_effective_target(
+            None,
+            false,
+            false,
+            false,
+            Some(r"C:\Users\user\AppData\Local\Programs\Antigravity\Antigravity.exe"),
+        );
+        assert!(!is_ide_classic);
+        assert_eq!(effective_classic, None);
     }
 }
