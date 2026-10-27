@@ -1485,7 +1485,8 @@
             "sync_confirm_title": "Confirmación de Sincronización",
             "sync_confirm_message": "Listo para sincronizar configuración de {{name}}. ⚠️ Advertencia: Esto sobrescribirá sus archivos de configuración locales existentes (ej. tokens de inicio de sesión, Claves API). ¿Está seguro de que desea continuar?",
             "apps": {
-                "gemini": "Antigravity CLI (agy)"
+                "gemini": "Antigravity CLI (agy)",
+                "deepseek_harness": "DeepSeek Harness"
             }
         },
         "agent_settings": {

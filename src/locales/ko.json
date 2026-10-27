@@ -1485,7 +1485,8 @@
             "sync_confirm_title": "동기화 확인",
             "sync_confirm_message": "{{name}} 구성을 동기화할 준비가 되었습니다. ⚠️ 경고: 이 작업은 기존 로컬 구성 파일(예: 로그인 토큰, API 키)을 덮어씁니다. 계속하시겠습니까?",
             "apps": {
-                "gemini": "Antigravity CLI (agy)"
+                "gemini": "Antigravity CLI (agy)",
+                "deepseek_harness": "DeepSeek Harness"
             }
         },
         "agent_settings": {

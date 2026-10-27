@@ -223,6 +223,7 @@ pub enum CliApp {
     OpenCode,
     JeikCode,
     GrokBuild,
+    DeepSeekHarness,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -240,6 +241,7 @@ impl CliApp {
             CliApp::OpenCode => "opencode",
             CliApp::JeikCode => "jeikcode",
             CliApp::GrokBuild => "grok",
+            CliApp::DeepSeekHarness => "dsh",
         }
     }
 
@@ -347,6 +349,23 @@ impl CliApp {
                     path: grok_dir.join("config.toml"),
                 }]
             }
+            CliApp::DeepSeekHarness => {
+                let dsh_dir = home.join(".dsh");
+                vec![
+                    CliConfigFile {
+                        name: "profiles/desktop/cordis.patch.yml".to_string(),
+                        path: dsh_dir.join("profiles").join("desktop").join("cordis.patch.yml"),
+                    },
+                    CliConfigFile {
+                        name: "profiles/web/cordis.patch.yml".to_string(),
+                        path: dsh_dir.join("profiles").join("web").join("cordis.patch.yml"),
+                    },
+                    CliConfigFile {
+                        name: ".credentials.yaml".to_string(),
+                        path: dsh_dir.join(".credentials.yaml"),
+                    },
+                ]
+            }
         }
     }
 
@@ -358,6 +377,7 @@ impl CliApp {
             CliApp::OpenCode => "https://api.openai.com/v1",
             CliApp::JeikCode => "http://127.0.0.1:8046/v1",
             CliApp::GrokBuild => "https://api.x.ai/v1",
+            CliApp::DeepSeekHarness => "https://api.deepseek.com/v1",
         }
     }
 }
@@ -379,6 +399,7 @@ pub fn check_cli_installed(app: &CliApp) -> (bool, Option<String>) {
         CliApp::Gemini => vec!["agy_cli", "agy", "gemini"],
         CliApp::JeikCode => vec!["jeikcode", "atomcode"],
         CliApp::GrokBuild => vec!["grok", "grokbuild"],
+        CliApp::DeepSeekHarness => vec!["dsh", "deepseek-harness", "deepseek"],
         _ => vec![app.as_str()],
     };
 
@@ -507,6 +528,44 @@ pub fn check_cli_installed(app: &CliApp) -> (bool, Option<String>) {
                 || grokbuild_dir.exists()
             {
                 installed = true;
+            }
+        }
+    }
+
+    // 如果是 DeepSeek Harness 且常规检测未命中，尝试检测应用目录或 ~/.dsh 目录
+    if !installed && app == &CliApp::DeepSeekHarness {
+        #[cfg(target_os = "macos")]
+        {
+            let mac_dsh = PathBuf::from(
+                "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh",
+            );
+            if mac_dsh.exists() {
+                executable_path = mac_dsh;
+                installed = true;
+            } else if PathBuf::from("/Applications/DeepSeek Harness.app").exists() {
+                installed = true;
+            }
+        }
+        #[cfg(target_os = "windows")]
+        if let Some(home) = dirs::home_dir() {
+            let win_paths = vec![
+                home.join(".dsh").join("bin").join("dsh.cmd"),
+                home.join(".dsh").join("bin").join("dsh.exe"),
+            ];
+            for p in win_paths {
+                if is_safe_path(&p) {
+                    executable_path = p;
+                    installed = true;
+                    break;
+                }
+            }
+        }
+        if !installed {
+            if let Some(home) = dirs::home_dir() {
+                let dsh_dir = home.join(".dsh");
+                if dsh_dir.exists() {
+                    installed = true;
+                }
             }
         }
     }
@@ -789,6 +848,57 @@ pub fn get_sync_status(
                             all_synced = false;
                         }
                     } else {
+                        all_synced = false;
+                    }
+                }
+            }
+            CliApp::DeepSeekHarness => {
+                if file.name.ends_with("cordis.patch.yml") {
+                    let normalized_proxy = proxy_url
+                        .trim_end_matches('/')
+                        .trim_end_matches("/v1")
+                        .trim_end_matches('/');
+
+                    let has_ag_provider = content.contains("provider: antigravity")
+                        || content.contains("antigravity:");
+
+                    let mut matched = false;
+                    let re_url =
+                        regex::Regex::new(r#"(?m)^s*baseURL:s*['"]?([^'"s#]+)['"]?"#).ok();
+                    if let Some(re) = re_url {
+                        for cap in re.captures_iter(&content) {
+                            if let Some(m) = cap.get(1) {
+                                let found_url = m.as_str();
+                                let norm_found = found_url
+                                    .trim_end_matches('/')
+                                    .trim_end_matches("/v1")
+                                    .trim_end_matches('/');
+                                if norm_found == normalized_proxy {
+                                    current_base_url = Some(found_url.to_string());
+                                    matched = true;
+                                    break;
+                                } else if current_base_url.is_none() {
+                                    current_base_url = Some(found_url.to_string());
+                                }
+                            }
+                        }
+                    }
+
+                    if current_model.is_none() {
+                        let re_model = regex::Regex::new(
+                            r#"(?s)id:s*agent-default-model[sS]*?config:[sS]*?model:s*['"]?([a-zA-Z0-9_.-]+)['"]?"#,
+                        )
+                        .ok();
+                        if let Some(re) = re_model {
+                            if let Some(cap) = re.captures(&content) {
+                                if let Some(m) = cap.get(1) {
+                                    current_model = Some(m.as_str().to_string());
+                                }
+                            }
+                        }
+                    }
+
+                    if !matched || !has_ag_provider {
                         all_synced = false;
                     }
                 }
@@ -1399,6 +1509,29 @@ pub fn sync_config(
                     content = doc.to_string();
                 }
             }
+            CliApp::DeepSeekHarness => {
+                if file.name.ends_with("cordis.patch.yml") {
+                    let target_model = match model {
+                        Some(m) if !m.is_empty() => m,
+                        _ => "gemini-3.8-flash",
+                    };
+                    let normalized_proxy_url = {
+                        let trimmed = proxy_url.trim().trim_end_matches('/');
+                        if trimmed.ends_with("/v1") {
+                            trimmed.to_string()
+                        } else {
+                            format!("{}/v1", trimmed)
+                        }
+                    };
+                    content = sync_dsh_cordis_patch_content(
+                        &content,
+                        &normalized_proxy_url,
+                        target_model,
+                    );
+                } else if file.name == ".credentials.yaml" {
+                    content = sync_dsh_credentials_content(&content, api_key);
+                }
+            }
         }
 
         // 使用临时文件原子写入
@@ -1856,6 +1989,204 @@ pub fn sync_jeikcode_toml_content(
     Ok(doc.to_string())
 }
 
+/// 同步 DeepSeek Harness 的 .credentials.yaml 密钥文件
+fn sync_dsh_credentials_content(content: &str, api_key: &str) -> String {
+    if content.trim().is_empty() {
+        return format!("version: 1\nrefs:\n  ANTIGRAVITY_API_KEY: {}\n", api_key);
+    }
+
+    let re_key = regex::Regex::new(r#"(?m)^(\s*ANTIGRAVITY_API_KEY:\s*).*$"#).unwrap();
+    if re_key.is_match(content) {
+        return re_key
+            .replace(content, format!("${{1}}{}", api_key))
+            .to_string();
+    }
+
+    let re_inline_refs = regex::Regex::new(r#"(?s)(refs:\s*\{[\s\S]*?)(\})"#).unwrap();
+    if let Some(caps) = re_inline_refs.captures(content) {
+        let p1 = caps.get(1).unwrap().as_str().trim_end();
+        let needs_comma = !p1.ends_with('{') && !p1.ends_with(',');
+        let comma = if needs_comma { "," } else { "" };
+        let replacement = format!("{}{}\n    ANTIGRAVITY_API_KEY: {}\n  }}", p1, comma, api_key);
+        return re_inline_refs.replace(content, replacement.as_str()).to_string();
+    }
+
+    let re_block_refs = regex::Regex::new(r#"(?m)^(refs:\s*)$"#).unwrap();
+    if re_block_refs.is_match(content) {
+        return re_block_refs
+            .replace(content, format!("refs:\n  ANTIGRAVITY_API_KEY: {}", api_key))
+            .to_string();
+    }
+
+    format!("{}\nrefs:\n  ANTIGRAVITY_API_KEY: {}\n", content.trim_end(), api_key)
+}
+
+fn build_dsh_models_yaml(selected_model: &str) -> String {
+    let mut models = vec![
+        (
+            "gemini-3.8-flash",
+            "Gemini 3.8 Flash",
+            1_048_576,
+            128_000,
+            true,
+        ),
+        (
+            "gemini-3.8-flash-high",
+            "Gemini 3.8 Flash (High)",
+            1_048_576,
+            128_000,
+            true,
+        ),
+        (
+            "gemini-3.1-pro-high",
+            "Gemini 3.1 Pro (High)",
+            1_048_576,
+            128_000,
+            true,
+        ),
+        (
+            "claude-sonnet-4-6",
+            "Claude Sonnet 4.6",
+            256_000,
+            128_000,
+            false,
+        ),
+        (
+            "claude-opus-4-6-thinking",
+            "Claude Opus 4.6 (Thinking)",
+            256_000,
+            128_000,
+            false,
+        ),
+        (
+            "claude-opus-5-5-high",
+            "Claude Opus 5.5 (High)",
+            1_000_000,
+            128_000,
+            false,
+        ),
+        (
+            "gpt-oss-120b-medium",
+            "GPT-OSS 120B (Medium)",
+            131_072,
+            32_000,
+            false,
+        ),
+    ];
+
+    let mut out = String::new();
+    if !models.iter().any(|(id, _, _, _, _)| *id == selected_model) {
+        out.push_str(&format!(
+            "          - id: {}\n            name: {}\n            contextWindow: 1000000\n            input:\n              - text\n              - image\n            maxTokens: 128000\n",
+            selected_model, selected_model
+        ));
+    }
+
+    for (id, name, ctx, max_tok, has_reasoning) in models {
+        out.push_str(&format!(
+            "          - id: {}\n            name: {}\n            contextWindow: {}\n            input:\n              - text\n              - image\n            maxTokens: {}\n",
+            id, name, ctx, max_tok
+        ));
+        if has_reasoning {
+            out.push_str("            reasoningEfforts:\n              off: null\n              low: low\n              medium: medium\n              high: high\n");
+        }
+    }
+    out
+}
+
+fn build_dsh_provider_block(proxy_url: &str, selected_model: &str) -> String {
+    let models_yaml = build_dsh_models_yaml(selected_model);
+    format!(
+        "      antigravity:\n        displayName: antigravity\n        apiKeyEnv: ANTIGRAVITY_API_KEY\n        api: openai-completions\n        baseURL: {}\n        models:\n{}",
+        proxy_url, models_yaml
+    )
+}
+
+/// 同步 DeepSeek Harness 的 cordis.patch.yml 配置（同时适用于 Desktop/CLI 与 Web GUI Profile）
+fn sync_dsh_cordis_patch_content(content: &str, proxy_url: &str, selected_model: &str) -> String {
+    let default_model_block = format!(
+        "- id: agent-default-model\n  name: \"@deepseek-ai/dsh-agent-default-model\"\n  config:\n    provider: antigravity\n    model: {}\n",
+        selected_model
+    );
+    let provider_block = build_dsh_provider_block(proxy_url, selected_model);
+
+    let trimmed = content.trim();
+    if trimmed.is_empty() || trimmed == "[]" || !trimmed.contains("- id:") {
+        let comment = "# Your patch layer for this dsh profile, applied after every bundle layer:\n                       # a top-level YAML array of loader patch entries (id-targeted config\n                       # overrides, disables, and insert lists; `!!js` expressions allowed).\n";
+        return format!(
+            "{}{}- id: llm-pi-ai\n  name: \"@deepseek-ai/dsh-llm-pi-ai\"\n  config:\n    providers:\n{}\n",
+            comment, default_model_block, provider_block
+        );
+    }
+
+    let mut result = content.to_string();
+
+    // 1. 更新或插入 agent-default-model
+    let re_agent_model = regex::Regex::new(
+        r#"(?s)(- id:\s*agent-default-model[\s\S]*?config:\s*\n)([\s\S]*?)(?=\n- id:|\z)"#,
+    )
+    .unwrap();
+    if let Some(caps) = re_agent_model.captures(&result) {
+        let prefix = caps.get(1).unwrap().as_str();
+        let body = caps.get(2).unwrap().as_str();
+
+        let mut new_body = body.to_string();
+        let re_prov = regex::Regex::new(r#"(?m)^(\s*provider:\s*).*$"#).unwrap();
+        if re_prov.is_match(&new_body) {
+            new_body = re_prov.replace(&new_body, "${1}antigravity").to_string();
+        } else {
+            new_body = format!("    provider: antigravity\n{}", new_body);
+        }
+
+        let re_mod = regex::Regex::new(r#"(?m)^(\s*model:\s*).*$"#).unwrap();
+        if re_mod.is_match(&new_body) {
+            new_body = re_mod
+                .replace(&new_body, format!("${{1}}{}", selected_model))
+                .to_string();
+        } else {
+            new_body = format!("{}\n    model: {}", new_body.trim_end(), selected_model);
+        }
+
+        let replacement = format!("{}{}", prefix, new_body);
+        result = re_agent_model.replace(&result, replacement.as_str()).to_string();
+    } else {
+        result = format!("{}\n{}", result.trim_end(), default_model_block);
+    }
+
+    // 2. 更新或插入 llm-pi-ai 以及其中的 antigravity provider
+    let re_llm_pi = regex::Regex::new(
+        r#"(?s)(- id:\s*llm-pi-ai[\s\S]*?config:\s*\n\s*providers:\s*\n)([\s\S]*?)(?=\n- id:|\z)"#,
+    )
+    .unwrap();
+    if let Some(caps) = re_llm_pi.captures(&result) {
+        let prefix = caps.get(1).unwrap().as_str();
+        let providers_body = caps.get(2).unwrap().as_str();
+
+        let re_ag = regex::Regex::new(
+            r#"(?s)( {6}antigravity:\s*\n)([\s\S]*?)(?=\n {6}[a-zA-Z0-9_-]+:|\z)"#,
+        )
+        .unwrap();
+        if re_ag.is_match(providers_body) {
+            let new_providers = re_ag
+                .replace(providers_body, format!("{}\n", provider_block))
+                .to_string();
+            let replacement = format!("{}{}", prefix, new_providers);
+            result = re_llm_pi.replace(&result, replacement.as_str()).to_string();
+        } else {
+            let replacement = format!("{}{}\n{}", prefix, provider_block, providers_body);
+            result = re_llm_pi.replace(&result, replacement.as_str()).to_string();
+        }
+    } else {
+        result = format!(
+            "{}\n- id: llm-pi-ai\n  name: \"@deepseek-ai/dsh-llm-pi-ai\"\n  config:\n    providers:\n{}\n",
+            result.trim_end(),
+            provider_block
+        );
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1982,4 +2313,57 @@ model = "deepseek-chat"
             "gemini-3.8-flash-high"
         );
     }
+
+    #[test]
+    fn test_sync_dsh_credentials_content() {
+        let empty = "";
+        let res1 = sync_dsh_credentials_content(empty, "sk-test1");
+        assert!(res1.contains("ANTIGRAVITY_API_KEY: sk-test1"));
+
+        let existing = r#"version: 1
+records:
+  browser-session:
+    kind: grant
+refs:
+  {
+    KIMI_KEY: sk-kimi,
+    ANTIGRAVITY_API_KEY: sk-old
+  }
+"#;
+        let res2 = sync_dsh_credentials_content(existing, "sk-new");
+        assert!(res2.contains("ANTIGRAVITY_API_KEY: sk-new"));
+        assert!(res2.contains("KIMI_KEY: sk-kimi"));
+    }
+
+    #[test]
+    fn test_sync_dsh_cordis_patch_content() {
+        let empty = "[]";
+        let res1 = sync_dsh_cordis_patch_content(empty, "http://127.0.0.1:8045/v1", "gemini-3.8-flash");
+        assert!(res1.contains("provider: antigravity"));
+        assert!(res1.contains("model: gemini-3.8-flash"));
+        assert!(res1.contains("baseURL: http://127.0.0.1:8045/v1"));
+        assert!(res1.contains("apiKeyEnv: ANTIGRAVITY_API_KEY"));
+
+        let existing = r#"- id: ui-settings
+  config:
+    enabled: true
+- id: agent-default-model
+  config:
+    provider: deepseek-official
+    model: deepseek-chat
+- id: llm-pi-ai
+  config:
+    providers:
+      kimi-k3:
+        displayName: kimi-k3
+        baseURL: https://hubway.cc
+"#;
+        let res2 = sync_dsh_cordis_patch_content(existing, "http://127.0.0.1:8045/v1", "claude-sonnet-4-6");
+        assert!(res2.contains("provider: antigravity"));
+        assert!(res2.contains("model: claude-sonnet-4-6"));
+        assert!(res2.contains("baseURL: http://127.0.0.1:8045/v1"));
+        assert!(res2.contains("kimi-k3:"));
+        assert!(res2.contains("ui-settings"));
+    }
+
 }

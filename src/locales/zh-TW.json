@@ -1467,7 +1467,8 @@
             },
             "model_select": "Select Model",
             "apps": {
-                "gemini": "Antigravity CLI (agy)"
+                "gemini": "Antigravity CLI (agy)",
+                "deepseek_harness": "DeepSeek Harness"
             }
         },
         "hermes_sync": {

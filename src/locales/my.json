@@ -1467,7 +1467,8 @@
             "sync_confirm_message": "Bersedia untuk menyegerakkan konfigurasi {{name}}. ⚠️ Amaran: Ini akan menimpa fail konfigurasi tempatan sedia ada anda (cth. token log masuk, Kunci API). Adakah anda pasti mahu meneruskan?",
             "model_select": "Select Model",
             "apps": {
-                "gemini": "Antigravity CLI (agy)"
+                "gemini": "Antigravity CLI (agy)",
+                "deepseek_harness": "DeepSeek Harness"
             }
         },
         "models": {
