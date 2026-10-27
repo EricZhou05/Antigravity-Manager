@@ -394,7 +394,7 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                     </div>
 
                     {/* Show Sync Status if installed OR if it's OpenCode/JeikCode/GrokBuild/Hermes/OpenClaw */}
-                    {!isAppLoading && (status?.installed || (app === 'OpenCode' || app === 'JeikCode' || app === 'GrokBuild' || app === 'Hermes' || app === 'OpenClaw') && status?.current_base_url) && (
+                    {!isAppLoading && (status?.installed || status?.current_base_url || status?.is_synced) && (
                         <div
                             className={cn(
                                 "inline-flex items-center justify-center transition-all shrink-0 whitespace-nowrap shadow-sm",
@@ -472,7 +472,7 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                     </div>
 
                     {/* Claude, Codex, Gemini, JeikCode, GrokBuild 的模型选择 */}
-                    {(status?.installed || app === 'OpenCode' || app === 'JeikCode' || app === 'GrokBuild' || app === 'DeepSeekHarness') && (app === 'Claude' || app === 'Codex' || app === 'Gemini' || app === 'JeikCode' || app === 'GrokBuild' || app === 'DeepSeekHarness') && (
+                    {(app === 'Claude' || app === 'Codex' || app === 'Gemini' || app === 'JeikCode' || app === 'GrokBuild' || app === 'DeepSeekHarness') && (
                         <div className="space-y-1">
                             <div className="text-[9px] text-gray-400 dark:text-gray-500 uppercase font-bold tracking-wider px-1">
                                 {t('proxy.cli_sync.model_select', { defaultValue: 'Select Model' })}
@@ -504,46 +504,37 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                     )}
 
                     <div className="flex items-center gap-2">
-                        {(status?.installed || app === 'OpenCode' || app === 'JeikCode' || app === 'GrokBuild' || app === 'Hermes' || app === 'OpenClaw' || app === 'DeepSeekHarness') && (
-                            <>
-                                {/* 对于 OpenCode、Hermes 与 OpenClaw，如果未同步，则不显示查看按钮（因为文件尚未生成，后端会报错） */}
-                                {((app !== 'OpenCode' && app !== 'Hermes' && app !== 'OpenClaw') || status?.is_synced) && (
-                                    <button
-                                        onClick={() => handleViewConfig(app)}
-                                        className="p-1 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
-                                        title={t(app === 'OpenCode' ? 'proxy.opencode_sync.btn_view' : app === 'Hermes' ? 'proxy.hermes_sync.btn_view' : app === 'OpenClaw' ? 'proxy.openclaw_sync.btn_view' : 'proxy.cli_sync.btn_view', { defaultValue: 'View Config' })}
-                                    >
-                                        <Eye size={14} />
-                                    </button>
-                                )}
-                                <button
-                                    onClick={() => handleRestore(app)}
-                                    className="p-1 text-gray-400 hover:text-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/20 rounded transition-colors"
-                                    title={t(app === 'OpenCode' ? 'proxy.opencode_sync.btn_restore' : app === 'Hermes' ? 'proxy.hermes_sync.btn_restore' : app === 'OpenClaw' ? 'proxy.openclaw_sync.btn_restore' : 'proxy.cli_sync.btn_restore', { defaultValue: 'Restore' })}
-                                >
-                                    <RotateCcw size={14} />
-                                </button>
-                                {/* OpenCode、Hermes 与 OpenClaw 的 Clear 按钮 */}
-                                {(app === 'OpenCode' || app === 'Hermes' || app === 'OpenClaw') && (
-                                    <button
-                                        onClick={() => handleClear(app)}
-                                        className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
-                                        title={t(app === 'Hermes' ? 'proxy.hermes_sync.btn_clear' : app === 'OpenClaw' ? 'proxy.openclaw_sync.btn_clear' : 'proxy.opencode_sync.btn_clear', { defaultValue: 'Clear' })}
-                                    >
-                                        <Trash2 size={14} />
-                                    </button>
-                                )}
-                            </>
+                        {/* 始终展示查看配置与还原操作（对齐 OpenCode 交互，不再因未检测到二进制而隐藏） */}
+                        {(status?.is_synced || status?.has_backup || (status?.files && status.files.length > 0)) && (
+                            <button
+                                onClick={() => handleViewConfig(app)}
+                                className="p-1 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
+                                title={t(app === 'OpenCode' ? 'proxy.opencode_sync.btn_view' : app === 'Hermes' ? 'proxy.hermes_sync.btn_view' : app === 'OpenClaw' ? 'proxy.openclaw_sync.btn_view' : 'proxy.cli_sync.btn_view', { defaultValue: 'View Config' })}
+                            >
+                                <Eye size={14} />
+                            </button>
+                        )}
+                        <button
+                            onClick={() => handleRestore(app)}
+                            className="p-1 text-gray-400 hover:text-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/20 rounded transition-colors"
+                            title={t(app === 'OpenCode' ? 'proxy.opencode_sync.btn_restore' : app === 'Hermes' ? 'proxy.hermes_sync.btn_restore' : app === 'OpenClaw' ? 'proxy.openclaw_sync.btn_restore' : 'proxy.cli_sync.btn_restore', { defaultValue: 'Restore' })}
+                        >
+                            <RotateCcw size={14} />
+                        </button>
+                        {/* OpenCode、Hermes 与 OpenClaw 的 Clear 按钮 */}
+                        {(app === 'OpenCode' || app === 'Hermes' || app === 'OpenClaw') && (
+                            <button
+                                onClick={() => handleClear(app)}
+                                className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+                                title={t(app === 'Hermes' ? 'proxy.hermes_sync.btn_clear' : app === 'OpenClaw' ? 'proxy.openclaw_sync.btn_clear' : 'proxy.opencode_sync.btn_clear', { defaultValue: 'Clear' })}
+                            >
+                                <Trash2 size={14} />
+                            </button>
                         )}
                         <button
                             onClick={() => handleSync(app)}
-                            disabled={(app !== 'OpenCode' && app !== 'JeikCode' && app !== 'GrokBuild' && app !== 'Hermes' && app !== 'OpenClaw' && app !== 'DeepSeekHarness' && !status?.installed) || isAppSyncing || isAppLoading}
-                            className={cn(
-                                "btn btn-sm flex-1 gap-2 rounded-xl transition-all font-bold shadow-sm",
-                                status?.is_synced
-                                    ? "btn-ghost border-gray-200 dark:border-base-400 text-gray-500 hover:bg-gray-100"
-                                    : "btn-primary hover:shadow-lg shadow-blue-500/20"
-                            )}
+                            disabled={isAppSyncing || isAppLoading}
+                            className="btn btn-sm btn-primary flex-1 gap-2 rounded-xl transition-all font-bold shadow-sm hover:shadow-lg shadow-blue-500/20"
                         >
                             {isAppSyncing ? (
                                 <Loader2 size={14} className="animate-spin" />
