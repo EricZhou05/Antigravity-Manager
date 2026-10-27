@@ -1706,6 +1706,7 @@ pub async fn handle_messages(
     let mut last_error = String::new();
     let mut retried_without_thinking = false;
     let mut retried_with_budget_degraded = false;
+    let mut retried_with_image_omitted = false;
     let mut degraded_gemini_body: Option<serde_json::Value> = None;
     let mut last_email: Option<String> = None;
     let mut last_mapped_model: Option<String> = None;
@@ -2743,6 +2744,30 @@ pub async fn handle_messages(
             );
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             continue;
+        }
+
+        // [FIX Corrupted Image] 400 多模态图像解码/处理失败：自愈降级损坏图片为占位符并在同账号原地重试
+        if classification.is_image_processing_error() && !retried_with_image_omitted {
+            let purged_count =
+                crate::proxy::mappers::common_utils::purge_corrupted_images_from_gemini_payload(
+                    &mut gemini_body,
+                );
+            if purged_count == 0 {
+                tracing::warn!(
+                    "[{}] Upstream 400 Unable to process input image detected, but no inline image was purged. Skipping retry to prevent duplicate 400.",
+                    trace_id
+                );
+            } else {
+                retried_with_image_omitted = true;
+                tracing::warn!(
+                    "[{}] Upstream 400 Unable to process input image detected. In-place self-healing: purged {} image(s) to text placeholders on account {}, retrying.",
+                    trace_id, purged_count, email
+                );
+                degraded_gemini_body = Some(gemini_body);
+                force_rotate = false;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                continue;
+            }
         }
 
         // 4. 处理 400 错误 (Thinking 签名失效 或 块顺序错误)
