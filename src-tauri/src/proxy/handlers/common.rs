@@ -868,6 +868,9 @@ pub fn build_dual_track_error(
     model: &str,
     error_text: &str,
 ) -> serde_json::Value {
+    // [Fixes #3763] 剔除内部链路控制标记，避免大体积上传终态标记泄漏到客户端报文
+    let sanitized_error_text = crate::proxy::upstream::client::strip_internal_markers(error_text);
+    let error_text = sanitized_error_text.as_str();
     let lower = error_text.to_lowercase();
     let is_internal_limited = lower.contains("all accounts limited")
         || lower.contains("no accounts available")
@@ -884,7 +887,11 @@ pub fn build_dual_track_error(
         || lower.contains("timeout")
         || lower.contains("error trying to connect")
         || lower.contains("dns error")
-        || lower.contains("all endpoints failed");
+        || lower.contains("all endpoints failed")
+        // [Fixes #3763] 分阶段上传诊断归入网络类故障，保留真实阶段语义
+        || lower.contains("upload stalled")
+        || lower.contains("upload budget exhausted")
+        || lower.contains("upstream send failed");
 
     let is_not_found = is_model_not_found_error(status_code, error_text);
 

@@ -425,6 +425,13 @@ pub async fn handle_generate(
                     max_attempts,
                     e
                 );
+                // [Fixes #3763] 大体积上传阶段终止：不再跨账号重发同一大 body
+                if crate::proxy::upstream::client::is_upload_stage_failure(&e) {
+                    tracing::warn!(
+                        "Large-body upload aborted before completion; stopping account rotation to avoid re-upload amplification"
+                    );
+                    break;
+                }
                 continue;
             }
         };
@@ -530,18 +537,23 @@ pub async fn handle_generate(
                 let mut buffer = BytesMut::new();
                 let s_id = session_id.clone(); // Clone for stream closure
 
+                // [Pipeline First] 与 Claude/OpenAI 共用同一套流式连续性配置：
+                // 首字宽限（首包）、状态切换宽限（首包后尚无正文）、滑动刷新（已开始输出）。
+                let stream_timeouts = crate::proxy::get_stream_timeout_config();
+                let first_chunk_timeout =
+                    std::time::Duration::from_secs(stream_timeouts.initial_ttft_secs.max(1));
+                let transition_timeout =
+                    std::time::Duration::from_secs(stream_timeouts.transition_secs.max(1));
+                let sliding_timeout =
+                    std::time::Duration::from_secs(stream_timeouts.streaming_sliding_secs.max(1));
+
                 // [FIX #859] Implement peek logic for Gemini stream to prevent 0-token 200 OK
                 let mut first_chunk = None;
                 let mut retry_gemini = false;
 
                 // [NEW] 实施双阶段超时：第一阶段为 FirstChunkTimeout (300s / 5min)
                 // 这精准对齐了官方 Worker 在模型冷启动（Initialization）阶段的极度耐心
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(300),
-                    response_stream.next(),
-                )
-                .await
-                {
+                match tokio::time::timeout(first_chunk_timeout, response_stream.next()).await {
                     Ok(Some(Ok(bytes))) => {
                         if bytes.is_empty() {
                             tracing::warn!("[Gemini] Empty first chunk received, retrying...");
@@ -585,7 +597,10 @@ pub async fn handle_generate(
                         retry_gemini = true;
                     }
                     Err(_) => {
-                        tracing::warn!("[Gemini] First chunk timeout after 300s, retrying...");
+                        tracing::warn!(
+                            "[Gemini] First chunk timeout after {}s, retrying...",
+                            first_chunk_timeout.as_secs()
+                        );
                         last_error = "First chunk timeout".to_string();
                         retry_gemini = true;
                     }
@@ -612,6 +627,14 @@ pub async fn handle_generate(
                     let mut meta_sent = false;
                     let mut saw_image_data = false;
                     let mut stream_failed = false;
+                    let mut saw_output = false;
+                    // [Pipeline First] 与 Claude/OpenAI 生命周期一致的 3s SSE 注释心跳，
+                    // 防止长 Prefill / 工具调用装配期间被中间网关空闲掤断。
+                    let mut heartbeat_interval =
+                        tokio::time::interval(std::time::Duration::from_secs(3));
+                    heartbeat_interval
+                        .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                    let _ = heartbeat_interval.tick().await; // 消费首个立即 tick
                     let mut thinking_acc =
                         crate::proxy::thinking_store::TurnAccumulator::with_anchor(&causal_anchor_clone);
 
@@ -633,19 +656,42 @@ pub async fn handle_generate(
                         let item = if let Some(fd) = first_data.take() {
                             Some(Ok(fd))
                         } else {
-                            // [NEW] 第二阶段为 StreamIdleTimeout (300s / 5min)
-                            match tokio::time::timeout(std::time::Duration::from_secs(300), response_stream.next()).await {
+                            // [Pipeline First] 空闲守卫与 Claude/OpenAI 同源：
+                            // 尚未输出任何内容 → 状态切换宽限；已开始输出 → 滑动刷新超时。
+                            let effective_idle =
+                                if saw_output { sliding_timeout } else { transition_timeout };
+                            let idle_fut =
+                                tokio::time::timeout(effective_idle, response_stream.next());
+                            tokio::pin!(idle_fut);
+                            let timed = loop {
+                                tokio::select! {
+                                    res = &mut idle_fut => break res,
+                                    _ = heartbeat_interval.tick() => {
+                                        yield Ok::<Bytes, String>(Bytes::from(": ping\n\n"));
+                                    }
+                                }
+                            };
+                            match timed {
                                 Ok(next_item) => next_item,
                                 Err(_) => {
+                                    if saw_output {
+                                        tracing::warn!(
+                                            "[Gemini] stream idle timeout after {}s with content emitted, gracefully finalizing",
+                                            effective_idle.as_secs()
+                                        );
+                                        yield Ok::<Bytes, String>(Bytes::from("data: [DONE]\n\n"));
+                                        break;
+                                    }
                                     let report = crate::proxy::mappers::error_classifier::report_stream_error(
                                         "gemini",
                                         "handle_generate",
                                         &"stream idle timeout",
                                         format!(
-                                            "model={} session={} buffer_bytes={} idle_secs=300",
+                                            "model={} session={} buffer_bytes={} idle_secs={}",
                                             model_name_for_stream,
                                             s_id_for_stream,
-                                            buffer.len()
+                                            buffer.len(),
+                                            effective_idle.as_secs()
                                         ),
                                     );
                                     stream_failed = true;
@@ -730,6 +776,13 @@ pub async fn handle_generate(
                                                     for cand in candidates {
                                                         if let Some(parts) = cand.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
                                                             for part in parts {
+                                                                if part.get("text").is_some()
+                                                                    || part.get("functionCall").is_some()
+                                                                    || part.get("inlineData").is_some()
+                                                                    || part.get("inline_data").is_some()
+                                                                {
+                                                                    saw_output = true;
+                                                                }
                                                                 thinking_acc.ingest_part(part);
                                                                 if let Some(sig) = part.get("thoughtSignature").and_then(|s| s.as_str()) {
                                                                     crate::proxy::SignatureCache::global()

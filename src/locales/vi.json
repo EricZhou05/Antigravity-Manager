@@ -1160,11 +1160,11 @@
                 "clear_error": "Xóa khối suy nghĩ thất bại: {{error}}",
                 "gemini_soft_budget_note": "⚠️ Hành vi ngân sách suy nghĩ: Google Gemini coi thinkingBudget là mục tiêu mềm (soft target). Đối với prompt dài hoặc tác vụ suy luận mã phức tạp, mô hình có thể tự động mở rộng chuỗi suy nghĩ và vượt quá giá trị đã đặt; đặt 0 để tắt hoàn toàn suy nghĩ."
             },
-            "stream_timeout_settings": {
-                "title": "Cài đặt thời gian chờ luồng (Stream Timeout Settings)"
+            "timeout_settings": {
+                "title": "Cài đặt thời gian chờ"
             },
             "thinking_settings": {
-                "title": "Cài đặt suy nghĩ (Thinking Settings)"
+                "title": "Cài đặt suy nghĩ"
             },
             "prompt_multimodal": {
                 "title": "Prompt toàn cục & Cài đặt đa phương thức"
@@ -1239,7 +1239,7 @@
                 }
             },
             "agent_settings": {
-                "title": "Cấu hình Agent cụ thể (Specific Agent Settings)"
+                "title": "Cấu hình Agent cụ thể"
             },
             "hub": {
                 "title": "Dấu vân tay Hub chính thức",
@@ -1258,17 +1258,53 @@
         "stream_timeouts": {
             "banner_title": "Cơ chế thời gian chờ luồng 3 giai đoạn và duy trì kết nối",
             "banner_desc": "Thiết kế cho các mô hình suy nghĩ sâu, Prefill ngữ cảnh lớn, tóm tắt lịch sử và ghi tập tin lớn. Ba giai đoạn độc lập với tín hiệu ping (: ping) liên tục giúp loại bỏ hiện tượng ngắt kết nối gateway và vòng lặp thử lại của client.",
-            "ttft_title": "Thời gian chờ ký tự đầu tiên (TTFT)",
+            "ttft_title": "Thời gian chờ ký tự đầu tiên",
             "default_badge": "Mặc định: 180s",
             "ttft_desc": "Bao gồm hàng đợi khởi động nguội, Prefill hơn 100k token và tóm tắt lịch sử. Gửi ping mỗi 3 giây để duy trì kết nối.",
             "transition_title": "Thời gian chuyển tiếp (Đặt lại bộ đếm)",
             "transition_desc": "Khoảng thời gian từ khi hoàn tất suy nghĩ đến khi xuất hiện nội dung hoặc lệnh gọi công cụ đầu tiên. Tự động đặt lại bộ đếm khi hoàn tất suy nghĩ.",
-            "sliding_title": "Thời gian chờ trượt khi phát luồng (Streaming)",
+            "sliding_title": "Thời gian chờ trượt khi phát luồng",
             "default_badge_sliding": "Mặc định: 120s",
             "sliding_desc": "Khoảng thời gian im lặng tối đa giữa các token liên tiếp. Nếu bị gián đoạn, luồng sẽ được đóng gọn gàng để bảo vệ nội dung đã tạo.",
             "toast_reset": "Đã khôi phục cài đặt thời gian chờ về mặc định",
             "btn_reset": "Khôi phục mặc định",
             "btn_save": "Lưu cài đặt thời gian chờ"
+        },
+        "upload_timeouts": {
+            "adaptive_title": "Thời gian tải lên: tự động theo băng thông",
+            "min_speed_title": "Băng thông tải lên (Mbps)",
+            "min_speed_desc": "Người dùng VPN thường tải xuống cao, tải lên thấp; nên nhập 1–5 Mbps.",
+            "extra_wait_title": "Hệ số chờ thêm",
+            "extra_wait_desc": "Tham số này ảnh hưởng đến thời gian chờ tối đa khi tải lên.",
+            "formula_title": "Chờ tối đa = kích thước nội dung ÷ băng thông tải lên × (1 + hệ số chờ)",
+            "stall_title": "Thời gian đình trệ (giây)",
+            "stall_desc": "Thời gian chờ khi mạng đứng hoàn toàn trong lúc tải lên; nếu chờ tối đa ngắn hơn thì dùng mức đó.",
+            "header_wait_title": "Thời gian chờ tiêu đề đầu (giây)",
+            "header_wait_desc": "0 = dùng giá trị tích hợp: 30 giây cho endpoint chính / 25 giây cho dự phòng; giá trị khác 0 chỉ nâng mức tối thiểu.",
+            "large_body_desc": "Tệp vượt ngưỡng mặc định chỉ gửi một lần, tránh gửi lại nhiều lần làm nghẽn đường lên.",
+            "large_body_threshold_title": "Ngưỡng tệp lớn (MB)",
+            "endpoint_attempts_title": "Số lần thử tối đa",
+            "toast_reset": "Đã khôi phục thời gian chờ",
+            "btn_reset": "Khôi phục mặc định",
+            "btn_save": "Lưu cài đặt thời gian chờ"
+        },
+        "timeouts": {
+            "banner_title": "Cài đặt thời gian chờ",
+            "banner_desc": "Chuỗi thời gian chờ đầy đủ của một yêu cầu: kết nối → tải lên → tiêu đề đầu → token đầu / xuất liên tục.",
+            "section_connect": "① Kết nối endpoint (tự động chuyển)",
+            "connect_label": "Thời gian kết nối (giây)",
+            "connect_desc": "Thời gian thiết lập TCP tới endpoint; thường rất nhanh.",
+            "connect_restart": "Cần khởi động lại dịch vụ proxy.",
+            "section_upload": "② Tải lên (gửi nội dung)",
+            "section_large_body": "Thử lại tệp lớn",
+            "section_header": "③ Tiêu đề phản hồi đầu (tự động chuyển)",
+            "header_primary_title": "Endpoint chính:",
+            "header_primary_items": "Chat văn bản/mã: 30　Hình ảnh: 45　Video: 60　Khác: 15 (ví dụ tạo tiêu đề)",
+            "header_fallback_title": "Endpoint dự phòng:",
+            "header_fallback_items": "Chat văn bản/mã: 25　Hình ảnh: 25　Video: 30　Khác: 15 (ví dụ tạo tiêu đề)",
+            "section_stream": "④ Token đầu và xuất liên tục",
+            "stream_desc": "Không chuyển endpoint; luồng kết thúc an toàn hoặc client thử lại.",
+            "auto_summary": "Ví dụ: chờ tối đa = 47MB ÷ 2Mbps × 1.4 ≈ {{big}} giây;"
         },
         "example": {
             "title": "Ví dụ Sử dụng",
@@ -1695,7 +1731,7 @@
             "out_tokens_title": "Token đầu ra",
             "ttft_prefix": "Ký tự đầu:",
             "total_duration_title": "Tổng thời gian",
-            "ttft_title": "Độ trễ ký tự đầu tiên (TTFT)"
+            "ttft_title": "Độ trễ ký tự đầu tiên"
         },
         "details": {
             "title": "Chi tiết Request",
@@ -1770,7 +1806,7 @@
             "norm_desc": "Model routing / account scheduling / Gemini format conversion",
             "thinking": "Thinking & Signature Fill",
             "thinking_desc": "ThinkingStore hydration / sentinel signature injection",
-            "ttft": "Time To First Token (TTFT)",
+            "ttft": "Time To First Token",
             "ttft_desc": "Gateway dispatch to first thinking/tool/content SSE chunk",
             "stream": "Stream Transfer Duration",
             "stream_desc": "First chunk arrival to stream completion",

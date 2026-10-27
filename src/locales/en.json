@@ -1213,8 +1213,8 @@
                 "guide_preset_cluster_desc": "Recommended: <1>50 ~ 100 turns</1>. Effortlessly sustains tens of thousands of concurrent sessions; lock-free WAL index ensures sub-second responses.",
                 "gemini_soft_budget_note": "⚠️ Thinking Budget Behavior: Google Gemini upstream treats thinkingBudget as a heuristic soft target. For long prompts, complex code reasoning, or agent tasks, upstream models dynamically expand their chain-of-thought and may exceed configured budgets; set to 0 to completely disable thinking."
             },
-            "stream_timeout_settings": {
-                "title": "Stream Timeout Settings"
+            "timeout_settings": {
+                "title": "Timeout Settings"
             },
             "thinking_settings": {
                 "title": "Thinking Settings"
@@ -1245,7 +1245,7 @@
         "stream_timeouts": {
             "banner_title": "Three-Stage Gradient Stream Timeout & Keepalive",
             "banner_desc": "Designed for deep thinking models, massive context Prefills, long history compaction, and heavy file writing. Provides three independent timing epochs with continuous background keepalive (: ping) to eliminate gateway drops, transition cliff timeouts, and client retry storms.",
-            "ttft_title": "Initial Response Grace (TTFT)",
+            "ttft_title": "Initial Response Grace",
             "default_badge": "Default: 180s",
             "ttft_desc": "Covers cold-start queueing, 100k+ token Prefill, and compaction summarization. Pings every 3s to keep connections alive.",
             "transition_title": "Transition Grace (Epoch Reset)",
@@ -1256,6 +1256,42 @@
             "toast_reset": "Stream timeout settings restored to defaults",
             "btn_reset": "Reset to Defaults",
             "btn_save": "Save Timeout Settings"
+        },
+        "upload_timeouts": {
+            "adaptive_title": "Upload timeout: determined automatically from bandwidth",
+            "min_speed_title": "Upload bandwidth (Mbps)",
+            "min_speed_desc": "VPN users usually have high download and low upload; 1–5 Mbps is recommended.",
+            "extra_wait_title": "Extra wait factor",
+            "extra_wait_desc": "This parameter affects the maximum upload wait time.",
+            "formula_title": "Max wait = request body size ÷ upload bandwidth × (1 + extra wait factor)",
+            "stall_title": "Stall timeout (seconds)",
+            "stall_desc": "Timeout for a sustained network stall during upload; if the max wait is shorter, the max wait is used.",
+            "header_wait_title": "First header timeout (seconds)",
+            "header_wait_desc": "0 = use built-in values: 30s for the primary endpoint / 25s for the fallback; a non-zero value only raises the lower bound.",
+            "large_body_desc": "Files above the threshold are sent only once by default, avoiding repeated retries that saturate the uplink.",
+            "large_body_threshold_title": "Large file threshold (MB)",
+            "endpoint_attempts_title": "Max attempts",
+            "toast_reset": "Timeout settings restored to defaults",
+            "btn_reset": "Reset to defaults",
+            "btn_save": "Save timeout settings"
+        },
+        "timeouts": {
+            "banner_title": "Timeout Settings",
+            "banner_desc": "The full timeout chain for one request: connect → upload → first response header → first token / continuous output.",
+            "section_connect": "① Endpoint connection (auto failover)",
+            "connect_label": "Connect timeout (seconds)",
+            "connect_desc": "TCP connection establishment timeout to the endpoint; usually very fast.",
+            "connect_restart": "Restart the proxy service to apply.",
+            "section_upload": "② Upload (send the request body)",
+            "section_large_body": "Large file retry",
+            "section_header": "③ First response header (auto failover)",
+            "header_primary_title": "Primary endpoint:",
+            "header_primary_items": "Text/code chat: 30　Image: 45　Video: 60　Other: 15 (e.g. title generation)",
+            "header_fallback_title": "Fallback endpoint:",
+            "header_fallback_items": "Text/code chat: 25　Image: 25　Video: 30　Other: 15 (e.g. title generation)",
+            "section_stream": "④ First token and continuous output",
+            "stream_desc": "Endpoints are not switched; the stream finalizes safely or the client retries.",
+            "auto_summary": "e.g. max wait = 47MB ÷ 2Mbps × 1.4 ≈ {{big}}s;"
         },
         "cloudflared": {
             "title": "Public Access (Cloudflared)",
@@ -1764,7 +1800,7 @@
             "out_tokens_title": "Output Tokens",
             "ttft_prefix": "TTFT:",
             "total_duration_title": "Total Latency",
-            "ttft_title": "Time to First Token (TTFT)"
+            "ttft_title": "Time to First Token"
         },
         "details": {
             "title": "Request Details",
@@ -1801,7 +1837,7 @@
             "norm_desc": "Model routing / account scheduling / Gemini format conversion",
             "thinking": "Thinking & Signature Fill",
             "thinking_desc": "ThinkingStore hydration / sentinel signature injection",
-            "ttft": "Time To First Token (TTFT)",
+            "ttft": "Time To First Token",
             "ttft_desc": "Gateway dispatch to first thinking/tool/content SSE chunk",
             "ttft_pure": "Time To First Token (Pure TTFT)",
             "ttft_pure_desc": "Effective endpoint request dispatch to first SSE token chunk arrival",

@@ -1176,11 +1176,11 @@
                 "clear_error": "Не удалось очистить блоки размышлений: {{error}}",
                 "gemini_soft_budget_note": "⚠️ Особенности бюджета размышлений: Google Gemini рассматривает thinkingBudget как мягкий ориентир (soft target). При длинных промптах или сложных задачах модель может самостоятельно расширять цепочку рассуждений сверх установленного лимита; значение 0 полностью отключает размышления."
             },
-            "stream_timeout_settings": {
-                "title": "Настройки таймаутов потоковой передачи (Stream Timeout Settings)"
+            "timeout_settings": {
+                "title": "Настройки таймаутов"
             },
             "thinking_settings": {
-                "title": "Настройки мышления (Thinking Settings)"
+                "title": "Настройки мышления"
             },
             "prompt_multimodal": {
                 "title": "Глобальный промпт и мультимодальность"
@@ -1192,7 +1192,7 @@
             "log_retention_current_usage": "Current database disk usage",
             "log_retention_rows": "Maximum log rows",
             "agent_settings": {
-                "title": "Специальные настройки Agent (Specific Agent Settings)"
+                "title": "Специальные настройки Agent"
             },
             "hub": {
                 "title": "Официальный отпечаток Hub",
@@ -1211,17 +1211,53 @@
         "stream_timeouts": {
             "banner_title": "3-ступенчатый градиентный таймаут и механизм поддержания активности",
             "banner_desc": "Разработано для моделей глубокого рассуждения, огромных контекстов Prefill, сжатия истории и генерации объемного кода. Три независимых периода с непрерывным keepalive (: ping) предотвращают обрывы шлюзов и циклы повторов клиента.",
-            "ttft_title": "Ожидание первого токена (TTFT)",
+            "ttft_title": "Ожидание первого токена",
             "default_badge": "По умолчанию: 180s",
             "ttft_desc": "Очереди холодного старта, Prefill более 100k токенов и сжатие контекста. Отправляет ping каждые 3 секунды.",
             "transition_title": "Окно перехода (Сброс таймера)",
             "transition_desc": "Период между завершением рассуждения и первым токеном ответа или вызова инструмента. Таймер автоматически сбрасывается при завершении мышления.",
-            "sliding_title": "Скользящий таймаут потока (Streaming)",
+            "sliding_title": "Скользящий таймаут потока",
             "default_badge_sliding": "По умолчанию: 120s",
             "sliding_desc": "Максимальный интервал тишины между последовательными токенами. При сбое корректно закрывает поток, сохраняя уже созданный результат.",
             "toast_reset": "Таймауты сброшены к значениям по умолчанию",
             "btn_reset": "Сбросить по умолчанию",
             "btn_save": "Сохранить настройки таймаутов"
+        },
+        "upload_timeouts": {
+            "adaptive_title": "Время загрузки: определяется автоматически по скорости",
+            "min_speed_title": "Скорость отдачи (Mbps)",
+            "min_speed_desc": "У VPN обычно высокая скорость скачивания и низкая отдачи; рекомендуем 1–5 Mbps.",
+            "extra_wait_title": "Коэффициент дополнительного ожидания",
+            "extra_wait_desc": "Этот параметр влияет на максимальное время ожидания загрузки.",
+            "formula_title": "Максимальное ожидание = размер тела ÷ скорость отдачи × (1 + коэффициент)",
+            "stall_title": "Таймаут зависания (сек)",
+            "stall_desc": "Таймаут при полной остановке сети во время загрузки; если максимальное ожидание меньше, используется оно.",
+            "header_wait_title": "Таймаут первого заголовка (сек)",
+            "header_wait_desc": "0 = встроенные значения: 30 с для основного эндпоинта / 25 с для резервного; ненулевое значение только поднимает минимум.",
+            "large_body_desc": "Файлы выше порога по умолчанию отправляются один раз, чтобы повторные попытки не забивали канал.",
+            "large_body_threshold_title": "Порог большого файла (MB)",
+            "endpoint_attempts_title": "Максимум попыток",
+            "toast_reset": "Таймауты сброшены",
+            "btn_reset": "Сбросить",
+            "btn_save": "Сохранить таймауты"
+        },
+        "timeouts": {
+            "banner_title": "Настройки таймаутов",
+            "banner_desc": "Полная цепочка таймаутов запроса: подключение → загрузка → первый заголовок → первый токен / непрерывный вывод.",
+            "section_connect": "① Подключение к эндпоинту (авто-переключение)",
+            "connect_label": "Таймаут подключения (сек)",
+            "connect_desc": "Таймаут установки TCP-соединения с эндпоинтом; обычно очень быстрый.",
+            "connect_restart": "Требуется перезапуск прокси-сервиса.",
+            "section_upload": "② Загрузка (отправка тела)",
+            "section_large_body": "Повтор больших файлов",
+            "section_header": "③ Первый заголовок ответа (авто-переключение)",
+            "header_primary_title": "Основной эндпоинт:",
+            "header_primary_items": "Текст/код: 30　Изображение: 45　Видео: 60　Другое: 15 (например, заголовки)",
+            "header_fallback_title": "Резервный эндпоинт:",
+            "header_fallback_items": "Текст/код: 25　Изображение: 25　Видео: 30　Другое: 15 (например, заголовки)",
+            "section_stream": "④ Первый токен и непрерывный вывод",
+            "stream_desc": "Переключения эндпоинта нет; поток корректно завершается или клиент повторяет запрос.",
+            "auto_summary": "Пример: максимум = 47MB ÷ 2Mbps × 1.4 ≈ {{big}} с;"
         },
         "cloudflared": {
             "title": "Публичный доступ (Cloudflared)",
@@ -1712,7 +1748,7 @@
             "out_tokens_title": "Выходные токены",
             "ttft_prefix": "TTFT:",
             "total_duration_title": "Общая задержка",
-            "ttft_title": "Задержка первого токена (TTFT)"
+            "ttft_title": "Задержка первого токена"
         },
         "details": {
             "title": "Детали запроса",
@@ -1795,7 +1831,7 @@
             "norm_desc": "Model routing / account scheduling / Gemini format conversion",
             "thinking": "Thinking & Signature Fill",
             "thinking_desc": "ThinkingStore hydration / sentinel signature injection",
-            "ttft": "Time To First Token (TTFT)",
+            "ttft": "Time To First Token",
             "ttft_desc": "Gateway dispatch to first thinking/tool/content SSE chunk",
             "stream": "Stream Transfer Duration",
             "stream_desc": "First chunk arrival to stream completion",

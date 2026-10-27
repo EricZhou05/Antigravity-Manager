@@ -1189,11 +1189,11 @@
                 "clear_error": "Falha ao limpar blocos de pensamento: {{error}}",
                 "gemini_soft_budget_note": "⚠️ Comportamento do orçamento de pensamento: O Google Gemini trata o thinkingBudget como uma meta flexível (soft target). Em prompts longos ou raciocínios complexos de código, o modelo pode expandir sua cadeia de pensamento e superar o valor configurado; defina 0 para desativar completamente."
             },
-            "stream_timeout_settings": {
-                "title": "Configurações de tempo limite de streaming (Stream Timeout Settings)"
+            "timeout_settings": {
+                "title": "Configurações de tempo limite"
             },
             "thinking_settings": {
-                "title": "Configurações de Raciocínio (Thinking Settings)"
+                "title": "Configurações de Raciocínio"
             },
             "prompt_multimodal": {
                 "title": "Prompt Global e Configurações Multimodais"
@@ -1205,7 +1205,7 @@
             "log_retention_current_usage": "Current database disk usage",
             "log_retention_rows": "Maximum log rows",
             "agent_settings": {
-                "title": "Configurações específicas de Agent (Specific Agent Settings)"
+                "title": "Configurações específicas de Agent"
             },
             "hub": {
                 "title": "Impressão Digital do Hub Oficial",
@@ -1224,17 +1224,53 @@
         "stream_timeouts": {
             "banner_title": "Mecanismo de tempo limite em 3 etapas e keepalive contínuo",
             "banner_desc": "Projetado para modelos de raciocínio profundo, prefills de contexto massivos, compactação de histórico e escrita de arquivos extensos. Três etapas independentes com keepalive contínuo (: ping) para evitar quedas de gateway e loops de repetição.",
-            "ttft_title": "Tolerância para primeiro token (TTFT)",
+            "ttft_title": "Tolerância para primeiro token",
             "default_badge": "Padrão: 180s",
             "ttft_desc": "Cobre filas de inicialização, prefill de 100k+ tokens e tarefas de compactação. Envia pings a cada 3s para manter a conexão ativa.",
             "transition_title": "Tolerância de transição (Reinício de época)",
             "transition_desc": "Período de tolerância entre o término do raciocínio e o primeiro token de conteúdo ou chamada de ferramenta. Reinicia o cronômetro automaticamente ao concluir o raciocínio.",
-            "sliding_title": "Tempo limite deslizante (Streaming)",
+            "sliding_title": "Tempo limite deslizante",
             "default_badge_sliding": "Padrão: 120s",
             "sliding_desc": "Intervalo máximo de silêncio permitido entre tokens consecutivos. Em caso de interrupção, finaliza de forma suave para proteger o código gerado.",
             "toast_reset": "Configurações de tempo limite restauradas para o padrão",
             "btn_reset": "Restaurar padrões",
             "btn_save": "Salvar configurações de tempo limite"
+        },
+        "upload_timeouts": {
+            "adaptive_title": "Tempo de upload: determinado automaticamente pela banda",
+            "min_speed_title": "Banda de upload (Mbps)",
+            "min_speed_desc": "Usuários de VPN costumam ter download alto e upload baixo; recomenda-se 1–5 Mbps.",
+            "extra_wait_title": "Fator de espera extra",
+            "extra_wait_desc": "Este parâmetro afeta o tempo máximo de espera do upload.",
+            "formula_title": "Espera máxima = tamanho do corpo ÷ banda de upload × (1 + fator de espera)",
+            "stall_title": "Tempo de travamento (segundos)",
+            "stall_desc": "Tempo limite para travamento contínuo de rede durante o upload; se a espera máxima for menor, usa-se a espera máxima.",
+            "header_wait_title": "Tempo do primeiro cabeçalho (segundos)",
+            "header_wait_desc": "0 = usar valores internos: 30 s no endpoint principal / 25 s no alternativo; um valor diferente de 0 apenas eleva o mínimo.",
+            "large_body_desc": "Arquivos acima do limite são enviados apenas uma vez por padrão, evitando repetições que saturem o upload.",
+            "large_body_threshold_title": "Limite de arquivo grande (MB)",
+            "endpoint_attempts_title": "Tentativas máximas",
+            "toast_reset": "Tempos de espera restaurados",
+            "btn_reset": "Restaurar padrões",
+            "btn_save": "Salvar tempos"
+        },
+        "timeouts": {
+            "banner_title": "Configurações de tempo limite",
+            "banner_desc": "Cadeia completa de tempos de uma solicitação: conexão → upload → primeiro cabeçalho → primeiro token / saída contínua.",
+            "section_connect": "① Conexão ao endpoint (failover automático)",
+            "connect_label": "Tempo de conexão (segundos)",
+            "connect_desc": "Tempo de estabelecimento TCP com o endpoint; normalmente muito rápido.",
+            "connect_restart": "Requer reiniciar o serviço de proxy.",
+            "section_upload": "② Upload (enviar o corpo)",
+            "section_large_body": "Repetição de arquivos grandes",
+            "section_header": "③ Primeiro cabeçalho (failover automático)",
+            "header_primary_title": "Endpoint principal:",
+            "header_primary_items": "Chat de texto/código: 30　Imagem: 45　Vídeo: 60　Outros: 15 (ex.: geração de títulos)",
+            "header_fallback_title": "Endpoint alternativo:",
+            "header_fallback_items": "Chat de texto/código: 25　Imagem: 25　Vídeo: 30　Outros: 15 (ex.: geração de títulos)",
+            "section_stream": "④ Primeiro token e saída contínua",
+            "stream_desc": "Não troca de endpoint; o stream finaliza com segurança ou o cliente tenta novamente.",
+            "auto_summary": "Ex.: espera máxima = 47MB ÷ 2Mbps × 1.4 ≈ {{big}} s;"
         },
         "cloudflared": {
             "title": "Túnel Cloudflare (Cloudflared)",
@@ -1680,7 +1716,7 @@
             "out_tokens_title": "Tokens de saída",
             "ttft_prefix": "TTFT:",
             "total_duration_title": "Latência total",
-            "ttft_title": "Latência do primeiro token (TTFT)"
+            "ttft_title": "Latência do primeiro token"
         },
         "details": {
             "title": "Detalhes da Solicitação",
@@ -1763,7 +1799,7 @@
             "norm_desc": "Model routing / account scheduling / Gemini format conversion",
             "thinking": "Thinking & Signature Fill",
             "thinking_desc": "ThinkingStore hydration / sentinel signature injection",
-            "ttft": "Time To First Token (TTFT)",
+            "ttft": "Time To First Token",
             "ttft_desc": "Gateway dispatch to first thinking/tool/content SSE chunk",
             "stream": "Stream Transfer Duration",
             "stream_desc": "First chunk arrival to stream completion",

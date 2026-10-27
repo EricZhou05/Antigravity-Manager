@@ -2626,6 +2626,13 @@ pub async fn handle_chat_completions(
                     max_attempts,
                     e
                 );
+                // [Fixes #3763] 大体积上传阶段终止：不再跨账号重发同一大 body
+                if crate::proxy::upstream::client::is_upload_stage_failure(&e) {
+                    tracing::warn!(
+                        "Large-body upload aborted before completion; stopping account rotation to avoid re-upload amplification"
+                    );
+                    break;
+                }
                 continue;
             }
         };
@@ -4607,6 +4614,13 @@ pub async fn handle_completions(
                     max_attempts,
                     e
                 );
+                // [Fixes #3763] 大体积上传阶段终止：不再跨账号重发同一大 body
+                if crate::proxy::upstream::client::is_upload_stage_failure(&e) {
+                    tracing::warn!(
+                        "Large-body upload aborted before completion; stopping account rotation to avoid re-upload amplification"
+                    );
+                    break;
+                }
                 continue;
             }
         };

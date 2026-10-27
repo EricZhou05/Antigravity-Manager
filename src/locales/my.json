@@ -1109,11 +1109,11 @@
                 "clear_error": "Gagal memadam blok pemikiran: {{error}}",
                 "gemini_soft_budget_note": "⚠️ စဉ်းစားတွေးခေါ်မှု ဘတ်ဂျက် သဘောသဘာဝ- Google Gemini သည် thinkingBudget ကို အကြံပြုချက် (Soft Target) အဖြစ်သာ မှတ်ယူသည်။ ရှည်လျားသော Prompt သို့မဟုတ် ရှုပ်ထွေးသော ကုဒ်သုံးသပ်မှုများတွင် စဉ်းစားမှု သတ်မှတ်ချက်ကို ကျော်လွန်နိုင်ပါသည်။ စဉ်းစားမှုကို အပြီးပိတ်ရန် 0 သတ်မှတ်ပါ။"
             },
-            "stream_timeout_settings": {
-                "title": "Stream အချိန်ကုန်ဆုံးမှု ဆက်တင်များ (Stream Timeout Settings)"
+            "timeout_settings": {
+                "title": "အချိန်ကန့်သတ် ဆက်တင်များ"
             },
             "thinking_settings": {
-                "title": "စဉ်းစားတွေးခေါ်မှု ဆက်တင်များ (Thinking Settings)"
+                "title": "စဉ်းစားတွေးခေါ်မှု ဆက်တင်များ"
             },
             "prompt_multimodal": {
                 "title": "အလုံးစုံ Prompt နှင့် ဘက်စုံသုံး ဆက်တင်များ"
@@ -1183,7 +1183,7 @@
                 }
             },
             "agent_settings": {
-                "title": "Konfigurasi Agent Khusus (Specific Agent Settings)"
+                "title": "Konfigurasi Agent Khusus"
             },
             "hub": {
                 "title": "တရားဝင် Hub Client Fingerprint",
@@ -1202,17 +1202,53 @@
         "stream_timeouts": {
             "banner_title": "အဆင့် ၃ ဆင့်ပါ စမ်းချောင်းပုံစံ အချိန်ကုန်ဆုံးမှုနှင့် အဆက်အသွယ် ထိန်းသိမ်းခြင်း စနစ်",
             "banner_desc": "နက်နဲစွာ စဉ်းစားတွေးခေါ်သော မော်ဒယ်များ၊ ကြီးမားသော စကားစပ် Prefill များနှင့် ဖိုင်ကြီးများ ရေးသားခြင်းအတွက် သီးသန့် ပြုလုပ်ထားသည်။ တသမတ်တည်း နောက်ခံ ping (: ping) ဖြင့် ချိတ်ဆက်မှု ပြတ်တောက်ခြင်းနှင့် ထပ်တလဲလဲ ကြိုးစားမှု ပြဿနာများကို ဖြေရှင်းပေးသည်။",
-            "ttft_title": "ပထမဆုံး စာလုံး တုံ့ပြန်မှု စောင့်ဆိုင်းချိန် (TTFT)",
+            "ttft_title": "ပထမဆုံး စာလုံး တုံ့ပြန်မှု စောင့်ဆိုင်းချိန်",
             "default_badge": "မူလ: 180s",
             "ttft_desc": "စတင်ချိန် တန်းစီစောင့်ဆိုင်းခြင်း၊ တိုကင် ၁၀၀k ကျော် Prefill ပြုလုပ်ခြင်းနှင့် အကျဉ်းချုပ် လုပ်ငန်းစဉ်များအတွက် အမြင့်ဆုံး ခွင့်ပြုချိန်။ ၃ စက္ကန့်လျှင် တစ်ကြိမ် ping ပေးပို့သည်။",
             "transition_title": "အသွင်ကူးပြောင်းမှု ခွင့်ပြုချိန် (ပြန်လည်စတင်ခြင်း)",
             "transition_desc": "စဉ်းစားတွေးခေါ်မှု ပြီးဆုံးချိန်မှ ပထမဆုံး စာသား သို့မဟုတ် tool ခေါ်ယူမှု မထွက်မချင်း ကြားကာလ။ စဉ်းစားမှု ပြီးဆုံးပါက အချိန်တိုင်းကိရိယာကို အလိုအလျောက် ပြန်စတင်သည်။",
-            "sliding_title": "ဆက်တိုက် ထုတ်လွှင့်မှု အချိန်ကုန်ဆုံးချိန် (Streaming)",
+            "sliding_title": "ဆက်တိုက် ထုတ်လွှင့်မှု အချိန်ကုန်ဆုံးချိန်",
             "default_badge_sliding": "မူလ: 120s",
             "sliding_desc": "ဆက်တိုက် ထုတ်လွှင့်နေစဉ် တိုကင်များကြား အမြင့်ဆုံး ခွင့်ပြုသော တိတ်ဆိတ်မှု ကြာချိန်။ ရုတ်တရက် ပြတ်တောက်ပါက ထွက်ရှိပြီးသား အချက်အလက်များကို ထိန်းသိမ်းရန် လုံခြုံစွာ ပိတ်သိမ်းသည်။",
             "toast_reset": "အချိန်ကုန်ဆုံးမှု ဆက်တင်များကို မူလအတိုင်း ပြန်လည်သတ်မှတ်ပြီးပါပြီ",
             "btn_reset": "မူလအတိုင်း ပြန်သတ်မှတ်ရန်",
             "btn_save": "အချိန်ကုန်ဆုံးမှု ဆက်တင်များ သိမ်းဆည်းရန်"
+        },
+        "upload_timeouts": {
+            "adaptive_title": "တင်ပို့ချိန်- bandwidth အလိုက် အလိုအလျောက် သတ်မှတ်",
+            "min_speed_title": "အပ်လုဒ် bandwidth (Mbps)",
+            "min_speed_desc": "VPN အသုံးပြုသူများသည် ဒေါင်းလုဒ်မြင့်ပြီး အပ်လုဒ်နိမ့်တတ်သည်။ 1–5 Mbps အကြံပြုသည်။",
+            "extra_wait_title": "ထပ်ဆောင်း စောင့်ဆိုင်းမှု အချိုး",
+            "extra_wait_desc": "ဤတန်ဖိုးသည် အများဆုံး တင်ပို့စောင့်ချိန်ကို သက်ရောက်သည်။",
+            "formula_title": "အများဆုံး စောင့်ချိန် = ကိုယ်ထည်အရွယ်အစား ÷ အပ်လုဒ် bandwidth × (1 + ထပ်ဆောင်းအချိုး)",
+            "stall_title": "ရပ်တန့်ချိန် ကန့်သတ် (စက္ကန့်)",
+            "stall_desc": "တင်ပို့နေစဉ် ကွန်ရက် လုံးဝရပ်တန့်ပါက စောင့်ဆိုင်းချိန်။ အများဆုံးစောင့်ချိန် ပိုတိုပါက ထိုတန်ဖိုးကို သုံးသည်။",
+            "header_wait_title": "ပထမ ခေါင်းစီး စောင့်ချိန် (စက္ကန့်)",
+            "header_wait_desc": "0 = ပါဝင်တန်ဖိုးများ သုံးသည်- အဓိက endpoint 30 စက္ကန့် / အရန် 25 စက္ကန့်။ 0 မဟုတ်ပါက အနိမ့်ဆုံးကိုသာ မြှင့်သည်။",
+            "large_body_desc": "သတ်မှတ်ပမာဏထက် ကျော်သောဖိုင်များကို မူလအားဖြင့် တစ်ကြိမ်သာ ပို့ပြီး ထပ်ခါတလဲလဲ ပို့ခြင်းကို ရှောင်သည်။",
+            "large_body_threshold_title": "ဖိုင်ကြီး သတ်မှတ်ချက် (MB)",
+            "endpoint_attempts_title": "အများဆုံး ကြိုးစားမှု",
+            "toast_reset": "အချိန်ကန့်သတ် မူလတန်ဖိုးများ ပြန်ဖြစ်ပါပြီ",
+            "btn_reset": "မူလအတိုင်း ပြန်သတ်မှတ်",
+            "btn_save": "အချိန်ကန့်သတ် သိမ်းဆည်း"
+        },
+        "timeouts": {
+            "banner_title": "အချိန်ကန့်သတ် ဆက်တင်များ",
+            "banner_desc": "တောင်းဆိုမှုတစ်ခု၏ အချိန်ကန့်သတ် ကွင်းဆက်အပြည့်အစုံ- ချိတ်ဆက်မှု → တင်ပို့မှု → ပထမခေါင်းစီး → ပထမ token / ဆက်တိုက်ထုတ်လွှတ်မှု။",
+            "section_connect": "① endpoint ချိတ်ဆက်မှု (အလိုအလျောက် ပြောင်းလဲ)",
+            "connect_label": "ချိတ်ဆက်မှု အချိန်ကန့်သတ် (စက္ကန့်)",
+            "connect_desc": "endpoint သို့ TCP ချိတ်ဆက်မှု တည်ဆောက်ချိန်။ များသောအားဖြင့် အလွန်မြန်သည်။",
+            "connect_restart": "proxy ဝန်ဆောင်မှု ပြန်စရန် လိုအပ်သည်။",
+            "section_upload": "② တင်ပို့မှု (ကိုယ်ထည် ပို့ခြင်း)",
+            "section_large_body": "ဖိုင်ကြီး ပြန်ကြိုးစားမှု",
+            "section_header": "③ ပထမ တုံ့ပြန်မှု ခေါင်းစီး (အလိုအလျောက် ပြောင်းလဲ)",
+            "header_primary_title": "အဓိက endpoint:",
+            "header_primary_items": "စာသား/ကုဒ် ချတ်- 30　ပုံ- 45　ဗီဒီယို- 60　အခြား- 15 (ခေါင်းစဉ်ဖန်တီးခြင်း စသည်)",
+            "header_fallback_title": "အရန် endpoint:",
+            "header_fallback_items": "စာသား/ကုဒ် ချတ်- 25　ပုံ- 25　ဗီဒီယို- 30　အခြား- 15 (ခေါင်းစဉ်ဖန်တီးခြင်း စသည်)",
+            "section_stream": "④ ပထမ token နှင့် ဆက်တိုက် ထုတ်လွှတ်မှု",
+            "stream_desc": "endpoint မပြောင်းပါ။ ဘေးကင်းစွာ ပိတ်သည် သို့မဟုတ် client ပြန်ကြိုးစားသည်။",
+            "auto_summary": "ဥပမာ- အများဆုံး စောင့်ချိန် = 47MB ÷ 2Mbps × 1.4 ≈ {{big}} စက္ကန့်;"
         },
         "cloudflared": {
             "title": "Akses Awam (Cloudflared)",
@@ -1638,7 +1674,7 @@
             "out_tokens_title": "အထွက် တိုကင်များ",
             "ttft_prefix": "ပထမစာလုံး:",
             "total_duration_title": "စုစုပေါင်း ကြာချိန်",
-            "ttft_title": "ပထမဆုံး တိုကင် ကြာချိန် (TTFT)"
+            "ttft_title": "ပထမဆုံး တိုကင် ကြာချိန်"
         },
         "details": {
             "title": "Butiran Permintaan",
@@ -1693,7 +1729,7 @@
             "norm_desc": "Model routing / account scheduling / Gemini format conversion",
             "thinking": "Thinking & Signature Fill",
             "thinking_desc": "ThinkingStore hydration / sentinel signature injection",
-            "ttft": "Time To First Token (TTFT)",
+            "ttft": "Time To First Token",
             "ttft_desc": "Gateway dispatch to first thinking/tool/content SSE chunk",
             "stream": "Stream Transfer Duration",
             "stream_desc": "First chunk arrival to stream completion",

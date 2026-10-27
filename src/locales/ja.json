@@ -1176,11 +1176,11 @@
                 "clear_error": "思考ブロックのクリアに失敗しました: {{error}}",
                 "gemini_soft_budget_note": "⚠️ 思考予算の仕様について：Google Gemini 上流では thinkingBudget をヒューリスティックなソフトターゲットとして扱います。長いプロンプトや複雑なコード推論、エージェントタスクではモデルが自律的に思考チェーンを拡張し設定値を超える場合があります。0 に設定すると思考を完全に無効化します。"
             },
-            "stream_timeout_settings": {
-                "title": "ストリーミングタイムアウト設定 (Stream Timeout Settings)"
+            "timeout_settings": {
+                "title": "タイムアウト設定"
             },
             "thinking_settings": {
-                "title": "思考設定 (Thinking Settings)"
+                "title": "思考設定"
             },
             "prompt_multimodal": {
                 "title": "グローバルプロンプト＆マルチモーダル設定"
@@ -1192,7 +1192,7 @@
             "log_retention_current_usage": "現在のDB使用量",
             "log_retention_rows": "最大ログ行数",
             "agent_settings": {
-                "title": "特定 Agent 設定 (Specific Agent Settings)"
+                "title": "特定 Agent 設定"
             },
             "hub": {
                 "title": "公式 Hub クライアントフィンガープリント",
@@ -1211,17 +1211,53 @@
         "stream_timeouts": {
             "banner_title": "3段階ストリーミング勾配タイムアウト＆キープアライブ機構",
             "banner_desc": "ディープシンキングモデル、超大規模コンテキストのPrefill、長履歴圧縮要約、大容量コード書き込み向けに設計。3段階の独立計測と常時バックグラウンドキープアライブ（: ping）により、ゲートウェイ切断、状態遷移の誤終了、クライアント再試行ループを徹底防止します。",
-            "ttft_title": "初文字応答猶予 (TTFT)",
+            "ttft_title": "初文字応答猶予",
             "default_badge": "デフォルト: 180s",
             "ttft_desc": "上流のコールドスタート待機、100k+ トークンのPrefill、圧縮要約タスクの最大許容時間。3秒ごとにキープアライブを送信します。",
             "transition_title": "状態遷移猶予 (エポックリセット)",
             "transition_desc": "思考完了から最初の本文またはツール呼び出し文字が出力されるまでの猶予期間。思考終了時に自動でタイマーをリセットします。",
-            "sliding_title": "推流スライディングタイムアウト (Streaming)",
+            "sliding_title": "推流スライディングタイムアウト",
             "default_badge_sliding": "デフォルト: 120s",
             "sliding_desc": "連続出力中の隣接トークン間の最大許容無応答時間。途中で通信が途絶えた場合、出力を保護して正常にクローズします。",
             "toast_reset": "タイムアウト設定をデフォルト値に戻しました",
             "btn_reset": "デフォルトに戻す",
             "btn_save": "タイムアウト設定を保存"
+        },
+        "upload_timeouts": {
+            "adaptive_title": "アップロード時間：帯域から自動判定",
+            "min_speed_title": "アップロード帯域 (Mbps)",
+            "min_speed_desc": "VPN は下りが速く上りが遅いことが多いため、1〜5 Mbps を推奨します。",
+            "extra_wait_title": "追加待機係数",
+            "extra_wait_desc": "このパラメータはアップロードの最大待機時間に影響します。",
+            "formula_title": "最大待機時間 = リクエスト本文サイズ ÷ アップロード帯域 × (1 + 追加待機係数)",
+            "stall_title": "停滞タイムアウト (秒)",
+            "stall_desc": "アップロード中にネットワーク障害で完全に停止した場合のタイムアウト。最大待機時間が短い場合はそちらを使用します。",
+            "header_wait_title": "初回ヘッダー待ちタイムアウト (秒)",
+            "header_wait_desc": "0 = 組み込み値を使用：優先エンドポイント 30 秒／代替エンドポイント 25 秒。0 以外は下限を引き上げるだけです。",
+            "large_body_desc": "しきい値を超えるファイルは既定で 1 回のみ送信し、上り帯域を圧迫する再送を防ぎます。",
+            "large_body_threshold_title": "大容量ファイルしきい値 (MB)",
+            "endpoint_attempts_title": "最大試行回数",
+            "toast_reset": "タイムアウト設定を既定に戻しました",
+            "btn_reset": "既定に戻す",
+            "btn_save": "タイムアウト設定を保存"
+        },
+        "timeouts": {
+            "banner_title": "タイムアウト設定",
+            "banner_desc": "1 リクエストの完全なタイムアウト経路：接続 → アップロード → 初回ヘッダー → 初文字／連続出力。",
+            "section_connect": "① エンドポイント接続（自動フェイルオーバー）",
+            "connect_label": "接続タイムアウト (秒)",
+            "connect_desc": "エンドポイントへの TCP 接続確立タイムアウト。通常は非常に高速です。",
+            "connect_restart": "変更後はプロキシサービスの再起動が必要です。",
+            "section_upload": "② アップロード（本文を送信）",
+            "section_large_body": "大容量ファイルの再試行",
+            "section_header": "③ 初回レスポンスヘッダー（自動フェイルオーバー）",
+            "header_primary_title": "優先エンドポイント：",
+            "header_primary_items": "テキスト／コードチャット：30　画像：45　動画：60　その他：15（タイトル生成など）",
+            "header_fallback_title": "代替エンドポイント：",
+            "header_fallback_items": "テキスト／コードチャット：25　画像：25　動画：30　その他：15（タイトル生成など）",
+            "section_stream": "④ 初文字と連続出力",
+            "stream_desc": "エンドポイントは切り替えません。安全に収尾するかクライアントの再試行に委ねます。",
+            "auto_summary": "例：最大待機 = 47MB ÷ 2Mbps × 1.4 ≈ {{big}} 秒;"
         },
         "cloudflared": {
             "title": "外部公開 (Cloudflared)",
@@ -1644,7 +1680,7 @@
             "out_tokens_title": "出力トークン",
             "ttft_prefix": "初字:",
             "total_duration_title": "総所要時間",
-            "ttft_title": "最初のトークン遅延 (TTFT)"
+            "ttft_title": "最初のトークン遅延"
         },
         "details": {
             "title": "リクエスト詳細",
@@ -1727,7 +1763,7 @@
             "norm_desc": "モデルルーティング / アカウントスケジューリング / Gemini形式変換",
             "thinking": "思考ブロック・署名補完",
             "thinking_desc": "ThinkingStore復元 / 思考チェーン補完とセンチネル署名注入",
-            "ttft": "最初のトークン待機時間 (TTFT)",
+            "ttft": "最初のトークン待機時間",
             "ttft_desc": "ゲートウェイ送信から最初のエクスポートデータブロック受信まで",
             "stream": "ストリーム転送時間",
             "stream_desc": "最初のチャンク到着からストリーム完了まで",

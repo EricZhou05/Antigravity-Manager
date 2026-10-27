@@ -43,8 +43,7 @@ import GlobalSystemPrompt from '../components/settings/GlobalSystemPrompt';
 import ImageThinkingMode from '../components/settings/ImageThinkingMode';
 import ThinkingBudget from '../components/settings/ThinkingBudget';
 import MultimodalSettings from '../components/settings/MultimodalSettings';
-import StreamTimeoutSettings from '../components/settings/StreamTimeoutSettings';
-import AgentSettings from '../components/settings/AgentSettings';
+import TimeoutSettings from '../components/settings/TimeoutSettings';import AgentSettings from '../components/settings/AgentSettings';
 import { CircuitBreakerConfig } from '../types/config';
 import { RequestDetailModal, ProxyRequestLog } from '../components/proxy/RequestDetailModal';
 
@@ -2310,15 +2309,17 @@ print(response.choices[0].message.content)`;
                         {/* TAB: 模型配置 (models) */}
                         {activeMenuTab === 'models' && (
                             <div className="p-4 space-y-4">
-                                {/* 流式超时设置 (Stream Timeout Settings) - 默认收起 */}
+                                {/* 超时设置 (全链路分阶段) - 默认收起 */}
                                 <CollapsibleCard
-                                    title={t('proxy.config.stream_timeout_settings.title', { defaultValue: '流式超时设置 (Stream Timeout Settings)' })}
+                                    title={t('proxy.config.timeout_settings.title', { defaultValue: '超时设置' })}
                                     icon={<Timer size={18} className="text-blue-500" />}
                                     defaultExpanded={false}
                                 >
-                                    <StreamTimeoutSettings
-                                        config={appConfig.proxy.stream_timeouts}
-                                        onChange={(timeoutConfig) => updateProxyConfig({ stream_timeouts: timeoutConfig })}
+                                    <TimeoutSettings
+                                        streamConfig={appConfig.proxy.stream_timeouts}
+                                        uploadConfig={appConfig.proxy.upload_timeouts}
+                                        onStreamChange={(timeoutConfig) => updateProxyConfig({ stream_timeouts: timeoutConfig })}
+                                        onUploadChange={(timeoutConfig) => updateProxyConfig({ upload_timeouts: timeoutConfig })}
                                         onSave={handleSaveProxySettings}
                                     />
                                 </CollapsibleCard>

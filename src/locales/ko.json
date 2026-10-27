@@ -1176,11 +1176,11 @@
                 "clear_error": "생각 블록 비우기 실패: {{error}}",
                 "gemini_soft_budget_note": "⚠️ 사고 예산 동작 안내: Google Gemini 업스트림은 thinkingBudget을 소프트 타깃(권장치)으로 처리합니다. 긴 프롬프트나 복잡한 코드 추론, 에이전트 작업에서는 모델이 추론을 자율적으로 확장하여 설정값을 초과할 수 있습니다. 0으로 설정하면 사고를 완전히 비활성화합니다."
             },
-            "stream_timeout_settings": {
-                "title": "스트리밍 타임아웃 설정 (Stream Timeout Settings)"
+            "timeout_settings": {
+                "title": "타임아웃 설정"
             },
             "thinking_settings": {
-                "title": "추론 설정 (Thinking Settings)"
+                "title": "추론 설정"
             },
             "prompt_multimodal": {
                 "title": "글로벌 프롬프트 및 멀티모달 설정"
@@ -1192,7 +1192,7 @@
             "log_retention_current_usage": "현재 DB 용량",
             "log_retention_rows": "최대 로그 행 수",
             "agent_settings": {
-                "title": "특정 Agent 설정 (Specific Agent Settings)"
+                "title": "특정 Agent 설정"
             },
             "hub": {
                 "title": "공식 Hub 클라이언트 지문",
@@ -1211,17 +1211,53 @@
         "stream_timeouts": {
             "banner_title": "3단계 스트리밍 그라디언트 타임아웃 및 연결 유지 메커니즘",
             "banner_desc": "딥 씽킹 모델, 대규모 컨텍스트 Prefill, 긴 대화 압축 요약 및 대용량 파일 생성에 최적화되었습니다. 3단계 독립 타이머와 상시 핑(: ping)을 통해 게이트웨이 끊김, 전환 절벽 오작동, 클라이언트 재시도 루프를 방지합니다.",
-            "ttft_title": "첫 글자 응답 유예 (TTFT)",
+            "ttft_title": "첫 글자 응답 유예",
             "default_badge": "기본값: 180s",
             "ttft_desc": "업스트림 콜드 스타트 대기, 100k+ 토큰 Prefill 및 요약 작업의 최대 허용 시간입니다. 3초마다 연결 유지 핑을 전송합니다.",
             "transition_title": "상태 전환 유예 (타이머 리셋)",
             "transition_desc": "추론 완료 후 첫 본문 또는 도구 호출 토큰이 생성되기까지의 유예 시간입니다. 추론 종료 시 자동으로 타이머를 리셋합니다.",
-            "sliding_title": "스트리밍 슬라이딩 타임아웃 (Streaming)",
+            "sliding_title": "스트리밍 슬라이딩 타임아웃",
             "default_badge_sliding": "기본값: 120s",
             "sliding_desc": "연속 출력 중 인접 토큰 간 최대 허용 침묵 간격입니다. 비정상 단절 시 안전하게 세션을 마감하여 생성된 출력을 보존합니다.",
             "toast_reset": "타임아웃 설정을 기본값으로 복원했습니다",
             "btn_reset": "기본값 복원",
             "btn_save": "타임아웃 설정 저장"
+        },
+        "upload_timeouts": {
+            "adaptive_title": "업로드 시간: 대역폭으로 자동 판정",
+            "min_speed_title": "업로드 대역폭(Mbps)",
+            "min_speed_desc": "VPN은 보통 다운로드가 빠르고 업로드가 느리므로 1~5Mbps를 권장합니다.",
+            "extra_wait_title": "추가 대기 계수",
+            "extra_wait_desc": "이 값은 업로드 최대 대기 시간에 영향을 줍니다.",
+            "formula_title": "최대 대기 시간 = 요청 본문 크기 ÷ 업로드 대역폭 × (1 + 추가 대기 계수)",
+            "stall_title": "정체 타임아웃(초)",
+            "stall_desc": "업로드 중 네트워크 오류로 완전히 멈춘 경우의 타임아웃입니다. 최대 대기 시간이 더 짧으면 그 값을 사용합니다.",
+            "header_wait_title": "첫 헤더 대기 타임아웃(초)",
+            "header_wait_desc": "0 = 내장 값 사용: 기본 엔드포인트 30초 / 대체 엔드포인트 25초. 0이 아니면 하한만 올립니다.",
+            "large_body_desc": "임계값을 넘는 파일은 기본적으로 한 번만 전송하여 반복 재전송으로 업로드 대역폭이 포화되는 것을 막습니다.",
+            "large_body_threshold_title": "대용량 파일 임계값(MB)",
+            "endpoint_attempts_title": "최대 시도 횟수",
+            "toast_reset": "타임아웃 설정을 기본값으로 복원했습니다",
+            "btn_reset": "기본값 복원",
+            "btn_save": "타임아웃 설정 저장"
+        },
+        "timeouts": {
+            "banner_title": "타임아웃 설정",
+            "banner_desc": "요청 한 건의 전체 타임아웃 경로: 연결 → 업로드 → 첫 응답 헤더 → 첫 글자/연속 출력.",
+            "section_connect": "① 엔드포인트 연결(자동 장애 조치)",
+            "connect_label": "연결 타임아웃(초)",
+            "connect_desc": "엔드포인트와의 TCP 연결 수립 타임아웃입니다. 보통 매우 빠릅니다.",
+            "connect_restart": "변경 후 프록시 서비스를 재시작해야 합니다.",
+            "section_upload": "② 업로드(요청 본문 전송)",
+            "section_large_body": "대용량 파일 재시도",
+            "section_header": "③ 첫 응답 헤더(자동 장애 조치)",
+            "header_primary_title": "기본 엔드포인트:",
+            "header_primary_items": "텍스트/코드 채팅: 30　이미지: 45　동영상: 60　기타: 15(제목 생성 등)",
+            "header_fallback_title": "대체 엔드포인트:",
+            "header_fallback_items": "텍스트/코드 채팅: 25　이미지: 25　동영상: 30　기타: 15(제목 생성 등)",
+            "section_stream": "④ 첫 글자와 연속 출력",
+            "stream_desc": "엔드포인트를 전환하지 않으며, 안전하게 마무리하거나 클라이언트가 재시도합니다.",
+            "auto_summary": "예: 최대 대기 = 47MB ÷ 2Mbps × 1.4 ≈ {{big}}초;"
         },
         "cloudflared": {
             "title": "공개 액세스 (Cloudflared)",
@@ -1644,7 +1680,7 @@
             "out_tokens_title": "출력 토큰",
             "ttft_prefix": "첫 글자:",
             "total_duration_title": "총 소요 시간",
-            "ttft_title": "첫 글자 지연 시간 (TTFT)"
+            "ttft_title": "첫 글자 지연 시간"
         },
         "details": {
             "title": "요청 상세",
@@ -1727,7 +1763,7 @@
             "norm_desc": "모델 라우팅 / 계정 스케줄링 / Gemini 형식 변환",
             "thinking": "생각 블록 및 서명 보완",
             "thinking_desc": "ThinkingStore 복원 / 생각 체인 및 센티널 서명 주입",
-            "ttft": "첫 토큰 대기 시간 (TTFT)",
+            "ttft": "첫 토큰 대기 시간",
             "ttft_desc": "게이트웨이 요청부터 첫 유효 데이터 수신까지",
             "stream": "스트림 전송 시간",
             "stream_desc": "첫 번째 청크 도착부터 스트림 완료까지",
