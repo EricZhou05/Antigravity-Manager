@@ -1547,8 +1547,11 @@ mod tests {
     #[test]
     fn prompt_log_identity_cleanup_only_changes_system_instructions() {
         // 身份声明归一化由协议无关的流水线节点承担（`PromptSanitizer::sanitize_gemini_payload`），
-        // 适配层只产出原样系统提示词。本用例校验「适配层产出 → 流水线清洗」的真实链路：
-        // 系统提示词块内的身份声明被统一归一化为中性身份，user / tool 文本逐字保留。
+        // 适配层只产出原样系统提示词。当前契约：
+        //   · systemInstruction 与注入区（首个 model 之前、当前轮之前）→ System 轨归一化；
+        //   · 当前轮与 model 之后的轮次（含 tool 回执）→ 逐字保留。
+        use crate::proxy::mappers::prompt_sanitizer::OFFICIAL_ANTIGRAVITY_IDENTITY as OFFICIAL;
+
         for old in [
             "You are Codex, an agent based on GPT-5.",
             "You are Codex, a coding agent based on GPT-5.",
@@ -1566,26 +1569,31 @@ mod tests {
                 ]
             }))
             .unwrap();
+
+            // 适配层收尾已跑过清洗节点；这里再显式跑一次，同时覆盖多次清洗幂等
             let (mut body, _, _, _) =
                 transform_openai_request(&req, "test-project", &req.model, None);
-
-            // 适配层保持纯透传：身份声明在流水线节点介入前原样保留
-            assert!(body["request"]["systemInstruction"]
-                .to_string()
-                .contains(old));
-
             crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::sanitize_gemini_payload(
                 &mut body,
             );
 
             let system = body["request"]["systemInstruction"].to_string();
             assert!(!system.contains(old));
-            assert!(system.contains("Top-level: You are an AI Agent."));
-            assert!(system.contains("System: You are an AI Agent."));
-            assert!(system.contains("<model_switch>You are an AI Agent.</model_switch>"));
-            // 用户提问与工具消息（含管道自身提示词）零改动
+            assert!(system.contains(OFFICIAL));
+            // 身份句之前的正文前缀与 XML 容器保持无损
+            assert!(system.contains("Top-level: "));
+            assert!(system.contains("System: "));
+            assert!(system.contains("<model_switch>"));
+
             let contents = body["request"]["contents"].to_string();
-            assert_eq!(contents.matches(old).count(), 2);
+            // 注入区（首个 model 之前的 user 轮）同样走 System 轨
+            assert!(contents.contains(OFFICIAL), "注入区未被归一化: {contents}");
+            // model 之后的 tool 回执（functionResponse）逐字保留
+            assert_eq!(
+                contents.matches(old).count(),
+                1,
+                "tool 回执必须逐字保留: {contents}"
+            );
         }
     }
     fn tiered_request_body(model: &str, effort: Option<&str>) -> Value {
