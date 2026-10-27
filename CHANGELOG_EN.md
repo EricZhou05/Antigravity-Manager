@@ -3,6 +3,20 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.1-beta.2 (2026-10-27)**:
+        -   **[DeepSeek Harness (DSH) Cross-Environment Sync & Agent Tool Alignment] (PR #3761, Ref #3761, Thanks to @wakeupnotfound, @jeikl)**:
+            -   **Full-Environment Two-Way Sync**: Added `DeepSeekHarness` support covering macOS / Windows / Linux path discovery, automatically configuring Antigravity provider and model routing inside `~/.dsh/profiles/desktop/cordis.patch.yml` (CLI & Desktop) and `profiles/web/cordis.patch.yml` (Web GUI: `dsh web`), alongside injecting API keys into `~/.dsh/.credentials.yaml`. (PR #3761, Thanks to @wakeupnotfound)
+            -   **Safe Chunk State Machine & Panic Elimination**: Thoroughly replaced unsupported regex lookaheads with a high-performance text-chunking state machine for parsing and updating `cordis.patch.yml`, eradicating runtime Regex panics on empty or existing configs; fixed backslash-omission flaws in status-detection regexes; aligned the default model to `gemini-3.8-flash-high` and dynamically reused gateway core models. (Ref #3761, Thanks to @jeikl)
+            -   **Headless Terminal CLI Synchronization**: Integrated `antigravity-tools sync [app] [--model <model>]` in the CLI handler, enabling headless and server environments to synchronize configs to `dsh`, `claude`, `codex`, `opencode`, and more with a single command. (PR #3761, Thanks to @wakeupnotfound)
+            -   **Card Interaction Alignment**: Removed the disabled block on sync buttons when CLI binaries are uninstalled, keeping sync buttons and model selectors permanently accessible for pre-configuration; decoupled sync indicators, view, and restore actions to reflect true file states with 12-language localization. (PR #3761, Ref #3761, Thanks to @wakeupnotfound, @jeikl)
+        -   **[High-Tier Argon Model Capability Harmonization & Ultra 503 Fix] (Fixes #3750, Ref #3745, Thanks to @jeikl)**:
+            -   **Unified Capability Evaluation**: Abstracted `hasAccountArgonCapability` and `checkArgonEligibility` to authoritatively cover Pro (dedicated group), Ultra (shared flagship pool), and Free (strict segregation) tiers. (Fixes #3750, Ref #3745, Thanks to @jeikl)
+            -   **Ultra 503 Elimination & Quota Inheritance**: Refactored quota inheritance inside `quota.rs` and `token_manager.rs`, allowing Ultra accounts to inherit the Gemini general quota pool rather than being discarded due to missing dedicated Argon groups, permanently resolving Ultra scheduling 503 failures. (Fixes #3750, Ref #3745, Thanks to @jeikl)
+            -   **Badges & UI Alignment**: Unified `AccountCard`, `AccountTable`, and full-width weekly quota card rendering so Ultra accounts properly illuminate Argon badges and display accurate limits, backed by `argonCapability.test.ts` automated tests. (Fixes #3750, Thanks to @jeikl)
+        -   **[Token Stats Zero-Usage Bar Elimination & Hit-Rate Floor Guard] (Fixes #3755, PR #3755, Thanks to @EricZhou05)**:
+            -   **Purge Zero-Usage Fake Bars**: Enhanced `TopModelsShareCard` and token telemetry chart rendering to strictly filter out zero-usage model bars. (Fixes #3755, PR #3755, Thanks to @EricZhou05)
+            -   **Strict Hit-Rate Floor Validation**: Enforced strict lower bounds and denominator validation during cache hit-rate computation, preventing abnormal or negative telemetry values. (Fixes #3755, PR #3755, Thanks to @EricZhou05)
+
     *   **v5.0.1-beta.1 (2026-10-26)**:
         -   **[Linux GTK Tray Cross-Thread Safe Dispatch & Global _exit Kill-Switch Elimination] (Fixes #3757, Ref #3752, Thanks to @hazerwin)**:
             -   **GTK Menu Main-Thread Marshalling**: Dispatched all `MenuItem`, `Menu`, and `tray.set_menu` operations inside `update_tray_menus` strictly onto the native OS UI thread via `app.run_on_main_thread`, short-circuiting when display loss is detected. This permanently eradicates Tokio worker cross-thread GTK mutation deadlocks and assertion crash `_exit(1)`. (Fixes #3757, Thanks to @hazerwin)

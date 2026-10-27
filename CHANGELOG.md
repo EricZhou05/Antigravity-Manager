@@ -3,6 +3,20 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.1-beta.2 (2026-10-27)**:
+        -   **[DeepSeek Harness (DSH) 一键全环境适配与 Agent 工具交互规范对齐] (PR #3761, Ref #3761, Thanks to @wakeupnotfound, @jeikl)**:
+            -   **全环境一键双向同步**: 新增 `DeepSeekHarness` 支持，涵盖 macOS / Windows / Linux 路径探测，自动向 `~/.dsh/profiles/desktop/cordis.patch.yml`（CLI & 桌面）与 `profiles/web/cordis.patch.yml`（Web GUI: `dsh web`）注入 Antigravity 提供商与核心模型映射，并在 `~/.dsh/.credentials.yaml` 注入 API 密钥。(PR #3761, Thanks to @wakeupnotfound)
+            -   **纯文本分块重构与运行时 Panic 根除**: 彻底移除 `regex` crate 不支持的 lookahead 断言，改用高性能纯文本分块状态机重构 `cordis.patch.yml` 读写更新逻辑，根治空文件或重复同步引发的 Regex panic；修复状态探测正则反斜杠缺失缺陷；对齐默认模型为全仓库统一的 `gemini-3.8-flash-high` 并复用官方网关核心模型目录。(Ref #3761, Thanks to @jeikl)
+            -   **原生终端 CLI 同步支持**: 在 CLI 处理器中接入 `antigravity-tools sync [app] [--model <model>]` 命令，支持无头服务器环境一键同步 `dsh`、`claude`、`codex`、`opencode` 等全系 Agent 工具配置。(PR #3761, Thanks to @wakeupnotfound)
+            -   **全量卡片交互规范对齐**: 移除未安装 CLI 时的同步按钮禁用拦截，卡片同步按钮与目标模型选择下拉框常驻可用，支持预写入配置；同步状态与查看/还原按钮按实际文件与配置状态精准解耦呈现，标题完整接入 12 国 i18n 翻译。(PR #3761, Ref #3761, Thanks to @wakeupnotfound, @jeikl)
+        -   **[高阶 Argon 模型多套餐权威收敛与 Ultra 调度缺失修复] (Fixes #3750, Ref #3745, Thanks to @jeikl)**:
+            -   **多套餐收敛判据统一**: 抽象统一收敛函数 `hasAccountArgonCapability` 与 `checkArgonEligibility`，权威覆盖 Pro（专属独立分组）、Ultra（顶级共享池与全量授权）与 Free（严格隔离防呆）判据。(Fixes #3750, Ref #3745, Thanks to @jeikl)
+            -   **Ultra 调度 503 根治与配额继承**: 在 `quota.rs` 与 `token_manager.rs` 中重构配额继承逻辑，允许 Ultra 账号合法继承 Gemini 通用配额池，杜绝因缺少专属 Argon 分组被错误丢弃导致调度 503 熔断。(Fixes #3750, Ref #3745, Thanks to @jeikl)
+            -   **徽章与面板展示对齐**: 统一 `AccountCard`、`AccountTable` 与全宽周配额卡片渲染，Ultra 账号正常点亮 Argon 徽章并展示正确额度，新增 `argonCapability.test.ts` 自动化回归单元测试。(Fixes #3750, Thanks to @jeikl)
+        -   **[Token 统计零用量虚假柱状图剔除与命中率保底校验] (Fixes #3755, PR #3755, Thanks to @EricZhou05)**:
+            -   **剔除零用量伪造条形**: 优化 `TopModelsShareCard` 与 Token 统计图表渲染，严格过滤用量为 0 的虚假数据条目。(Fixes #3755, PR #3755, Thanks to @EricZhou05)
+            -   **严格命中率下限保底**: 计算缓存命中率时设定严格下限与分母校验，避免数据异常与负值显示。(Fixes #3755, PR #3755, Thanks to @EricZhou05)
+
     *   **v5.0.1-beta.1 (2026-10-26)**:
         -   **[Linux GTK 托盘跨线程安全调度与 _exit 进程级防误杀终极闭环] (Fixes #3757, Ref #3752, Thanks to @hazerwin)**:
             -   **GTK 菜单主线程调度保障**: 将 `update_tray_menus` 内部的所有 `MenuItem`、`Menu` 构建与 `tray.set_menu` 统一调度到原生 UI 主线程（`app.run_on_main_thread`）执行，并在显示断开时安全短路，彻底消除 Tokio 异步工作线程跨线程操作 GTK 导致并发死锁或底层断言崩溃 `_exit(1)` 的隐患。(Fixes #3757, Thanks to @hazerwin)
