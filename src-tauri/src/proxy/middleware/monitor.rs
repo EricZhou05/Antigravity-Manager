@@ -1274,12 +1274,6 @@ pub async fn monitor_middleware(
                     }
 
                     if let Ok(json) = serde_json::from_str::<Value>(json_str) {
-                        if let Some(mv) = json.get("modelVersion").and_then(|v| v.as_str()) {
-                            if !mv.trim().is_empty() {
-                                log.upstream_model = Some(mv.to_string());
-                            }
-                        }
-
                         // OpenAI format: choices[0].delta.content / reasoning_content / tool_calls
                         if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
                             for choice in choices {
@@ -1689,14 +1683,6 @@ pub async fn monitor_middleware(
                             {
                                 let json_str = line.trim_start_matches("data: ").trim();
                                 if let Ok(json) = serde_json::from_str::<Value>(json_str) {
-                                    if let Some(mv) =
-                                        json.get("modelVersion").and_then(|v| v.as_str())
-                                    {
-                                        if !mv.trim().is_empty() {
-                                            log.upstream_model = Some(mv.to_string());
-                                        }
-                                    }
-
                                     if let Some(usage) = json
                                         .get("usage")
                                         .or(json.get("usageMetadata"))
@@ -1877,16 +1863,6 @@ pub async fn monitor_middleware(
             Ok(bytes) => {
                 if let Ok(s) = std::str::from_utf8(&bytes) {
                     if let Ok(json) = serde_json::from_str::<Value>(&s) {
-                        if let Some(mv) = json
-                            .get("modelVersion")
-                            .or_else(|| json.get("response").and_then(|r| r.get("modelVersion")))
-                            .and_then(|v| v.as_str())
-                        {
-                            if !mv.trim().is_empty() {
-                                log.upstream_model = Some(mv.to_string());
-                            }
-                        }
-
                         // 支持 OpenAI "usage" 或 Gemini "usageMetadata"
                         if let Some(usage) = json
                             .get("usage")
