@@ -216,14 +216,6 @@ export async function request<T>(cmd: string, args?: any): Promise<T> {
 
   let url = mapping.url;
 
-  // DeepSeek Harness Web GUI 模式路由适配
-  if (args?.appType === 'DeepSeekHarness') {
-    if (cmd === 'get_cli_sync_status') url = '/api/proxy/dsh/status';
-    else if (cmd === 'execute_cli_sync') url = '/api/proxy/dsh/sync';
-    else if (cmd === 'execute_cli_restore') url = '/api/proxy/dsh/restore';
-    else if (cmd === 'get_cli_config_content') url = '/api/proxy/dsh/config';
-  }
-
   // [FIX] 创建 args 副本，用于移除已使用的路径参数
   let bodyArgs = args ? { ...args } : undefined;
 

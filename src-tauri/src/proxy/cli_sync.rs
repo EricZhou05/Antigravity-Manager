@@ -354,11 +354,17 @@ impl CliApp {
                 vec![
                     CliConfigFile {
                         name: "profiles/desktop/cordis.patch.yml".to_string(),
-                        path: dsh_dir.join("profiles").join("desktop").join("cordis.patch.yml"),
+                        path: dsh_dir
+                            .join("profiles")
+                            .join("desktop")
+                            .join("cordis.patch.yml"),
                     },
                     CliConfigFile {
                         name: "profiles/web/cordis.patch.yml".to_string(),
-                        path: dsh_dir.join("profiles").join("web").join("cordis.patch.yml"),
+                        path: dsh_dir
+                            .join("profiles")
+                            .join("web")
+                            .join("cordis.patch.yml"),
                     },
                     CliConfigFile {
                         name: ".credentials.yaml".to_string(),
@@ -864,7 +870,7 @@ pub fn get_sync_status(
 
                     let mut matched = false;
                     let re_url =
-                        regex::Regex::new(r#"(?m)^s*baseURL:s*['"]?([^'"s#]+)['"]?"#).ok();
+                        regex::Regex::new(r#"(?m)^\s*baseURL:\s*['"]?([^'"\s#]+)['"]?"#).ok();
                     if let Some(re) = re_url {
                         for cap in re.captures_iter(&content) {
                             if let Some(m) = cap.get(1) {
@@ -886,7 +892,7 @@ pub fn get_sync_status(
 
                     if current_model.is_none() {
                         let re_model = regex::Regex::new(
-                            r#"(?s)id:s*agent-default-model[sS]*?config:[sS]*?model:s*['"]?([a-zA-Z0-9_.-]+)['"]?"#,
+                            r#"(?s)id:\s*agent-default-model[\s\S]*?config:[\s\S]*?model:\s*['"]?([a-zA-Z0-9_.-]+)['"]?"#,
                         )
                         .ok();
                         if let Some(re) = re_model {
@@ -1513,7 +1519,7 @@ pub fn sync_config(
                 if file.name.ends_with("cordis.patch.yml") {
                     let target_model = match model {
                         Some(m) if !m.is_empty() => m,
-                        _ => "gemini-3.8-flash",
+                        _ => "gemini-3.8-flash-high",
                     };
                     let normalized_proxy_url = {
                         let trimmed = proxy_url.trim().trim_end_matches('/');
@@ -1998,7 +2004,7 @@ fn sync_dsh_credentials_content(content: &str, api_key: &str) -> String {
     let re_key = regex::Regex::new(r#"(?m)^(\s*ANTIGRAVITY_API_KEY:\s*).*$"#).unwrap();
     if re_key.is_match(content) {
         return re_key
-            .replace(content, format!("${{1}}{}", api_key))
+            .replace(content, regex::NoExpand(&format!("${{1}}{}", api_key)))
             .to_string();
     }
 
@@ -2007,86 +2013,53 @@ fn sync_dsh_credentials_content(content: &str, api_key: &str) -> String {
         let p1 = caps.get(1).unwrap().as_str().trim_end();
         let needs_comma = !p1.ends_with('{') && !p1.ends_with(',');
         let comma = if needs_comma { "," } else { "" };
-        let replacement = format!("{}{}\n    ANTIGRAVITY_API_KEY: {}\n  }}", p1, comma, api_key);
-        return re_inline_refs.replace(content, replacement.as_str()).to_string();
+        let replacement = format!(
+            "{}{}\n    ANTIGRAVITY_API_KEY: {}\n  }}",
+            p1, comma, api_key
+        );
+        return re_inline_refs
+            .replace(content, regex::NoExpand(&replacement))
+            .to_string();
     }
 
     let re_block_refs = regex::Regex::new(r#"(?m)^(refs:\s*)$"#).unwrap();
     if re_block_refs.is_match(content) {
         return re_block_refs
-            .replace(content, format!("refs:\n  ANTIGRAVITY_API_KEY: {}", api_key))
+            .replace(
+                content,
+                regex::NoExpand(&format!("refs:\n  ANTIGRAVITY_API_KEY: {}", api_key)),
+            )
             .to_string();
     }
 
-    format!("{}\nrefs:\n  ANTIGRAVITY_API_KEY: {}\n", content.trim_end(), api_key)
+    format!(
+        "{}\nrefs:\n  ANTIGRAVITY_API_KEY: {}\n",
+        content.trim_end(),
+        api_key
+    )
 }
 
 fn build_dsh_models_yaml(selected_model: &str) -> String {
-    let mut models = vec![
-        (
-            "gemini-3.8-flash",
-            "Gemini 3.8 Flash",
-            1_048_576,
-            128_000,
-            true,
-        ),
-        (
-            "gemini-3.8-flash-high",
-            "Gemini 3.8 Flash (High)",
-            1_048_576,
-            128_000,
-            true,
-        ),
-        (
-            "gemini-3.1-pro-high",
-            "Gemini 3.1 Pro (High)",
-            1_048_576,
-            128_000,
-            true,
-        ),
-        (
-            "claude-sonnet-4-6",
-            "Claude Sonnet 4.6",
-            256_000,
-            128_000,
-            false,
-        ),
-        (
-            "claude-opus-4-6-thinking",
-            "Claude Opus 4.6 (Thinking)",
-            256_000,
-            128_000,
-            false,
-        ),
-        (
-            "claude-opus-5-5-high",
-            "Claude Opus 5.5 (High)",
-            1_000_000,
-            128_000,
-            false,
-        ),
-        (
-            "gpt-oss-120b-medium",
-            "GPT-OSS 120B (Medium)",
-            131_072,
-            32_000,
-            false,
-        ),
-    ];
-
+    let core_models = get_core_gateway_models();
     let mut out = String::new();
-    if !models.iter().any(|(id, _, _, _, _)| *id == selected_model) {
+
+    if !core_models.iter().any(|m| m.id == selected_model) {
         out.push_str(&format!(
-            "          - id: {}\n            name: {}\n            contextWindow: 1000000\n            input:\n              - text\n              - image\n            maxTokens: 128000\n",
+            "          - id: {}\n            name: {}\n            contextWindow: 1048576\n            input:\n              - text\n              - image\n            maxTokens: 128000\n",
             selected_model, selected_model
         ));
     }
 
-    for (id, name, ctx, max_tok, has_reasoning) in models {
+    for m in core_models {
         out.push_str(&format!(
-            "          - id: {}\n            name: {}\n            contextWindow: {}\n            input:\n              - text\n              - image\n            maxTokens: {}\n",
-            id, name, ctx, max_tok
+            "          - id: {}\n            name: {}\n            contextWindow: {}\n            input:\n              - text\n              - image\n            maxTokens: 128000\n",
+            m.id, m.id, m.context_window
         ));
+        let has_reasoning = m.id.contains("high")
+            || m.id.contains("thinking")
+            || m.id.contains("medium")
+            || m.id.contains("low")
+            || m.id.starts_with("gemini");
         if has_reasoning {
             out.push_str("            reasoningEfforts:\n              off: null\n              low: low\n              medium: medium\n              high: high\n");
         }
@@ -2102,6 +2075,52 @@ fn build_dsh_provider_block(proxy_url: &str, selected_model: &str) -> String {
     )
 }
 
+struct DshPatchEntry {
+    id: String,
+    lines: Vec<String>,
+}
+
+fn parse_dsh_patch_entries(content: &str) -> (Vec<String>, Vec<DshPatchEntry>) {
+    let mut header = Vec::new();
+    let mut entries = Vec::new();
+    let mut current_id: Option<String> = None;
+    let mut current_lines: Vec<String> = Vec::new();
+    let mut in_header = true;
+
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("- id:") {
+            in_header = false;
+            if let Some(id) = current_id.take() {
+                entries.push(DshPatchEntry {
+                    id,
+                    lines: current_lines.clone(),
+                });
+                current_lines.clear();
+            }
+            let id_val = trimmed["- id:".len()..]
+                .trim()
+                .trim_matches(|c| c == '\'' || c == '"');
+            current_id = Some(id_val.to_string());
+        }
+
+        if in_header {
+            header.push(line.to_string());
+        } else {
+            current_lines.push(line.to_string());
+        }
+    }
+
+    if let Some(id) = current_id {
+        entries.push(DshPatchEntry {
+            id,
+            lines: current_lines,
+        });
+    }
+
+    (header, entries)
+}
+
 /// 同步 DeepSeek Harness 的 cordis.patch.yml 配置（同时适用于 Desktop/CLI 与 Web GUI Profile）
 fn sync_dsh_cordis_patch_content(content: &str, proxy_url: &str, selected_model: &str) -> String {
     let default_model_block = format!(
@@ -2112,79 +2131,163 @@ fn sync_dsh_cordis_patch_content(content: &str, proxy_url: &str, selected_model:
 
     let trimmed = content.trim();
     if trimmed.is_empty() || trimmed == "[]" || !trimmed.contains("- id:") {
-        let comment = "# Your patch layer for this dsh profile, applied after every bundle layer:\n                       # a top-level YAML array of loader patch entries (id-targeted config\n                       # overrides, disables, and insert lists; `!!js` expressions allowed).\n";
+        let comment = "# Your patch layer for this dsh profile, applied after every bundle layer:\n# a top-level YAML array of loader patch entries (id-targeted config\n# overrides, disables, and insert lists; `!!js` expressions allowed).\n";
         return format!(
             "{}{}- id: llm-pi-ai\n  name: \"@deepseek-ai/dsh-llm-pi-ai\"\n  config:\n    providers:\n{}\n",
             comment, default_model_block, provider_block
         );
     }
 
-    let mut result = content.to_string();
+    let (header, mut entries) = parse_dsh_patch_entries(content);
 
     // 1. 更新或插入 agent-default-model
-    let re_agent_model = regex::Regex::new(
-        r#"(?s)(- id:\s*agent-default-model[\s\S]*?config:\s*\n)([\s\S]*?)(?=\n- id:|\z)"#,
-    )
-    .unwrap();
-    if let Some(caps) = re_agent_model.captures(&result) {
-        let prefix = caps.get(1).unwrap().as_str();
-        let body = caps.get(2).unwrap().as_str();
+    if let Some(entry) = entries.iter_mut().find(|e| e.id == "agent-default-model") {
+        let mut new_lines = Vec::new();
+        let mut has_config = false;
+        let mut has_provider = false;
+        let mut has_model = false;
 
-        let mut new_body = body.to_string();
-        let re_prov = regex::Regex::new(r#"(?m)^(\s*provider:\s*).*$"#).unwrap();
-        if re_prov.is_match(&new_body) {
-            new_body = re_prov.replace(&new_body, "${1}antigravity").to_string();
-        } else {
-            new_body = format!("    provider: antigravity\n{}", new_body);
+        for line in &entry.lines {
+            let t = line.trim();
+            if t.starts_with("config:") {
+                has_config = true;
+                new_lines.push(line.clone());
+            } else if t.starts_with("provider:") {
+                has_provider = true;
+                let indent = line.len() - line.trim_start().len();
+                new_lines.push(format!(
+                    "{:indent$}provider: antigravity",
+                    "",
+                    indent = indent
+                ));
+            } else if t.starts_with("model:") {
+                has_model = true;
+                let indent = line.len() - line.trim_start().len();
+                new_lines.push(format!(
+                    "{:indent$}model: {}",
+                    "",
+                    selected_model,
+                    indent = indent
+                ));
+            } else {
+                new_lines.push(line.clone());
+            }
         }
 
-        let re_mod = regex::Regex::new(r#"(?m)^(\s*model:\s*).*$"#).unwrap();
-        if re_mod.is_match(&new_body) {
-            new_body = re_mod
-                .replace(&new_body, format!("${{1}}{}", selected_model))
-                .to_string();
-        } else {
-            new_body = format!("{}\n    model: {}", new_body.trim_end(), selected_model);
+        if !has_config {
+            new_lines.push("  config:".to_string());
+        }
+        if !has_provider {
+            new_lines.push("    provider: antigravity".to_string());
+        }
+        if !has_model {
+            new_lines.push(format!("    model: {}", selected_model));
         }
 
-        let replacement = format!("{}{}", prefix, new_body);
-        result = re_agent_model.replace(&result, replacement.as_str()).to_string();
+        entry.lines = new_lines;
     } else {
-        result = format!("{}\n{}", result.trim_end(), default_model_block);
-    }
-
-    // 2. 更新或插入 llm-pi-ai 以及其中的 antigravity provider
-    let re_llm_pi = regex::Regex::new(
-        r#"(?s)(- id:\s*llm-pi-ai[\s\S]*?config:\s*\n\s*providers:\s*\n)([\s\S]*?)(?=\n- id:|\z)"#,
-    )
-    .unwrap();
-    if let Some(caps) = re_llm_pi.captures(&result) {
-        let prefix = caps.get(1).unwrap().as_str();
-        let providers_body = caps.get(2).unwrap().as_str();
-
-        let re_ag = regex::Regex::new(
-            r#"(?s)( {6}antigravity:\s*\n)([\s\S]*?)(?=\n {6}[a-zA-Z0-9_-]+:|\z)"#,
-        )
-        .unwrap();
-        if re_ag.is_match(providers_body) {
-            let new_providers = re_ag
-                .replace(providers_body, format!("{}\n", provider_block))
-                .to_string();
-            let replacement = format!("{}{}", prefix, new_providers);
-            result = re_llm_pi.replace(&result, replacement.as_str()).to_string();
-        } else {
-            let replacement = format!("{}{}\n{}", prefix, provider_block, providers_body);
-            result = re_llm_pi.replace(&result, replacement.as_str()).to_string();
-        }
-    } else {
-        result = format!(
-            "{}\n- id: llm-pi-ai\n  name: \"@deepseek-ai/dsh-llm-pi-ai\"\n  config:\n    providers:\n{}\n",
-            result.trim_end(),
-            provider_block
+        entries.insert(
+            0,
+            DshPatchEntry {
+                id: "agent-default-model".to_string(),
+                lines: default_model_block.lines().map(|s| s.to_string()).collect(),
+            },
         );
     }
 
-    result
+    // 2. 更新或插入 llm-pi-ai
+    if let Some(entry) = entries.iter_mut().find(|e| e.id == "llm-pi-ai") {
+        let mut new_lines = Vec::new();
+        let mut in_providers = false;
+        let mut in_antigravity = false;
+        let mut provider_replaced = false;
+        let mut has_providers_header = false;
+
+        let provider_block_lines: Vec<String> =
+            provider_block.lines().map(|s| s.to_string()).collect();
+
+        for line in &entry.lines {
+            let trimmed = line.trim_start();
+            let indent = line.len() - trimmed.len();
+
+            if trimmed.starts_with("providers:") {
+                in_providers = true;
+                has_providers_header = true;
+                new_lines.push(line.clone());
+                continue;
+            }
+
+            if in_providers {
+                if indent == 6 && trimmed.ends_with(':') {
+                    if trimmed.starts_with("antigravity:") {
+                        in_antigravity = true;
+                        if !provider_replaced {
+                            new_lines.extend(provider_block_lines.clone());
+                            provider_replaced = true;
+                        }
+                        continue;
+                    } else {
+                        in_antigravity = false;
+                    }
+                } else if indent < 6 && !trimmed.is_empty() {
+                    in_providers = false;
+                    in_antigravity = false;
+                }
+
+                if in_antigravity {
+                    continue;
+                }
+            }
+
+            new_lines.push(line.clone());
+        }
+
+        if !has_providers_header {
+            if !new_lines.iter().any(|l| l.trim().starts_with("config:")) {
+                new_lines.push("  config:".to_string());
+            }
+            new_lines.push("    providers:".to_string());
+            new_lines.extend(provider_block_lines);
+        } else if !provider_replaced {
+            let mut final_lines = Vec::new();
+            for l in new_lines {
+                let is_prov = l.trim().starts_with("providers:");
+                final_lines.push(l);
+                if is_prov {
+                    final_lines.extend(provider_block_lines.clone());
+                }
+            }
+            new_lines = final_lines;
+        }
+
+        entry.lines = new_lines;
+    } else {
+        let new_llm_block = format!(
+            "- id: llm-pi-ai\n  name: \"@deepseek-ai/dsh-llm-pi-ai\"\n  config:\n    providers:\n{}\n",
+            provider_block
+        );
+        entries.push(DshPatchEntry {
+            id: "llm-pi-ai".to_string(),
+            lines: new_llm_block.lines().map(|s| s.to_string()).collect(),
+        });
+    }
+
+    // 3. 组装输出
+    let mut out = String::new();
+    if !header.is_empty() {
+        for l in header {
+            out.push_str(&l);
+            out.push('\n');
+        }
+    }
+    for e in entries {
+        for l in e.lines {
+            out.push_str(&l);
+            out.push('\n');
+        }
+    }
+
+    out
 }
 
 #[cfg(test)]
@@ -2338,9 +2441,13 @@ refs:
     #[test]
     fn test_sync_dsh_cordis_patch_content() {
         let empty = "[]";
-        let res1 = sync_dsh_cordis_patch_content(empty, "http://127.0.0.1:8045/v1", "gemini-3.8-flash");
+        let res1 = sync_dsh_cordis_patch_content(
+            empty,
+            "http://127.0.0.1:8045/v1",
+            "gemini-3.8-flash-high",
+        );
         assert!(res1.contains("provider: antigravity"));
-        assert!(res1.contains("model: gemini-3.8-flash"));
+        assert!(res1.contains("model: gemini-3.8-flash-high"));
         assert!(res1.contains("baseURL: http://127.0.0.1:8045/v1"));
         assert!(res1.contains("apiKeyEnv: ANTIGRAVITY_API_KEY"));
 
@@ -2358,12 +2465,23 @@ refs:
         displayName: kimi-k3
         baseURL: https://hubway.cc
 "#;
-        let res2 = sync_dsh_cordis_patch_content(existing, "http://127.0.0.1:8045/v1", "claude-sonnet-4-6");
+        let res2 = sync_dsh_cordis_patch_content(
+            existing,
+            "http://127.0.0.1:8045/v1",
+            "claude-sonnet-4-6",
+        );
         assert!(res2.contains("provider: antigravity"));
         assert!(res2.contains("model: claude-sonnet-4-6"));
         assert!(res2.contains("baseURL: http://127.0.0.1:8045/v1"));
         assert!(res2.contains("kimi-k3:"));
         assert!(res2.contains("ui-settings"));
-    }
 
+        // 二次同步覆盖（更新模型与代理端口）
+        let res3 =
+            sync_dsh_cordis_patch_content(&res2, "http://127.0.0.1:9000/v1", "gpt-oss-120b-medium");
+        assert!(res3.contains("model: gpt-oss-120b-medium"));
+        assert!(res3.contains("baseURL: http://127.0.0.1:9000/v1"));
+        assert!(!res3.contains("baseURL: http://127.0.0.1:8045/v1"));
+        assert!(res3.contains("kimi-k3:"));
+    }
 }

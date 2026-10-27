@@ -100,7 +100,7 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
         Droid: '',
         Hermes: '',
         OpenClaw: '',
-        DeepSeekHarness: 'gemini-3.8-flash'
+        DeepSeekHarness: 'gemini-3.8-flash-high'
     });
     const [viewingConfig, setViewingConfig] = useState<{
         app: CliAppType,
@@ -504,8 +504,8 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                     )}
 
                     <div className="flex items-center gap-2">
-                        {/* 始终展示查看配置与还原操作（对齐 OpenCode 交互，不再因未检测到二进制而隐藏） */}
-                        {(status?.is_synced || status?.has_backup || (status?.files && status.files.length > 0)) && (
+                        {/* 始终展示查看配置与还原操作（对齐 OpenCode 交互，已同步、已安装或存在备份时展示） */}
+                        {(status?.is_synced || status?.has_backup || status?.installed) && (
                             <button
                                 onClick={() => handleViewConfig(app)}
                                 className="p-1 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
@@ -574,7 +574,7 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                     <div className="w-full h-full bg-white flex items-center justify-center text-black shadow-xs">
                         <DeepSeek size={24} className="text-black" />
                     </div>
-                ), 'DeepSeek Harness')}
+                ), t('proxy.cli_sync.apps.deepseek_harness', { defaultValue: 'DeepSeek Harness' }))}
                 {renderCliItem('Codex', (
                     <div className="w-full h-full bg-[#000000] dark:bg-[#121214] flex items-center justify-center text-white">
                         <OpenAI size={22} className="text-white" />

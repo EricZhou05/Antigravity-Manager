@@ -74,7 +74,7 @@ fn print_cli_help() {
           -c, --continue     Automatically resume agy conversation via `agy --continue` after switch\n\n\
         Options for `sync`:\n  \
           [app]              Target Agent tool: 'dsh' / 'deepseek-harness' (default), 'claude', 'codex', 'gemini', 'opencode', 'jeikcode', 'grok', or 'all'\n  \
-          --model <model>    Default model to sync (default: gemini-3.8-flash)\n\n\
+          --model <model>    Default model to sync (default: gemini-3.8-flash-high)\n\n\
         Examples:\n  \
           antigravity-tools switch                     # Auto round-robin to next normal account\n  \
           antigravity-tools switch 1                   # Switch to account #1\n  \
@@ -265,7 +265,7 @@ async fn handle_sync_command(args: &[String]) -> Result<(), String> {
 
     use crate::proxy::cli_sync::{sync_config, CliApp};
 
-    let target_model = model.unwrap_or_else(|| "gemini-3.8-flash".to_string());
+    let target_model = model.unwrap_or_else(|| "gemini-3.8-flash-high".to_string());
 
     match target_app.as_str() {
         "dsh" | "deepseek" | "deepseek-harness" | "deepseek_harness" => {
@@ -286,35 +286,59 @@ async fn handle_sync_command(args: &[String]) -> Result<(), String> {
         }
         "claude" | "claude-code" | "claudecode" => {
             sync_config(&CliApp::Claude, &proxy_url, &api_key, Some(&target_model))?;
-            println!("\x1b[32m✔ 成功同步配置到 Claude Code!\x1b[0m (模型: {})", target_model);
+            println!(
+                "\x1b[32m✔ 成功同步配置到 Claude Code!\x1b[0m (模型: {})",
+                target_model
+            );
         }
         "codex" => {
             let codex_url = format!("{}/v1", proxy_url);
             sync_config(&CliApp::Codex, &codex_url, &api_key, Some(&target_model))?;
-            println!("\x1b[32m✔ 成功同步配置到 Codex AI!\x1b[0m (模型: {})", target_model);
+            println!(
+                "\x1b[32m✔ 成功同步配置到 Codex AI!\x1b[0m (模型: {})",
+                target_model
+            );
         }
         "gemini" | "agy" => {
             sync_config(&CliApp::Gemini, &proxy_url, &api_key, Some(&target_model))?;
-            println!("\x1b[32m✔ 成功同步配置到 Antigravity CLI (agy)!\x1b[0m (模型: {})", target_model);
+            println!(
+                "\x1b[32m✔ 成功同步配置到 Antigravity CLI (agy)!\x1b[0m (模型: {})",
+                target_model
+            );
         }
         "opencode" => {
             let opencode_url = format!("{}/v1", proxy_url);
-            sync_config(&CliApp::OpenCode, &opencode_url, &api_key, Some(&target_model))?;
+            sync_config(
+                &CliApp::OpenCode,
+                &opencode_url,
+                &api_key,
+                Some(&target_model),
+            )?;
             println!("\x1b[32m✔ 成功同步配置到 OpenCode!\x1b[0m");
         }
         "jeikcode" => {
             let jeik_url = format!("{}/v1", proxy_url);
             sync_config(&CliApp::JeikCode, &jeik_url, &api_key, Some(&target_model))?;
-            println!("\x1b[32m✔ 成功同步配置到 JeikCode!\x1b[0m (模型: {})", target_model);
+            println!(
+                "\x1b[32m✔ 成功同步配置到 JeikCode!\x1b[0m (模型: {})",
+                target_model
+            );
         }
         "grok" | "grokbuild" => {
             let grok_url = format!("{}/v1", proxy_url);
             sync_config(&CliApp::GrokBuild, &grok_url, &api_key, Some(&target_model))?;
-            println!("\x1b[32m✔ 成功同步配置到 Grok Build!\x1b[0m (模型: {})", target_model);
+            println!(
+                "\x1b[32m✔ 成功同步配置到 Grok Build!\x1b[0m (模型: {})",
+                target_model
+            );
         }
         "all" => {
             let apps = [
-                (CliApp::DeepSeekHarness, "DeepSeek Harness (Web GUI & CLI)", true),
+                (
+                    CliApp::DeepSeekHarness,
+                    "DeepSeek Harness (Web GUI & CLI)",
+                    true,
+                ),
                 (CliApp::Claude, "Claude Code", false),
                 (CliApp::Codex, "Codex AI", true),
                 (CliApp::Gemini, "Antigravity CLI (agy)", false),
@@ -323,7 +347,11 @@ async fn handle_sync_command(args: &[String]) -> Result<(), String> {
                 (CliApp::GrokBuild, "Grok Build", true),
             ];
             for (app, name, needs_v1) in apps {
-                let url = if needs_v1 { format!("{}/v1", proxy_url) } else { proxy_url.clone() };
+                let url = if needs_v1 {
+                    format!("{}/v1", proxy_url)
+                } else {
+                    proxy_url.clone()
+                };
                 if let Err(e) = sync_config(&app, &url, &api_key, Some(&target_model)) {
                     eprintln!("  \x1b[31m✘\x1b[0m 同步 {} 失败: {}", name, e);
                 } else {
