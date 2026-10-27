@@ -26,7 +26,7 @@ import { HermesSyncModal } from './HermesSyncModal';
 import { OpenClawSyncModal } from './OpenClawSyncModal';
 import { useProxyModels } from '../../hooks/useProxyModels';
 import GroupedSelect from '../common/GroupedSelect';
-import { Claude, OpenAI, Gemini, Grok, OpenCode, Github as LobeGithub, HermesAgent, OpenClaw } from '@lobehub/icons';
+import { Claude, OpenAI, Gemini, Grok, OpenCode, Github as LobeGithub, HermesAgent, OpenClaw, DeepSeek } from '@lobehub/icons';
 import { JeikCodeIcon } from '../common/JeikCodeIcon';
 
 interface CliSyncCardProps {
@@ -35,7 +35,7 @@ interface CliSyncCardProps {
     className?: string;
 }
 
-type CliAppType = 'Claude' | 'Codex' | 'JeikCode' | 'GrokBuild' | 'Hermes' | 'OpenClaw' | 'Gemini' | 'OpenCode' | 'Droid';
+type CliAppType = 'Claude' | 'Codex' | 'JeikCode' | 'GrokBuild' | 'Hermes' | 'OpenClaw' | 'Gemini' | 'OpenCode' | 'Droid' | 'DeepSeekHarness';
 
 interface CliStatus {
     installed: boolean;
@@ -59,7 +59,8 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
         OpenCode: null,
         Droid: null,
         Hermes: null,
-        OpenClaw: null
+        OpenClaw: null,
+        DeepSeekHarness: null
     });
     const [loading, setLoading] = useState<Record<CliAppType, boolean>>({
         Claude: false,
@@ -70,7 +71,8 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
         OpenCode: false,
         Droid: false,
         Hermes: false,
-        OpenClaw: false
+        OpenClaw: false,
+        DeepSeekHarness: false
     });
     const [syncing, setSyncing] = useState<Record<CliAppType, boolean>>({
         Claude: false,
@@ -81,7 +83,8 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
         OpenCode: false,
         Droid: false,
         Hermes: false,
-        OpenClaw: false
+        OpenClaw: false,
+        DeepSeekHarness: false
     });
     const [syncAccounts, setSyncAccounts] = useState(false);
     const [droidSyncModal, setDroidSyncModal] = useState(false);
@@ -96,7 +99,8 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
         OpenCode: '',
         Droid: '',
         Hermes: '',
-        OpenClaw: ''
+        OpenClaw: '',
+        DeepSeekHarness: 'gemini-3.8-flash'
     });
     const [viewingConfig, setViewingConfig] = useState<{
         app: CliAppType,
@@ -122,7 +126,7 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
         if (!proxyUrl) return '';
         const base = proxyUrl.trimEnd().replace(/\/+$/, '');
         // Codex & OpenCode & JeikCode & GrokBuild & Hermes & OpenClaw (Anthropic / OpenAI / Responses 协议) 通常需要带 /v1
-        if (app === 'Codex' || app === 'OpenCode' || app === 'JeikCode' || app === 'GrokBuild' || app === 'Hermes' || app === 'OpenClaw') {
+        if (app === 'Codex' || app === 'OpenCode' || app === 'JeikCode' || app === 'GrokBuild' || app === 'Hermes' || app === 'OpenClaw' || app === 'DeepSeekHarness') {
             return base.endsWith('/v1') ? base : `${base}/v1`;
         }
         // Claude 和 Gemini 的 SDK 通常会自动处理版本路径或不需要 /v1
@@ -206,7 +210,7 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
 
             await invoke(command, params);
             const currentSelectedModel = selectedModels[app];
-            const appDisplayName = app === 'Gemini' ? 'Antigravity CLI (agy)' : app;
+            const appDisplayName = app === 'Gemini' ? 'Antigravity CLI (agy)' : app === 'DeepSeekHarness' ? 'DeepSeek Harness' : app;
             const successMsg = currentSelectedModel
                 ? t('proxy.cli_sync.toast.sync_success_with_model', { name: appDisplayName, model: currentSelectedModel, defaultValue: `${appDisplayName} 已成功同步模型: ${currentSelectedModel}` })
                 : t(app === 'OpenCode' ? 'proxy.opencode_sync.toast.sync_success' : 'proxy.cli_sync.toast.sync_success', { name: appDisplayName, defaultValue: `${appDisplayName} synced successfully` });
@@ -324,6 +328,7 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
         checkStatus('Gemini');
         checkStatus('OpenCode');
         checkStatus('Droid');
+        checkStatus('DeepSeekHarness');
     }, [checkStatus]);
 
     const openExternalUrl = async (url: string) => {
@@ -467,7 +472,7 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                     </div>
 
                     {/* Claude, Codex, Gemini, JeikCode, GrokBuild 的模型选择 */}
-                    {(status?.installed || app === 'OpenCode' || app === 'JeikCode' || app === 'GrokBuild') && (app === 'Claude' || app === 'Codex' || app === 'Gemini' || app === 'JeikCode' || app === 'GrokBuild') && (
+                    {(status?.installed || app === 'OpenCode' || app === 'JeikCode' || app === 'GrokBuild' || app === 'DeepSeekHarness') && (app === 'Claude' || app === 'Codex' || app === 'Gemini' || app === 'JeikCode' || app === 'GrokBuild' || app === 'DeepSeekHarness') && (
                         <div className="space-y-1">
                             <div className="text-[9px] text-gray-400 dark:text-gray-500 uppercase font-bold tracking-wider px-1">
                                 {t('proxy.cli_sync.model_select', { defaultValue: 'Select Model' })}
@@ -499,7 +504,7 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                     )}
 
                     <div className="flex items-center gap-2">
-                        {(status?.installed || app === 'OpenCode' || app === 'JeikCode' || app === 'GrokBuild' || app === 'Hermes' || app === 'OpenClaw') && (
+                        {(status?.installed || app === 'OpenCode' || app === 'JeikCode' || app === 'GrokBuild' || app === 'Hermes' || app === 'OpenClaw' || app === 'DeepSeekHarness') && (
                             <>
                                 {/* 对于 OpenCode、Hermes 与 OpenClaw，如果未同步，则不显示查看按钮（因为文件尚未生成，后端会报错） */}
                                 {((app !== 'OpenCode' && app !== 'Hermes' && app !== 'OpenClaw') || status?.is_synced) && (
@@ -532,7 +537,7 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                         )}
                         <button
                             onClick={() => handleSync(app)}
-                            disabled={(app !== 'OpenCode' && app !== 'JeikCode' && app !== 'GrokBuild' && app !== 'Hermes' && app !== 'OpenClaw' && !status?.installed) || isAppSyncing || isAppLoading}
+                            disabled={(app !== 'OpenCode' && app !== 'JeikCode' && app !== 'GrokBuild' && app !== 'Hermes' && app !== 'OpenClaw' && app !== 'DeepSeekHarness' && !status?.installed) || isAppSyncing || isAppLoading}
                             className={cn(
                                 "btn btn-sm flex-1 gap-2 rounded-xl transition-all font-bold shadow-sm",
                                 status?.is_synced
@@ -574,6 +579,11 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                         <Claude size={22} className="text-white" />
                     </div>
                 ), 'Claude Code')}
+                {renderCliItem('DeepSeekHarness', (
+                    <div className="w-full h-full bg-white flex items-center justify-center text-black shadow-xs">
+                        <DeepSeek size={24} className="text-black" />
+                    </div>
+                ), 'DeepSeek Harness')}
                 {renderCliItem('Codex', (
                     <div className="w-full h-full bg-[#000000] dark:bg-[#121214] flex items-center justify-center text-white">
                         <OpenAI size={22} className="text-white" />

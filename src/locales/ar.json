@@ -1470,7 +1470,8 @@
             "sync_confirm_message": "جاهز لمزامنة تكوين {{name}}. ⚠️ تحذير: سيؤدي هذا إلى الكتابة فوق ملفات التكوين المحلية الحالية (مثل توكنات تسجيل الدخول، مفاتيح API). هل أنت متأكد من رغبتك في الاستمرار؟",
             "model_select": "Select Model",
             "apps": {
-                "gemini": "Antigravity CLI (agy)"
+                "gemini": "Antigravity CLI (agy)",
+                "deepseek_harness": "DeepSeek Harness"
             }
         },
         "models": {

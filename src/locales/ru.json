@@ -1479,7 +1479,8 @@
             "sync_confirm_title": "Подтверждение синхронизации",
             "sync_confirm_message": "Готово к синхронизации конфигурации {{name}}. ⚠️ Внимание: это перезапишет ваши существующие локальные файлы конфигурации (например, токены входа, API ключи). Вы уверены, что хотите продолжить?",
             "apps": {
-                "gemini": "Antigravity CLI (agy)"
+                "gemini": "Antigravity CLI (agy)",
+                "deepseek_harness": "DeepSeek Harness"
             }
         },
         "hermes_sync": {
