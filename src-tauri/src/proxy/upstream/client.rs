@@ -1250,7 +1250,7 @@ impl UpstreamClient {
         let body_bytes = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
         // [Fixes #3763] 分阶段超时计划：上传阶段独立预算（按体积/实测速度自适应），
         // 上传完成后才启用响应头宽限，并默认抑制大体积请求的多端点重传放大。
-        let media_kind = Self::detect_payload_media_kind(&body, method, is_image_gen);
+        let media_kind = detect_payload_media_kind(&body, method, is_image_gen);
         let upload_cfg = crate::proxy::get_upload_timeout_config();
         let timeout_plan = Self::plan_upstream_timeouts(media_kind, body_bytes.len(), &upload_cfg);
         let total_budget_secs = timeout_plan.total_budget_secs;
