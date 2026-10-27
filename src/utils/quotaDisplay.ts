@@ -1,4 +1,4 @@
-import type { ModelQuota, QuotaGroup } from '../types/account';
+import { checkArgonEligibility, type ModelQuota, type QuotaGroup } from '../types/account';
 
 export type DashboardQuotaView = 'weighted' | '5h' | 'weekly';
 
@@ -43,6 +43,14 @@ export function getModelQuotaDisplay(modelId: string, model: ModelQuota | undefi
     }).flatMap(group => group?.buckets || []);
     const hasGroups = (groups || []).length > 0;
     if (isArgon && hasGroups && buckets.length === 0) {
+        if (model && model.percentage > 0) {
+            return {
+                percentage: model.percentage,
+                resetTime: model.reset_time,
+                isWeeklyConstrained: false,
+                weeklyResetTime: undefined,
+            };
+        }
         return {
             percentage: 0,
             resetTime: undefined,
@@ -92,6 +100,20 @@ export function getModelConstrainedQuota(
 
     const hasGroups = (groups || []).length > 0;
     if (isArgon && hasGroups && buckets.length === 0) {
+        if (model && model.percentage > 0) {
+            return {
+                effectivePercentage: model.percentage,
+                raw5h: null,
+                rawWeekly: model.percentage,
+                weighted: model.percentage,
+                resetTime: model.reset_time,
+                isWeeklyConstrained: false,
+                isWeeklyExhausted: false,
+                is5hCooling: false,
+                fiveHourResetTime: undefined,
+                weeklyResetTime: model.reset_time,
+            };
+        }
         return {
             effectivePercentage: 0,
             raw5h: null,
@@ -227,6 +249,12 @@ function summarizeSupportedModels(models: ModelQuota[], key: 'gemini' | 'claude'
         .filter(isSupportedDisplayModel);
 
     if (active.length === 0) {
+        if (key === 'argon') {
+            return {
+                dynamicLabel: 'Gemini 4 Argon',
+                supportedModels: ['gemini-4-argon', 'gemini-4-argon-high', 'gemini-4-argon-medium', 'gemini-4-argon-low'],
+            };
+        }
         return { supportedModels: [] };
     }
 
@@ -294,9 +322,10 @@ export function getGroupQuotaSummaries(
     tier?: 'ultra' | 'pro' | 'free'
 ): GroupQuotaSummary[] {
     const isFreeTier = tier === 'free';
+    const isUltraTier = tier === 'ultra';
 
     const findGroupBuckets = (target: 'gemini' | 'claude' | 'argon') => {
-        return (groups || []).filter(group => {
+        const directBuckets = (groups || []).filter(group => {
             const groupName = (group?.display_name || '').toLowerCase();
             const hasArgonBucket = (group?.buckets || []).some(b => /argon/i.test(`${b?.bucket_id || ''} ${b?.display_name || ''}`));
             const isArgon = /argon/i.test(groupName) || hasArgonBucket;
@@ -307,6 +336,18 @@ export function getGroupQuotaSummaries(
                 || (group?.buckets || []).some(bucket => bucket?.bucket_id?.toLowerCase().includes('3p'));
             return target === 'claude' ? isThirdParty : !isThirdParty;
         }).flatMap(group => group?.buckets || []);
+
+        // Ultra 账号在官方架构下未拆分专属 Argon 分组，其 Argon 额度共享 Gemini 通用配额池
+        if (target === 'argon' && directBuckets.length === 0 && isUltraTier) {
+            return (groups || []).filter(group => {
+                const groupName = (group?.display_name || '').toLowerCase();
+                const isThirdParty = /claude|gpt|3p/.test(groupName)
+                    || (group?.buckets || []).some(bucket => bucket?.bucket_id?.toLowerCase().includes('3p'));
+                return !isThirdParty;
+            }).flatMap(group => group?.buckets || []);
+        }
+
+        return directBuckets;
     };
 
     const buildGroup = (key: 'gemini' | 'claude' | 'argon'): GroupQuotaSummary => {
@@ -438,19 +479,8 @@ export function getGroupQuotaSummaries(
         };
     };
 
-    const hasArgonInGroups = (groups || []).some(group => {
-        const groupName = (group?.display_name || '').toLowerCase();
-        return /argon/i.test(groupName)
-            || (group?.buckets || []).some(b => /argon/i.test(`${b?.bucket_id || ''} ${b?.display_name || ''}`));
-    });
-
-    // 仅在服务端返回的 quota_groups 中包含真实 Argon 分组，或（无 groups 兜底时）包含未禁用的真实 Argon 模型时展示 (Fixes #3745)
-    const hasArgon = (groups && groups.length > 0)
-        ? hasArgonInGroups
-        : (hasArgonInGroups || fallbackModels.some(m => {
-            const n = (m?.name || '').toLowerCase();
-            return /argon/i.test(n) && !n.includes('-disabled') && !n.endsWith('_disabled') && !(m as any)?.disabled;
-        }));
+    // 使用统一收敛判据：综合校验 Ultra 旗舰套餐、Pro 独立分组套餐与 Free 隔离防呆
+    const hasArgon = checkArgonEligibility(groups, fallbackModels, tier);
 
     const summaries: GroupQuotaSummary[] = [
         buildGroup('gemini'),

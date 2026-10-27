@@ -1357,6 +1357,11 @@ impl TokenManager {
                 })
             });
 
+            let is_ultra = subscription_tier
+                .as_deref()
+                .map(|s| s.to_uppercase() == "ULTRA")
+                .unwrap_or(false);
+
             if let Some(bucket) = argon_bucket {
                 let frac = bucket
                     .get("remaining_fraction")
@@ -1378,8 +1383,47 @@ impl TokenManager {
                 model_limits.insert("gemini-4-argon-high".to_string(), 65536);
                 model_limits.insert("gemini-4-argon-medium".to_string(), 65536);
                 model_limits.insert("gemini-4-argon-low".to_string(), 65536);
+            } else if is_ultra {
+                // Ultra 账号在官方架构下未拆分专属 Argon 分组，其 Argon 额度共享 Gemini 通用配额池
+                let gemini_bucket = groups.iter().find_map(|g| {
+                    let name = g
+                        .get("display_name")
+                        .or_else(|| g.get("displayName"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    if !name.contains("claude") && !name.contains("gpt") && !name.contains("3p") {
+                        g.get("buckets")
+                            .and_then(|b| b.as_array())
+                            .and_then(|bs| bs.first())
+                    } else {
+                        None
+                    }
+                });
+                let frac = gemini_bucket
+                    .and_then(|b| {
+                        b.get("remaining_fraction")
+                            .or_else(|| b.get("remainingFraction"))
+                    })
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(1.0);
+                let pct = (frac * 100.0) as i32;
+                model_quotas.insert("gemini-4-argon".to_string(), pct);
+                model_quotas.insert("gemini-4-argon-high".to_string(), pct);
+                model_quotas.insert("gemini-4-argon-medium".to_string(), pct);
+                model_quotas.insert("gemini-4-argon-low".to_string(), pct);
+
+                available_models.insert("gemini-4-argon".to_string());
+                available_models.insert("gemini-4-argon-high".to_string());
+                available_models.insert("gemini-4-argon-medium".to_string());
+                available_models.insert("gemini-4-argon-low".to_string());
+
+                model_limits.insert("gemini-4-argon".to_string(), 65536);
+                model_limits.insert("gemini-4-argon-high".to_string(), 65536);
+                model_limits.insert("gemini-4-argon-medium".to_string(), 65536);
+                model_limits.insert("gemini-4-argon-low".to_string(), 65536);
             } else {
-                // 配额组中明确不存在 Argon 分组，防呆清理（防止历史残存虚假配额注入调度器）
+                // 配额组中明确不存在 Argon 分组且非 Ultra 账号，防呆清理（防止历史残存虚假配额注入调度器）
                 model_quotas.remove("gemini-4-argon");
                 model_quotas.remove("gemini-4-argon-high");
                 model_quotas.remove("gemini-4-argon-medium");
@@ -1750,12 +1794,22 @@ impl TokenManager {
                 }
             }
         }
-        // [NEW] 检查 quota_groups 是否包含 argon 分组
+        // [NEW] 检查 quota_groups 是否包含 argon 分组（Ultra 账号自动授权）
         if let Some(groups) = account
             .get("quota")
             .and_then(|q| q.get("quota_groups").or_else(|| q.get("quotaGroups")))
             .and_then(|g| g.as_array())
         {
+            let is_ultra = account
+                .get("quota")
+                .and_then(|q| {
+                    q.get("subscription_tier")
+                        .or_else(|| q.get("subscriptionTier"))
+                })
+                .and_then(|t| t.as_str())
+                .map(|s| s.to_uppercase() == "ULTRA")
+                .unwrap_or(false);
+
             let has_argon = groups.iter().any(|g| {
                 let name = g
                     .get("display_name")
@@ -1783,7 +1837,7 @@ impl TokenManager {
                         })
                     })
             });
-            if has_argon {
+            if has_argon || is_ultra {
                 result.insert("gemini-4-argon".to_string());
                 result.insert("gemini-4-argon-high".to_string());
                 result.insert("gemini-4-argon-medium".to_string());
@@ -4328,6 +4382,12 @@ impl TokenManager {
                             })
                         })
                     });
+                    let is_ultra = token
+                        .subscription_tier
+                        .as_deref()
+                        .map(|s| s.to_uppercase() == "ULTRA")
+                        .unwrap_or(false);
+
                     if let Some(bucket) = argon_bucket {
                         let pct = (bucket.remaining_fraction * 100.0) as i32;
                         token.model_quotas.insert("gemini-4-argon".to_string(), pct);
@@ -4362,8 +4422,58 @@ impl TokenManager {
                         token
                             .model_limits
                             .insert("gemini-4-argon-low".to_string(), 65536);
+                    } else if is_ultra {
+                        // Ultra 账号在官方架构下未拆分专属 Argon 分组，其 Argon 额度共享 Gemini 通用配额池
+                        let gemini_bucket = quota_data.quota_groups.as_ref().and_then(|groups| {
+                            groups.iter().find_map(|g| {
+                                let name = g.display_name.to_lowercase();
+                                if !name.contains("claude")
+                                    && !name.contains("gpt")
+                                    && !name.contains("3p")
+                                {
+                                    g.buckets.first()
+                                } else {
+                                    None
+                                }
+                            })
+                        });
+                        let pct = gemini_bucket
+                            .map(|b| (b.remaining_fraction * 100.0) as i32)
+                            .unwrap_or(100);
+                        token.model_quotas.insert("gemini-4-argon".to_string(), pct);
+                        token
+                            .model_quotas
+                            .insert("gemini-4-argon-high".to_string(), pct);
+                        token
+                            .model_quotas
+                            .insert("gemini-4-argon-medium".to_string(), pct);
+                        token
+                            .model_quotas
+                            .insert("gemini-4-argon-low".to_string(), pct);
+                        token.available_models.insert("gemini-4-argon".to_string());
+                        token
+                            .available_models
+                            .insert("gemini-4-argon-high".to_string());
+                        token
+                            .available_models
+                            .insert("gemini-4-argon-medium".to_string());
+                        token
+                            .available_models
+                            .insert("gemini-4-argon-low".to_string());
+                        token
+                            .model_limits
+                            .insert("gemini-4-argon".to_string(), 65536);
+                        token
+                            .model_limits
+                            .insert("gemini-4-argon-high".to_string(), 65536);
+                        token
+                            .model_limits
+                            .insert("gemini-4-argon-medium".to_string(), 65536);
+                        token
+                            .model_limits
+                            .insert("gemini-4-argon-low".to_string(), 65536);
                     } else {
-                        // 若刷新后无 Argon 专属分组，清理该账号在内存中的 Argon 缓存
+                        // 若刷新后无 Argon 专属分组且非 Ultra，清理该账号在内存中的 Argon 缓存
                         token.model_quotas.remove("gemini-4-argon");
                         token.model_quotas.remove("gemini-4-argon-high");
                         token.model_quotas.remove("gemini-4-argon-medium");

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, ToggleLeft, ToggleRight, Fingerprint, Sparkles, Tag, X, Check, Clock, Repeat2, Terminal } from 'lucide-react';
-import { Account, ActiveClientsStatus, getAccountTier } from '../../types/account';
+import { Account, ActiveClientsStatus, getAccountTier, hasAccountArgonCapability } from '../../types/account';
 import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
 import { useConfigStore } from '../../stores/useConfigStore';
@@ -85,12 +85,12 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
 
     const modelCapabilities = useMemo(() => {
         const supported = Array.from(new Set(groupSummaries.flatMap(s => s.supportedModels || [])));
-        const hasArgon = supported.some(m => m.includes('argon')) || groupSummaries.some(s => s.key === 'argon');
+        const hasArgon = hasAccountArgonCapability(account) || groupSummaries.some(s => s.key === 'argon') || supported.some(m => m.includes('argon'));
         const hasClaude55 = supported.some(m => m.includes('5-5') || m.includes('5.5'));
         const hasClaude46 = supported.some(m => m.includes('4-6') || m.includes('4.6'));
         const hasGpt = supported.some(m => m.startsWith('gpt'));
         return { hasArgon, hasClaude55, hasClaude46, hasGpt };
-    }, [groupSummaries]);
+    }, [account, groupSummaries]);
 
     const isGroupProtected = (key: 'gemini' | 'claude' | 'argon') => {
         if (!config?.quota_protection?.enabled) return false;

@@ -485,7 +485,8 @@ pub async fn fetch_quota_with_cache(
                 // （fetchAvailableModels 对免费号和 Pro 号返回完全相同的全量目录）。
                 let final_tier =
                     crate::models::quota::resolve_subscription_tier(subscription_tier.as_deref());
-                quota_data.subscription_tier = Some(final_tier);
+                quota_data.subscription_tier = Some(final_tier.clone());
+                let is_ultra = final_tier == "ULTRA";
 
                 // Best-effort: 先行获取分组配额摘要 (weekly + 5h windows)。
                 // 这样在解析模型列表时，对于上游不再返回 quotaInfo 的 Gemini/Argon 系模型，
@@ -539,9 +540,9 @@ pub async fn fetch_quota_with_cache(
                         let is_claude_or_gpt = !is_argon
                             && (name_lower.starts_with("claude") || name_lower.starts_with("gpt"));
 
-                        // 查找匹配的配额组：Argon 必须严格命中专属 Argon 配额组，绝不允许借用通用 Gemini 分组；
+                        // 查找匹配的配额组：Argon 优先专属组；若是 Ultra 账号，无专属组时允许回退继承通用 Gemini 分组；
                         // Claude/GPT 找 3P；Gemini 找常规 Gemini 组
-                        let matched_group = groups.iter().find(|g| {
+                        let mut matched_group = groups.iter().find(|g| {
                             let gname = g.display_name.to_lowercase();
                             let is_argon_group = gname.contains("argon")
                                 || g.buckets.iter().any(|b| {
@@ -570,7 +571,17 @@ pub async fn fetch_quota_with_cache(
                                         && !gname.contains("3p")))
                         });
 
-                        // Argon 必须依赖官方独立配额组授权；未获得灰度独立分组的账号严禁借用通用 Gemini 组注入虚假配额 (Fixes #3745)
+                        // Ultra 账号在官方架构下未拆分专属 Argon 分组，其 Argon 额度共享 Gemini 通用配额池
+                        if is_argon && matched_group.is_none() && is_ultra {
+                            matched_group = groups.iter().find(|g| {
+                                let gname = g.display_name.to_lowercase();
+                                !gname.contains("claude")
+                                    && !gname.contains("gpt")
+                                    && !gname.contains("3p")
+                            });
+                        }
+
+                        // 非 Ultra 账号若未命中独立 Argon 分组，判定为未获灰度授权，拦截防呆 (Fixes #3745)
                         if is_argon && matched_group.is_none() {
                             continue;
                         }
@@ -663,7 +674,7 @@ pub async fn fetch_quota_with_cache(
                     quota_data.add_model(model_quota);
                 }
 
-                // [NEW] 若上游下发了 Argon 专属配额组，但 models 中未显式拆分条目时，为该账号注入 Argon 官方权威模型条目
+                // [NEW] 若上游下发了 Argon 专属配额组（如 Pro），或当前账号为官方 Ultra 旗舰账号，但 models 中未显式拆分条目时，为该账号注入 Argon 官方权威模型条目
                 if let Some(ref groups) = quota_groups {
                     let has_argon_group = groups.iter().any(|g| {
                         let gname = g.display_name.to_lowercase();
@@ -674,23 +685,41 @@ pub async fn fetch_quota_with_cache(
                                 bid.contains("argon") || bname.contains("argon")
                             })
                     });
-                    if has_argon_group
+                    if (has_argon_group || is_ultra)
                         && !quota_data
                             .models
                             .iter()
                             .any(|m| m.name.to_lowercase().contains("argon"))
                     {
-                        let argon_b = groups.iter().find_map(|g| {
-                            let gname = g.display_name.to_lowercase();
-                            if gname.contains("argon") {
-                                return g.buckets.first();
-                            }
-                            g.buckets.iter().find(|b| {
-                                let bid = b.bucket_id.to_lowercase();
-                                let bname = b.display_name.as_deref().unwrap_or("").to_lowercase();
-                                bid.contains("argon") || bname.contains("argon")
+                        let argon_b = groups
+                            .iter()
+                            .find_map(|g| {
+                                let gname = g.display_name.to_lowercase();
+                                if gname.contains("argon") {
+                                    return g.buckets.first();
+                                }
+                                g.buckets.iter().find(|b| {
+                                    let bid = b.bucket_id.to_lowercase();
+                                    let bname =
+                                        b.display_name.as_deref().unwrap_or("").to_lowercase();
+                                    bid.contains("argon") || bname.contains("argon")
+                                })
                             })
-                        });
+                            .or_else(|| {
+                                if is_ultra {
+                                    groups
+                                        .iter()
+                                        .find(|g| {
+                                            let gname = g.display_name.to_lowercase();
+                                            !gname.contains("claude")
+                                                && !gname.contains("gpt")
+                                                && !gname.contains("3p")
+                                        })
+                                        .and_then(|g| g.buckets.first())
+                                } else {
+                                    None
+                                }
+                            });
                         let pct = argon_b
                             .map(|b| (b.remaining_fraction * 100.0).round() as i32)
                             .unwrap_or(100);

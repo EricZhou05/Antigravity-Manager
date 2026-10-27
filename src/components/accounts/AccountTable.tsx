@@ -48,7 +48,7 @@ import {
     ArrowUp,
     ArrowDown,
 } from 'lucide-react';
-import { type Account, type ActiveClientsStatus, getAccountTier } from '../../types/account';
+import { type Account, type ActiveClientsStatus, getAccountTier, hasAccountArgonCapability } from '../../types/account';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../../utils/cn';
 
@@ -360,13 +360,13 @@ function AccountRowContent({
 
     const modelCapabilities = useMemo(() => {
         const supported = Array.from(new Set(groupSummaries.flatMap(s => s.supportedModels || [])));
-        const hasArgon = supported.some(m => m.includes('argon')) || groupSummaries.some(s => s.key === 'argon');
+        const hasArgon = hasAccountArgonCapability(account) || groupSummaries.some(s => s.key === 'argon') || supported.some(m => m.includes('argon'));
         const hasClaude55 = supported.some(m => m.includes('5-5') || m.includes('5.5'));
         const hasClaude46 = supported.some(m => m.includes('4-6') || m.includes('4.6'));
         const hasGpt = supported.some(m => m.startsWith('gpt'));
         const hasGemini38 = supported.some(m => m.includes('3.8') || m.includes('3-8'));
         return { hasArgon, hasClaude55, hasClaude46, hasGpt, hasGemini38, supportedCount: supported.length };
-    }, [groupSummaries]);
+    }, [account, groupSummaries]);
 
     return (
         <>
