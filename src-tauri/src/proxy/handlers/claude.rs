@@ -2746,52 +2746,28 @@ pub async fn handle_messages(
             continue;
         }
 
-        // [FIX Corrupted Image] 400 多模态图像解码/处理失败：自愈降级损坏图片为占位符、记录黑名单并同账号原地重试
-        if (classification.is_image_processing_error()
-            || crate::proxy::pipeline::UpstreamClassification::is_image_processing_error_str(
-                status_code,
-                &error_text,
-            ))
-            && !retried_with_image_omitted
-        {
-            retried_with_image_omitted = true;
+        // [FIX Corrupted Image] 400 多模态图像解码/处理失败：自愈降级损坏图片为占位符并在同账号原地重试
+        if classification.is_image_processing_error() && !retried_with_image_omitted {
             let purged_count =
                 crate::proxy::mappers::common_utils::purge_corrupted_images_from_gemini_payload(
                     &mut gemini_body,
                 );
-            tracing::warn!(
-                "[{}] Upstream 400 Unable to process input image detected. In-place self-healing: purged {} image(s) to text placeholders on account {}, retrying.",
-                trace_id, purged_count, email
-            );
-
-            // 清理原始 request_for_body 中的 ContentBlock::Image，防止后续换号或再次转换时重新生成
-            for msg in request_for_body.messages.iter_mut() {
-                if let crate::proxy::mappers::claude::models::MessageContent::Array(blocks) =
-                    &mut msg.content
-                {
-                    for block in blocks.iter_mut() {
-                        if let crate::proxy::mappers::claude::models::ContentBlock::Image {
-                            source,
-                            ..
-                        } = block
-                        {
-                            if let Some(b64) = &source.data {
-                                crate::proxy::mappers::common_utils::record_corrupted_image_hash(
-                                    b64,
-                                );
-                            }
-                            *block = crate::proxy::mappers::claude::models::ContentBlock::Text {
-                                text: "[Image: Corrupted or unprocessable image omitted to recover conversation]".to_string(),
-                            };
-                        }
-                    }
-                }
+            if purged_count == 0 {
+                tracing::warn!(
+                    "[{}] Upstream 400 Unable to process input image detected, but no inline image was purged. Skipping retry to prevent duplicate 400.",
+                    trace_id
+                );
+            } else {
+                retried_with_image_omitted = true;
+                tracing::warn!(
+                    "[{}] Upstream 400 Unable to process input image detected. In-place self-healing: purged {} image(s) to text placeholders on account {}, retrying.",
+                    trace_id, purged_count, email
+                );
+                degraded_gemini_body = Some(gemini_body);
+                force_rotate = false;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                continue;
             }
-
-            degraded_gemini_body = Some(gemini_body);
-            force_rotate = false;
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            continue;
         }
 
         // 4. 处理 400 错误 (Thinking 签名失效 或 块顺序错误)

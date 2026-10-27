@@ -1186,27 +1186,27 @@ pub async fn handle_generate(
             continue;
         }
 
-        // [FIX Corrupted Image] 400 多模态图像解码/处理失败：自愈剔除损坏图片、记录黑名单并原地重试
-        if (classification.is_image_processing_error()
-            || crate::proxy::pipeline::UpstreamClassification::is_image_processing_error_str(
-                status_code,
-                &error_text,
-            ))
-            && !retried_with_image_omitted
-        {
-            retried_with_image_omitted = true;
+        // [FIX Corrupted Image] 400 多模态图像解码/处理失败：自愈剔除损坏图片并在同账号原地重试
+        if classification.is_image_processing_error() && !retried_with_image_omitted {
             let purged_count =
                 crate::proxy::mappers::common_utils::purge_corrupted_images_from_gemini_payload(
                     &mut wrapped_body,
                 );
-            degraded_wrapped_body = Some(wrapped_body);
-            force_rotate = false;
-            tracing::warn!(
-                "[Gemini] Upstream 400 Unable to process input image detected. In-place self-healing: purged {} image(s) to text placeholders on account {}, retrying.",
-                purged_count, email
-            );
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            continue;
+            if purged_count == 0 {
+                tracing::warn!(
+                    "[Gemini] Upstream 400 Unable to process input image detected, but no inline image was purged. Skipping retry to prevent duplicate 400."
+                );
+            } else {
+                retried_with_image_omitted = true;
+                degraded_wrapped_body = Some(wrapped_body);
+                force_rotate = false;
+                tracing::warn!(
+                    "[Gemini] Upstream 400 Unable to process input image detected. In-place self-healing: purged {} image(s) to text placeholders on account {}, retrying.",
+                    purged_count, email
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                continue;
+            }
         }
 
         if classification.abandons_sticky_account() {

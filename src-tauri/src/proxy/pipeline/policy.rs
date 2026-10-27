@@ -64,19 +64,7 @@ impl UpstreamClassification {
         }
 
         // 4. 判定上游图像解码/处理失败 (400 Unable to process input image)
-        let has_image_processing_error_cue = lower.contains("unable to process input image")
-            || lower.contains("failed to process input image")
-            || lower.contains("cannot process input image")
-            || lower.contains("could not process image")
-            || lower.contains("error processing input image")
-            || lower.contains("invalid input image")
-            || lower.contains("unable to decode image")
-            || lower.contains("unsupported image format")
-            || lower.contains("image decoding failed")
-            || (lower.contains("process input image")
-                && lower.contains("developers.generativeai.google"));
-
-        if status == 400 && has_image_processing_error_cue {
+        if Self::is_image_processing_error_str(status, body) {
             return UpstreamClassification::ImageProcessingError;
         }
 
