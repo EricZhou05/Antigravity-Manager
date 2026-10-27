@@ -3,6 +3,17 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.1-beta.6 (2026-10-28)**:
+        -   **[新增入站模型门禁与惩罚链豁免，修复 429/503 误伤号池] (Ref #3764, Ref #3769, Thanks to @jeikl)**:
+            -   **模型门禁四道判定**: 缺失 model → 404 `model not exist`；自定义映射优先（精确 / 大小写 / 规范化 / 通配符），无映射保留原值；映射后必须存在于「下游开放列表 ∪ agent 工具列表 ∪ 官方目录 ∪ 映射值」；全池无正配额 → 502 `no quota accounts`。冷启动无模型元数据时 fail-open，避免启动窗口误杀全部流量。(Ref #3764)
+            -   **全入口覆盖**: 在 POST generate / messages / chat（含 Responses）之外，补齐 `:countTokens` 冒号语法与 `/v1beta/models/:model/countTokens`，并为四大协议 GET 探测端点接入门禁：`/v1/models/:model`、`/v1/model/:model`、`/v1/responses/models/:model`、`/responses/models/:model`、`/v1/models/claude/:model`、`/v1beta/models/:model`。(Ref #3764)
+            -   **惩罚链 100% 豁免**: `is_gateway_self_answer` 作为单一真理源，接入 `policy::classify`（最高优先级归为 InternalGatewayMessage）、限流解析、`mark_rate_limited(_fast/_async)`、`classify_rate_limit_reason` 与 `mark_account_transient_failure`；网关代答的 404/502 不再锁号、不再解绑粘性会话、不再写入零配额标记，彻底杜绝无辜账号连坐。(Ref #3764)
+            -   **旧版模型全面下线**: Claude 3.x / < 4.6 与 Gemini 2.x 硬门禁（优先于自定义映射），删除 `gemini-2.5-* → 3.1-flash-lite` 内部别名、opencode 静态目录 legacy 条目与 `VariantType::Gemini25Thinking`；生图模型族独立豁免，并支持 `-preview / -1k / -2k / -4k / 比例` 变体与版本同义名归一。(Ref #3769)
+            -   **去除兜底模型硬编码**: 删除三处 `INTERNAL_BACKGROUND_TASK` 常量，后台摘要模型改为号池动态推导（最新 `flash-low` → 无后缀 `flash` → 跳过）；调度器预热兜底同步改为号池驱动，无可用 flash 时跳过而非硬编码回退。(Ref #3769)
+            -   **生图可见性与配额一致性**: 列表侧仅在账号真实配额 > 0 时，才把尺寸变体归一后的基底生图模型登记进 `/v1/models`、`/v1beta/models` 与 agent 一键配置；配额闸门同步折算同族变体配额，避免「列表有、请求 502」的不一致。(Ref #3769)
+            -   **前端可观测性**: 流量日志账号列高亮展示 `model not exist`（玫红）/ `no quota accounts`（琥珀），亮色暗色均保持高对比；转出报文面板展示英文排查指引（detail + hint）。(Ref #3764)
+            -   **QoS 阶梯探针修复**: 补齐官方 v1internal 信封（`project` / `requestId` / `request` / `model` / `userAgent`），探针模型改为从账号真实元数据挑选 Flash 档，端点走 Daily → Sandbox 灾备；实测上游返回 200（TTFT ≈ 1.0–1.9s），小黑屋账号可正常自愈回到 Healthy。(Ref #3769)
+
     *   **v5.0.1-beta.5 (2026-10-28)**:
         -   **[提示词清洗按注入区/当前轮分轨，用户正文永久豁免] (Fixes #3764)**:
             -   **当前轮 100% 透传**: 清洗轨道收敛为 System / Content，并为当前轮新增 Anchored 轨——只清洗 `<system*>` / `<identity*>` 标签内部，标签外用户正文逐字保留；单轮翻译、校对、代码审计类请求不再被整句改写为官方身份。(Fixes #3764)
