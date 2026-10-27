@@ -242,7 +242,6 @@ export default function MiniView() {
                 await fetchCurrentAccount();
             } else if (displayedAccount) {
                 await refreshQuota(displayedAccount.id);
-                await fetchAccounts();
                 await fetchCurrentAccount();
             }
         } catch (e) {
@@ -259,6 +258,10 @@ export default function MiniView() {
         if (!config?.auto_refresh || !config?.refresh_interval || config.refresh_interval <= 0) return;
 
         const intervalId = setInterval(() => {
+            // [Fix #3757] 当悬浮窗收起或处于后台隐藏态时跳过定时刷新，避免 500 个账号下的 IPC 数据颠簸
+            if (typeof document !== 'undefined' && document.hidden) {
+                return;
+            }
             handleRefreshRef.current();
         }, config.refresh_interval * 60 * 1000);
 

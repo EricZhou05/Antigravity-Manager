@@ -237,34 +237,42 @@ pub fn init_display_guard() {
 #[cfg(not(target_os = "linux"))]
 pub fn init_display_guard() {}
 
-/// Intercept `_exit` on Linux so display loss does not kill Tokio runtime and port 8045.
+/// Intercept `_exit` on Linux so display loss or worker crash does not kill Tokio runtime and port 8045.
 #[cfg(target_os = "linux")]
 #[no_mangle]
 pub unsafe extern "C" fn _exit(status: std::os::raw::c_int) -> ! {
-    let current_tid = libc::pthread_self() as u64;
-    let main_tid = MAIN_THREAD_ID.load(Ordering::SeqCst);
-    let is_main_thread = main_tid != 0 && current_tid == main_tid;
-
     // 1. If this exit was deliberately triggered by user/signal, terminate cleanly.
     if is_user_initiated_exit() {
         libc::syscall(libc::SYS_exit_group, status);
         loop {}
     }
 
-    // 2. If a display disconnection was identified, OR the GUI main thread called _exit
-    // unexpectedly (e.g. from an untrapped XIO error, GTK fatal error, or WebKit display drop),
-    // we safely degrade: terminate ONLY the GUI main thread and keep the Tokio proxy service alive.
-    if is_display_disconnected() || is_main_thread {
+    // 2. [Fix #3757] Any other _exit call from C/GTK/WebKit/Xlib/IPC is UNEXPECTED.
+    // Whether it was called from the GUI main thread (display drop) or a background worker
+    // thread (e.g. WebKit IPC worker, GTK helper, or Tokio worker during account refresh),
+    // we must strictly prevent SYS_exit_group from destroying the process group and killing
+    // the core port 8045 proxy service!
+    let current_tid = libc::pthread_self() as u64;
+    let main_tid = MAIN_THREAD_ID.load(Ordering::SeqCst);
+    let is_main_thread = main_tid != 0 && current_tid == main_tid;
+
+    set_display_disconnected(true);
+
+    if is_main_thread {
         eprintln!(
-            "\x1b[32m[Antigravity Manager]\x1b[0m Linux display connection terminated (X11/Wayland). \
-             Main GUI thread terminating cleanly; Tokio runtime and port 8045 proxy service remain ACTIVE in headless fallback."
+            "\x1b[32m[Antigravity Manager]\x1b[0m Linux GUI main thread caught fatal exit (status {}). \
+             Main GUI thread terminating cleanly; Tokio runtime and port 8045 proxy service remain ACTIVE in headless fallback.",
+            status
         );
-        libc::pthread_exit(std::ptr::null_mut());
+    } else {
+        eprintln!(
+            "\x1b[33m[Antigravity Manager]\x1b[0m Linux worker thread 0x{:x} caught unhandled _exit({}) (display/IPC/GTK drop). \
+             Isolating and terminating failing thread only; core port 8045 proxy service remains ACTIVE.",
+            current_tid, status
+        );
     }
 
-    // 3. Fallback for other worker threads or unhandled exits
-    libc::syscall(libc::SYS_exit_group, status);
-    loop {}
+    libc::pthread_exit(std::ptr::null_mut());
 }
 
 /// Intercept `_Exit` on Linux as well.

@@ -576,6 +576,11 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 
 /// Helper function to update tray menu
 pub fn update_tray_menus(app: &tauri::AppHandle) {
+    #[cfg(target_os = "linux")]
+    if crate::linux_display_guard::is_display_disconnected() {
+        return;
+    }
+
     let app_clone = app.clone();
     tauri::async_runtime::spawn(async move {
         // Read config to get language
@@ -678,103 +683,131 @@ pub fn update_tray_menus(app: &tauri::AppHandle) {
             menu_lines.push(texts.unknown_quota.clone());
         };
 
-        // Always update tray tooltip and macOS title (regardless of menu rebuild status)
-        if let Some(tray) = app_clone.tray_by_id("main") {
-            let _ = tray.set_tooltip(Some(tooltip_text));
-            #[cfg(target_os = "macos")]
-            let _ = tray.set_title(macos_title);
-        }
+        // [Fix #3757] 统一将所有 GTK/AppKit 系统托盘和菜单项创建调度到操作系统原生主线程执行
+        // 彻底杜绝在 Linux Tokio 工作线程上跨线程直接调用 GTK 导致并发死锁或断言崩溃 _exit(1)
+        let app_handle_for_main = app_clone.clone();
+        let _ = app_clone.run_on_main_thread(move || {
+            #[cfg(target_os = "linux")]
+            if crate::linux_display_guard::is_display_disconnected() {
+                return;
+            }
 
-        // Rebuild menu items (dynamic quotas + shortcuts)
-        let info_user = MenuItem::with_id(&app_clone, "info_user", &user_text, false, None::<&str>);
+            // Always update tray tooltip and macOS title (regardless of menu rebuild status)
+            if let Some(tray) = app_handle_for_main.tray_by_id("main") {
+                let _ = tray.set_tooltip(Some(tooltip_text));
+                #[cfg(target_os = "macos")]
+                let _ = tray.set_title(macos_title);
+            }
 
-        let mut quota_items = Vec::new();
-        for (i, line) in menu_lines.iter().enumerate() {
-            let item = MenuItem::with_id(
-                &app_clone,
-                format!("info_quota_{}", i),
-                line,
+            // Rebuild menu items (dynamic quotas + shortcuts) safely on the UI main thread
+            let info_user = MenuItem::with_id(
+                &app_handle_for_main,
+                "info_user",
+                &user_text,
                 false,
                 None::<&str>,
             );
-            if let Ok(item) = item {
-                quota_items.push(item);
-            }
-        }
 
-        let switch_next = MenuItem::with_id(
-            &app_clone,
-            "switch_next",
-            &texts.switch_next,
-            true,
-            None::<&str>,
-        );
-        let refresh_curr = MenuItem::with_id(
-            &app_clone,
-            "refresh_curr",
-            &texts.refresh_current,
-            true,
-            None::<&str>,
-        );
-
-        let show_i = MenuItem::with_id(&app_clone, "show", &texts.show_window, true, None::<&str>);
-        let mini_i = MenuItem::with_id(
-            &app_clone,
-            "mini_view",
-            &texts.mini_view,
-            true,
-            None::<&str>,
-        );
-        let lightweight_i = CheckMenuItem::with_id(
-            &app_clone,
-            "toggle_lightweight",
-            &texts.lightweight_mode,
-            true,
-            config.lightweight_mode,
-            None::<&str>,
-        );
-        let quit_i = MenuItem::with_id(&app_clone, "quit", &texts.quit, true, None::<&str>);
-
-        if let (Ok(i_u), Ok(s_n), Ok(r_c), Ok(s), Ok(m), Ok(l), Ok(q)) = (
-            info_user,
-            switch_next,
-            refresh_curr,
-            show_i,
-            mini_i,
-            lightweight_i,
-            quit_i,
-        ) {
-            let sep1 = PredefinedMenuItem::separator(&app_clone).ok();
-            let sep2 = PredefinedMenuItem::separator(&app_clone).ok();
-            let sep3 = PredefinedMenuItem::separator(&app_clone).ok();
-
-            let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![&i_u];
-            for item in &quota_items {
-                items.push(item);
-            }
-
-            if let Some(ref s1) = sep1 {
-                items.push(s1);
-            }
-            items.push(&s_n);
-            items.push(&r_c);
-            if let Some(ref s2) = sep2 {
-                items.push(s2);
-            }
-            items.push(&s);
-            items.push(&m);
-            items.push(&l);
-            if let Some(ref s3) = sep3 {
-                items.push(s3);
-            }
-            items.push(&q);
-
-            if let Ok(menu) = Menu::with_items(&app_clone, &items) {
-                if let Some(tray) = app_clone.tray_by_id("main") {
-                    #[cfg(not(target_os = "macos"))]
-                    let _ = tray.set_menu(Some(menu));
+            let mut quota_items = Vec::new();
+            for (i, line) in menu_lines.iter().enumerate() {
+                let item = MenuItem::with_id(
+                    &app_handle_for_main,
+                    format!("info_quota_{}", i),
+                    line,
+                    false,
+                    None::<&str>,
+                );
+                if let Ok(item) = item {
+                    quota_items.push(item);
                 }
             }
-        }
+
+            let switch_next = MenuItem::with_id(
+                &app_handle_for_main,
+                "switch_next",
+                &texts.switch_next,
+                true,
+                None::<&str>,
+            );
+            let refresh_curr = MenuItem::with_id(
+                &app_handle_for_main,
+                "refresh_curr",
+                &texts.refresh_current,
+                true,
+                None::<&str>,
+            );
+
+            let show_i = MenuItem::with_id(
+                &app_handle_for_main,
+                "show",
+                &texts.show_window,
+                true,
+                None::<&str>,
+            );
+            let mini_i = MenuItem::with_id(
+                &app_handle_for_main,
+                "mini_view",
+                &texts.mini_view,
+                true,
+                None::<&str>,
+            );
+            let lightweight_i = CheckMenuItem::with_id(
+                &app_handle_for_main,
+                "toggle_lightweight",
+                &texts.lightweight_mode,
+                true,
+                config.lightweight_mode,
+                None::<&str>,
+            );
+            let quit_i = MenuItem::with_id(
+                &app_handle_for_main,
+                "quit",
+                &texts.quit,
+                true,
+                None::<&str>,
+            );
+
+            if let (Ok(i_u), Ok(s_n), Ok(r_c), Ok(s), Ok(m), Ok(l), Ok(q)) = (
+                info_user,
+                switch_next,
+                refresh_curr,
+                show_i,
+                mini_i,
+                lightweight_i,
+                quit_i,
+            ) {
+                let sep1 = PredefinedMenuItem::separator(&app_handle_for_main).ok();
+                let sep2 = PredefinedMenuItem::separator(&app_handle_for_main).ok();
+                let sep3 = PredefinedMenuItem::separator(&app_handle_for_main).ok();
+
+                let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![&i_u];
+                for item in &quota_items {
+                    items.push(item);
+                }
+
+                if let Some(ref s1) = sep1 {
+                    items.push(s1);
+                }
+                items.push(&s_n);
+                items.push(&r_c);
+                if let Some(ref s2) = sep2 {
+                    items.push(s2);
+                }
+                items.push(&s);
+                items.push(&m);
+                items.push(&l);
+                if let Some(ref s3) = sep3 {
+                    items.push(s3);
+                }
+                items.push(&q);
+
+                if let Ok(menu) = Menu::with_items(&app_handle_for_main, &items) {
+                    if let Some(tray) = app_handle_for_main.tray_by_id("main") {
+                        #[cfg(not(target_os = "macos"))]
+                        let _ = tray.set_menu(Some(menu));
+                    }
+                }
+            }
+        });
     });
 }

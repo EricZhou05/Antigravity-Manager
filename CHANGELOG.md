@@ -4,6 +4,10 @@
 
 *   **版本演进**:
     *   **v5.0.1-beta.1 (2026-10-26)**:
+        -   **[Linux GTK 托盘跨线程安全调度与 _exit 进程级防误杀终极闭环] (Fixes #3757, Ref #3752, Thanks to @hazerwin)**:
+            -   **GTK 菜单主线程调度保障**: 将 `update_tray_menus` 内部的所有 `MenuItem`、`Menu` 构建与 `tray.set_menu` 统一调度到原生 UI 主线程（`app.run_on_main_thread`）执行，并在显示断开时安全短路，彻底消除 Tokio 异步工作线程跨线程操作 GTK 导致并发死锁或底层断言崩溃 `_exit(1)` 的隐患。(Fixes #3757, Thanks to @hazerwin)
+            -   **_exit 全工作线程安全隔离 (根除误杀)**: 重构 `linux_display_guard` 的 `_exit` 拦截器，除用户明确主动退出外，严禁任何主线程或后台工作线程（Tokio、WebKit IPC、GIO 等）触发 `SYS_exit_group` 秒杀整个进程组；一律通过 `pthread_exit(NULL)` 精准隔离终结故障线程，彻底守死 8045 核心反代服务生命线。(Fixes #3757, Thanks to @hazerwin)
+            -   **MiniView 定时器与高负载 IPC 颠簸优化**: 优化 MiniView 悬浮窗的单账号刷新逻辑，移除重复的全量 `fetchAccounts` 冗余拉取，并在悬浮窗隐藏/不可见时跳过定时刷新，大幅降低 500 个账号下后台大吞吐量 IPC 数据颠簸与内存开销。(Fixes #3757, Thanks to @hazerwin)
         -   **[Web/Headless 更新设置保存 400 修复与局部补丁合并治理] (Fixes #3754)**:
             -   **Axum 管理接口请求体双形态兼容**: `POST /api/system/updates/save` 现同时接受前端 `invoke` 映射透传的 `{"settings": {...}}` 包装体与 Headless/CLI 的平铺 JSON，彻底修复 Web 端切换预览版通道或修改自动检查更新时必然返回 400 Bad Request（content-length: 0）的问题。(Fixes #3754)
             -   **更新设置改为局部补丁合并**: 新增 `UpdateSettingsPatch` 与 `patch_update_settings`，仅覆盖显式提供的字段；未传字段（`last_check_time`、`update_channel`）保留磁盘现值，根治切换自动检查开关会把更新通道静默重置为构建默认值、以及每次保存都清空最近检查时间并触发立即检查的连带缺陷。(Fixes #3754)
