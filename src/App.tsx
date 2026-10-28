@@ -100,6 +100,34 @@ function App() {
     }
   }, [config?.language]);
 
+  // 全局滚动条微交互：仅在滚动时显示，停止滚动 1 秒后自动平滑淡出隐藏
+  useEffect(() => {
+    const scrollTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>();
+
+    const handleScroll = (e: Event) => {
+      const target = e.target;
+      if (!target || !(target instanceof HTMLElement)) return;
+
+      target.setAttribute('data-scrolling', 'true');
+      const existingTimer = scrollTimers.get(target);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+      }
+
+      const timer = setTimeout(() => {
+        target.removeAttribute('data-scrolling');
+        scrollTimers.delete(target);
+      }, 1000);
+
+      scrollTimers.set(target, timer);
+    };
+
+    window.addEventListener('scroll', handleScroll, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener('scroll', handleScroll, { capture: true });
+    };
+  }, []);
+
   // Listen for tray events
   useEffect(() => {
     if (!isTauri()) return;
