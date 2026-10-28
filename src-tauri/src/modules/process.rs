@@ -135,10 +135,7 @@ pub fn is_manager_or_tools_process(name: &str, exe_path: &str, argv0: &str) -> b
     /// 否则装在 `D:\Tools\Antigravity\` 或 `C:\Tools\agy\` 的客户端会被误判为 Manager，
     /// 进而导致「客户端永远检测不到 → 切号只写凭据不重启 → 静默失败」。
     fn loose_file_stem(s: &str) -> bool {
-        let last_segment = s
-            .rsplit(|c| c == '/' || c == '\\')
-            .next()
-            .unwrap_or(s);
+        let last_segment = s.rsplit(|c| c == '/' || c == '\\').next().unwrap_or(s);
         let stem = std::path::Path::new(last_segment)
             .file_stem()
             .map(|v| v.to_string_lossy().to_lowercase())

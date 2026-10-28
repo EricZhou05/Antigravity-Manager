@@ -3,6 +3,15 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.1-beta.7 (2026-10-28)**:
+        -   **[适配 Antigravity IDE 2.6.0 凭据结构与 agy 语言服务进程识别] (Fixes #3770, PR #3771, Thanks to @fuyangtian2003-beep)**:
+            -   **凭据序列化对齐**: 在系统 Keyring (`KeyringTokenDetails` / `KeyringPayload`) 与 CLI 文件凭据 (`AgyTokenDetails` / `AgyOAuthTokenFile`) 模型中增补 `expires_in: 3599` 以及顶层 `id_token_email`，精准契合 Antigravity IDE 2.6.0 登录强校验规范，保持旧版本 100% 向下兼容。(Fixes #3770, PR #3771, Thanks to @fuyangtian2003-beep)
+            -   **语言服务进程判定扩充**: 在 `is_language_server_process` 中补充对 `agy` / `agy.exe` 的识别与单测断言，确保 Antigravity IDE 2.6.0+ 或 agy 运行环境下热切号时彻底终止后台孤儿会话，避免旧 Session 残留。(Fixes #3770, PR #3771, Thanks to @fuyangtian2003-beep)
+            -   **跨平台路径分割兼容**: 修复 `loose_file_stem` 在非 Windows 平台对包含反斜杠 Windows 路径（如 `d:\tools\...`）的分割兼容性，确保单元测试与跨平台进程判定稳健。(Ref #3762)
+        -   **[滚动条视觉美化与移入显示微交互] (Fixes #3768, Thanks to @ddmixi)**:
+            -   **尺寸收窄与悬浮渐显**: 将报文查看器与全局滚动条宽度由 8px 收窄至 5px 极细胶囊；常态下透明隐藏，鼠标移入所在容器时平滑淡入柔和半透明滑块，悬停滑块时高亮提供拖拽反馈，彻底解决长日志视觉遮挡与碍眼问题。(Fixes #3768, Thanks to @ddmixi)
+            -   **全局通用规范对齐**: 规范化收敛 `.payload-viewer-scroll`、`.scrollbar-thin`、`.custom-scrollbar` 与 `.scrollbar-none`，完美适配明亮与暗黑黑曜石主题以及跨平台 WebView2 / 浏览器环境。(Fixes #3768)
+
     *   **v5.0.1-beta.6 (2026-10-28)**:
         -   **[新增入站模型门禁与惩罚链豁免，修复 429/503 误伤号池] (Ref #3764, Ref #3769, Thanks to @jeikl)**:
             -   **模型门禁四道判定**: 缺失 model → 404 `model not exist`；自定义映射优先（精确 / 大小写 / 规范化 / 通配符），无映射保留原值；映射后必须存在于「下游开放列表 ∪ agent 工具列表 ∪ 官方目录 ∪ 映射值」；全池无正配额 → 502 `no quota accounts`。冷启动无模型元数据时 fail-open，避免启动窗口误杀全部流量。(Ref #3764)

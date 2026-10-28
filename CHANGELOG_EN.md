@@ -3,6 +3,15 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.1-beta.7 (2026-10-28)**:
+        -   **[Adapt Credential Schema and agy Process for Antigravity IDE 2.6.0] (Fixes #3770, PR #3771, Thanks to @fuyangtian2003-beep)**:
+            -   **Credential Schema Alignment**: Added `expires_in: 3599` to `KeyringTokenDetails` / `AgyTokenDetails` and top-level `id_token_email` to `KeyringPayload` / `AgyOAuthTokenFile`, matching Antigravity IDE 2.6.0 authentication validation requirements while maintaining 100% backward compatibility for earlier versions. (Fixes #3770, PR #3771, Thanks to @fuyangtian2003-beep)
+            -   **Language Server Process Detection Expanded**: Added recognition and unit test assertions for `agy` / `agy.exe` in `is_language_server_process`, ensuring that hot-switching accounts in Antigravity IDE 2.6.0+ thoroughly cleans up orphan background sessions. (Fixes #3770, PR #3771, Thanks to @fuyangtian2003-beep)
+            -   **Cross-Platform Path Stem Compatibility**: Fixed `loose_file_stem` to properly handle both forward and backslash path separators across platforms when validating Windows executable paths. (Ref #3762)
+        -   **[Scrollbar Aesthetic Refinement and Hover-to-Show Interaction] (Fixes #3768, Thanks to @ddmixi)**:
+            -   **Slimmer Profile & Hover Fade-in**: Slimmed down payload viewer and global scrollbars from 8px to a 5px rounded pill; transparent by default to eliminate visual obstruction, smoothly fading in when hovering over the container and highlighting on thumb hover for clear drag feedback. (Fixes #3768, Thanks to @ddmixi)
+            -   **Unified Global Scrollbar Utilities**: Normalized `.payload-viewer-scroll`, `.scrollbar-thin`, `.custom-scrollbar`, and `.scrollbar-none` across both light and obsidian-dark themes, with full cross-platform compatibility for WebView2 and modern browsers. (Fixes #3768)
+
     *   **v5.0.1-beta.6 (2026-10-28)**:
         -   **[Inbound Model Gate & Punishment-Chain Exemptions; Fix 429/503 Collateral Damage to the Account Pool] (Ref #3764, Ref #3769, Thanks to @jeikl)**:
             -   **Four-Stage Model Gate**: Missing model → 404 `model not exist`; custom mappings take precedence (exact / case / normalized / wildcard) and the raw ID is preserved otherwise; the mapped ID must exist in the union of downstream-exposed models, the agent tool list, the official catalog and mapping values; if no account holds positive quota → 502 `no quota accounts`. Fails open when the pool has no model metadata yet, so a cold start cannot wipe out all traffic. (Ref #3764)
