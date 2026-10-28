@@ -559,44 +559,60 @@ fn map_request_log_row(row: &rusqlite::Row) -> rusqlite::Result<ProxyRequestLog>
 }
 
 pub const MAX_TOOL_SIGNATURES_ROWS: usize = 10_000;
-pub const TOOL_SIGNATURES_TTL_DAYS: i64 = 7;
+pub const TOOL_SIGNATURES_TTL_DAYS: i64 = 10;
 
-/// 淘汰与修剪 tool_signatures 表（Defect 12: 限制 10,000 行上限与 7 天 TTL 淘汰）
+/// 淘汰与修剪 tool_signatures 表（限制 10,000 行与 10 天滑动 TTL 淘汰）
 pub fn prune_tool_signatures(
     conn: &Connection,
     max_rows: usize,
     ttl_days: i64,
 ) -> Result<usize, String> {
+    const PRUNE_BATCH: i64 = 1000;
+    const MAX_PRUNE_BATCHES: usize = 20;
     let mut total_deleted = 0;
 
-    // 1. TTL 淘汰：删除超过 ttl_days (默认 7 天) 的陈旧工具签名
+    // 1. TTL 淘汰：按“最后使用时间”（created_at 现在表示 last-used）分批清理，避免长事务阻塞写锁
     if ttl_days > 0 {
         let cutoff = chrono::Utc::now().timestamp_millis() - (ttl_days * 24 * 3600 * 1000);
-        let deleted = conn
-            .execute(
-                "DELETE FROM tool_signatures WHERE created_at < ?1",
-                params![cutoff],
-            )
-            .map_err(|e| e.to_string())?;
-        total_deleted += deleted;
+        for _ in 0..MAX_PRUNE_BATCHES {
+            let deleted = conn
+                .execute(
+                    "DELETE FROM tool_signatures WHERE tool_id IN (
+                        SELECT tool_id FROM tool_signatures WHERE created_at < ?1 LIMIT ?2
+                    )",
+                    params![cutoff, PRUNE_BATCH],
+                )
+                .map_err(|e| e.to_string())?;
+            total_deleted += deleted;
+            if (deleted as i64) < PRUNE_BATCH {
+                break;
+            }
+        }
     }
 
-    // 2. 数量上限淘汰：若总行数超出 max_rows (默认 10,000)，淘汰 created_at 最早的超额行
+    // 2. 数量上限淘汰：按最后使用时间最旧的分批淘汰，保留热/活跃签名
     if max_rows > 0 {
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM tool_signatures", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
         if count > max_rows as i64 {
-            let excess = count - max_rows as i64;
-            let deleted = conn
-                .execute(
-                    "DELETE FROM tool_signatures WHERE tool_id IN (
-                        SELECT tool_id FROM tool_signatures ORDER BY created_at ASC LIMIT ?1
-                    )",
-                    params![excess],
-                )
-                .map_err(|e| e.to_string())?;
-            total_deleted += deleted;
+            let mut excess = count - max_rows as i64;
+            for _ in 0..MAX_PRUNE_BATCHES {
+                let batch = excess.min(PRUNE_BATCH);
+                let deleted = conn
+                    .execute(
+                        "DELETE FROM tool_signatures WHERE tool_id IN (
+                            SELECT tool_id FROM tool_signatures ORDER BY created_at ASC LIMIT ?1
+                        )",
+                        params![batch],
+                    )
+                    .map_err(|e| e.to_string())?;
+                total_deleted += deleted;
+                excess -= deleted as i64;
+                if deleted == 0 || excess <= 0 {
+                    break;
+                }
+            }
         }
     }
 
@@ -777,6 +793,57 @@ pub fn save_tool_signatures_batch(entries: &[(String, String)]) -> Result<usize,
         })
         .collect();
     save_tool_signatures_batch_if_current(&tagged)
+}
+
+/// 滑动续期：仅当最后使用时间超过 24h 时更新，避免每次使用都产生写放大。
+pub fn touch_tool_signature(tool_id: &str, now_ms: i64) -> Result<usize, String> {
+    if tool_id.is_empty() {
+        return Ok(0);
+    }
+    let norm_id = crate::proxy::common::utils::normalize_tool_id(tool_id);
+    let threshold = now_ms.saturating_sub(24 * 3600 * 1000);
+    with_tool_signature_write_db(|state| {
+        let mut stmt = state
+            .conn
+            .prepare_cached(
+                "UPDATE tool_signatures SET created_at = ?1 WHERE tool_id = ?2 AND created_at < ?3",
+            )
+            .map_err(|e| e.to_string())?;
+        stmt.execute(params![now_ms, norm_id.as_ref(), threshold])
+            .map_err(|e| e.to_string())
+    })
+}
+
+pub fn touch_tool_signatures_batch(entries: &[(String, i64)]) -> Result<usize, String> {
+    if entries.is_empty() {
+        return Ok(0);
+    }
+    with_tool_signature_write_db(|state| {
+        let tx = state
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| e.to_string())?;
+        let mut updated = 0usize;
+        {
+            let mut stmt = tx
+                .prepare_cached(
+                    "UPDATE tool_signatures SET created_at = ?1 WHERE tool_id = ?2 AND created_at < ?3",
+                )
+                .map_err(|e| e.to_string())?;
+            for (tool_id, at) in entries {
+                if tool_id.is_empty() {
+                    continue;
+                }
+                let norm_id = crate::proxy::common::utils::normalize_tool_id(tool_id);
+                let threshold = at.saturating_sub(24 * 3600 * 1000);
+                updated += stmt
+                    .execute(params![at, norm_id.as_ref(), threshold])
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(updated)
+    })
 }
 
 pub fn load_tool_signature(tool_id: &str) -> Result<Option<String>, String> {

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 // Node.js proxy uses 2 hours TTL
 const SIGNATURE_TTL: Duration = Duration::from_secs(2 * 60 * 60);
@@ -14,6 +14,8 @@ const FAMILY_CACHE_LIMIT: usize = 200; // Layer 2: Model family mappings
 const SESSION_CACHE_LIMIT: usize = 1000; // Layer 3: Session-based signatures (largest)
 const TOOL_PERSIST_QUEUE_CAP: usize = 8192;
 const TOOL_PERSIST_BATCH_CAP: usize = 512;
+const SESSION_FLOOR_TTL: Duration = Duration::from_secs(3600);
+const TOOL_TOUCH_INTERVAL: Duration = Duration::from_secs(24 * 3600);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PersistMode {
@@ -39,6 +41,11 @@ enum ToolSigPersistCmd {
     DeleteSession {
         session_id: String,
     },
+    Touch {
+        key: String,
+        seq: u64,
+        at: i64,
+    },
     #[cfg(test)]
     Flush {
         ack: SyncSender<()>,
@@ -47,7 +54,8 @@ enum ToolSigPersistCmd {
 
 static PERSIST_SEQ: AtomicU64 = AtomicU64::new(1);
 static GLOBAL_MIN_PERSIST_SEQ: AtomicU64 = AtomicU64::new(0);
-static SESSION_MIN_PERSIST_SEQ: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+static SESSION_MIN_PERSIST_SEQ: OnceLock<Mutex<HashMap<String, (u64, Instant)>>> = OnceLock::new();
+static TOOL_TOUCH_THROTTLE: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
 static PENDING_SESSION_DELETES: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
 static TOOL_SIG_PERSIST_TX: OnceLock<SyncSender<ToolSigPersistCmd>> = OnceLock::new();
 
@@ -91,6 +99,34 @@ fn complete_pending_session_delete(session_id: &str) {
     }
 }
 
+fn should_enqueue_touch(scoped_key: &str) -> bool {
+    let slot = TOOL_TOUCH_THROTTLE.get_or_init(|| Mutex::new(HashMap::new()));
+    let Ok(mut map) = slot.lock() else {
+        return false;
+    };
+    let now = Instant::now();
+    if let Some(last) = map.get(scoped_key) {
+        if last.elapsed() < TOOL_TOUCH_INTERVAL {
+            return false;
+        }
+    }
+    map.insert(scoped_key.to_string(), now);
+    if map.len() > TOOL_CACHE_LIMIT * 2 {
+        map.retain(|_, at| at.elapsed() < TOOL_TOUCH_INTERVAL);
+    }
+    true
+}
+
+fn flush_touch_batch(batch: &mut HashMap<String, (u64, i64)>) {
+    if batch.is_empty() {
+        return;
+    }
+    let entries: Vec<(String, i64)> = batch.drain().map(|(k, (_, at))| (k, at)).collect();
+    if let Err(e) = crate::modules::proxy_db::touch_tool_signatures_batch(&entries) {
+        tracing::debug!("[SignatureCache] Background tool signature touch skipped: {e}");
+    }
+}
+
 fn is_session_delete_pending_for_store(store_key: &str) -> bool {
     let Some(slot) = PENDING_SESSION_DELETES.get() else {
         return false;
@@ -123,6 +159,7 @@ fn flush_tool_sig_batch(batch: &mut HashMap<String, (String, u64)>) {
 
 fn run_tool_sig_persist_worker(rx: Receiver<ToolSigPersistCmd>) {
     let mut batch: HashMap<String, (String, u64)> = HashMap::new();
+    let mut touch_batch: HashMap<String, (u64, i64)> = HashMap::new();
     while let Ok(first_cmd) = rx.recv() {
         let mut cur = Some(first_cmd);
         while let Some(cmd) = cur.take() {
@@ -147,11 +184,29 @@ fn run_tool_sig_persist_worker(rx: Receiver<ToolSigPersistCmd>) {
                         }
                     }
                 }
+                ToolSigPersistCmd::Touch { key, seq, at } => {
+                    if !is_session_delete_pending_for_scoped_key(&key)
+                        && SignatureCache::is_persist_entry_current(&key, seq)
+                    {
+                        let should_insert = touch_batch
+                            .get(&key)
+                            .map(|(existing_seq, _)| seq >= *existing_seq)
+                            .unwrap_or(true);
+                        if should_insert {
+                            touch_batch.insert(key, (seq, at));
+                        }
+                        if touch_batch.len() >= TOOL_PERSIST_BATCH_CAP {
+                            flush_touch_batch(&mut touch_batch);
+                        }
+                    }
+                }
                 ToolSigPersistCmd::DeleteSession { session_id } => {
+                    touch_batch.retain(|k, _| !matches_scoped_session(k, &session_id));
                     batch.retain(|k, (_, seq)| {
                         !matches_scoped_session(k, &session_id)
                             || SignatureCache::is_persist_entry_current(k, *seq)
                     });
+                    flush_touch_batch(&mut touch_batch);
                     flush_tool_sig_batch(&mut batch);
                     let _ =
                         crate::modules::proxy_db::delete_tool_signatures_for_session(&session_id);
@@ -159,6 +214,7 @@ fn run_tool_sig_persist_worker(rx: Receiver<ToolSigPersistCmd>) {
                 }
                 #[cfg(test)]
                 ToolSigPersistCmd::Flush { ack } => {
+                    flush_touch_batch(&mut touch_batch);
                     flush_tool_sig_batch(&mut batch);
                     let _ = ack.send(());
                 }
@@ -169,6 +225,7 @@ fn run_tool_sig_persist_worker(rx: Receiver<ToolSigPersistCmd>) {
                 Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
             }
         }
+        flush_touch_batch(&mut touch_batch);
         flush_tool_sig_batch(&mut batch);
     }
 }
@@ -284,6 +341,11 @@ impl SignatureCache {
     pub(crate) fn bump_global_persist_floor() -> u64 {
         let seq = next_persist_seq();
         GLOBAL_MIN_PERSIST_SEQ.fetch_max(seq, Ordering::AcqRel);
+        if let Some(slot) = SESSION_MIN_PERSIST_SEQ.get() {
+            if let Ok(mut map) = slot.lock() {
+                map.clear();
+            }
+        }
         seq
     }
 
@@ -295,13 +357,14 @@ impl SignatureCache {
         let seq = next_persist_seq();
         let slot = SESSION_MIN_PERSIST_SEQ.get_or_init(|| Mutex::new(HashMap::new()));
         if let Ok(mut map) = slot.lock() {
-            let entry = map.entry(clean.to_string()).or_insert(0);
-            if seq > *entry {
-                *entry = seq;
+            let entry = map.entry(clean.to_string()).or_insert((0, Instant::now()));
+            if seq > entry.0 {
+                entry.0 = seq;
             }
-            if map.len() > SESSION_CACHE_LIMIT * 4 {
+            entry.1 = Instant::now();
+            if map.len() > 512 {
                 let min_global = GLOBAL_MIN_PERSIST_SEQ.load(Ordering::Acquire);
-                map.retain(|_, v| *v > min_global);
+                map.retain(|_, (v, at)| *v > min_global && at.elapsed() < SESSION_FLOOR_TTL);
             }
         }
         seq
@@ -321,14 +384,14 @@ impl SignatureCache {
             .split_once('\u{1f}')
             .map(|(prefix, _)| prefix)
             .unwrap_or(scoped_key);
-        if let Some(&min_seq) = map.get(store_key) {
+        if let Some(&(min_seq, _)) = map.get(store_key) {
             if seq <= min_seq {
                 return false;
             }
         }
         let mut rest = store_key;
         while let Some((_, tail)) = rest.split_once(':') {
-            if let Some(&min_seq) = map.get(tail) {
+            if let Some(&(min_seq, _)) = map.get(tail) {
                 if seq <= min_seq {
                     return false;
                 }
@@ -341,6 +404,32 @@ impl SignatureCache {
     #[cfg(test)]
     pub(crate) fn allocate_persist_seq_for_test() -> u64 {
         next_persist_seq()
+    }
+
+    fn enqueue_touch(&self, scoped_key: &str, seq: u64) {
+        if is_session_delete_pending_for_scoped_key(scoped_key)
+            || !Self::is_persist_entry_current(scoped_key, seq)
+        {
+            return;
+        }
+        if !should_enqueue_touch(scoped_key) {
+            return;
+        }
+        let at = chrono::Utc::now().timestamp_millis();
+        match self.persist_mode {
+            PersistMode::Async => {
+                let _ = tool_sig_persist_sender().try_send(ToolSigPersistCmd::Touch {
+                    key: scoped_key.to_string(),
+                    seq,
+                    at,
+                });
+            }
+            PersistMode::Sync => {
+                let _ = crate::modules::proxy_db::touch_tool_signature(scoped_key, at);
+            }
+            #[cfg(test)]
+            PersistMode::MemoryOnly => {}
+        }
     }
 
     pub fn cache_tool_signature(&self, store_key: &str, tool_use_id: &str, signature: String) {
@@ -356,24 +445,27 @@ impl SignatureCache {
 
         // 1. 先检查并更新内存 L1 缓存：若已持有相同的未过期有效签名，直接刷新 TTL 返回，避免重复写库；
         //    若需写入，则在持有 L1 锁期间分配单调递增的 persist_seq，保证与并发会话作废严格定序。
+        let mut touch_identical = false;
         let persist_seq = if let Ok(mut cache) = self.tool_signatures.lock() {
+            let seq = next_persist_seq();
             if let Some(existing) = cache.get_mut(&id_str) {
                 if !existing.is_expired() {
                     if let ToolSigCacheValue::Present(ref cur_sig) = existing.data {
                         if cur_sig == &signature {
                             existing.timestamp = SystemTime::now();
-                            return;
+                            touch_identical = true;
                         }
                     }
                 }
             }
 
-            let seq = next_persist_seq();
-            tracing::debug!("[SignatureCache] Caching tool signature for id: {}", id_str);
-            cache.insert(
-                id_str.clone(),
-                CacheEntry::new(ToolSigCacheValue::Present(signature.clone())),
-            );
+            if !touch_identical {
+                tracing::debug!("[SignatureCache] Caching tool signature for id: {}", id_str);
+                cache.insert(
+                    id_str.clone(),
+                    CacheEntry::new(ToolSigCacheValue::Present(signature.clone())),
+                );
+            }
 
             // Clean up expired entries (and evict oldest if still above limit)
             if cache.len() > TOOL_CACHE_LIMIT {
@@ -404,6 +496,11 @@ impl SignatureCache {
         } else {
             return;
         };
+
+        if touch_identical {
+            self.enqueue_touch(&id_str, persist_seq);
+            return;
+        }
 
         // 2. 仅对新增或变更的签名持久化到 SQLite L2 数据库 (生产环境走非阻塞批量队列，杜绝阻塞请求与 SSE 流)
         match self.persist_mode {
@@ -466,6 +563,7 @@ impl SignatureCache {
                                     "[SignatureCache] Hit tool signature for id: {}",
                                     candidate
                                 );
+                                self.enqueue_touch(candidate, next_persist_seq());
                                 return Some(sig.clone());
                             }
                             ToolSigCacheValue::Missing {
@@ -506,6 +604,7 @@ impl SignatureCache {
                         "[SignatureCache] Restored tool signature from SQLite for id: {}",
                         candidate
                     );
+                    self.enqueue_touch(candidate, next_persist_seq());
                     return Some(sig);
                 }
                 Ok(None) => {
@@ -827,26 +926,33 @@ impl SignatureCache {
                 );
             }
         }
+        let mut delete_enqueued = false;
         if let Ok(mut cache) = self.tool_signatures.lock() {
             let _ = Self::bump_session_persist_floor(session_id);
             if self.persist_mode == PersistMode::Async {
                 mark_pending_session_delete(session_id);
+                // 在 L1 锁内入队 DeleteSession，保证旧 Save 不可能排在删除之后
+                delete_enqueued = tool_sig_persist_sender()
+                    .try_send(ToolSigPersistCmd::DeleteSession {
+                        session_id: session_id.to_string(),
+                    })
+                    .is_ok();
             }
             cache.retain(|k, _| !matches_scoped_session(k, session_id));
         } else {
             let _ = Self::bump_session_persist_floor(session_id);
             if self.persist_mode == PersistMode::Async {
                 mark_pending_session_delete(session_id);
+                delete_enqueued = tool_sig_persist_sender()
+                    .try_send(ToolSigPersistCmd::DeleteSession {
+                        session_id: session_id.to_string(),
+                    })
+                    .is_ok();
             }
         }
         match self.persist_mode {
             PersistMode::Async => {
-                if tool_sig_persist_sender()
-                    .try_send(ToolSigPersistCmd::DeleteSession {
-                        session_id: session_id.to_string(),
-                    })
-                    .is_err()
-                {
+                if !delete_enqueued {
                     let _ =
                         crate::modules::proxy_db::delete_tool_signatures_for_session(session_id);
                     complete_pending_session_delete(session_id);

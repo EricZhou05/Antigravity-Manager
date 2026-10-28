@@ -1879,15 +1879,16 @@ pub fn finalize_gemini_contents_thinking_with_options(
     // 若下一轮有新签名返回，则丢弃旧签名采纳新签名；若下一轮无签名，则由攒着的签名补充。
     let mut pending_thought_sig: Option<String> = None;
 
-    let initial_session_sig: Option<String> = if compaction_boundary.is_some() {
-        None
-    } else {
-        session_id.and_then(|sid| {
-            crate::proxy::SignatureCache::global()
-                .get_session_signature(sid)
-                .filter(|s| is_likely_gemini_signature(s))
-        })
-    };
+    let initial_session_sig: Option<String> =
+        if untrusted_signatures || compaction_boundary.is_some() {
+            None
+        } else {
+            session_id.and_then(|sid| {
+                crate::proxy::SignatureCache::global()
+                    .get_session_signature(sid)
+                    .filter(|s| is_likely_gemini_signature(s))
+            })
+        };
 
     // 预先计算最后一个 model / 工具调用轮次的索引
     let last_model_idx = contents.iter().enumerate().rposition(|(_, m)| {
@@ -1960,8 +1961,11 @@ pub fn finalize_gemini_contents_thinking_with_options(
             // 1. 提取当前轮次已有合法的真实签名 (纯检查当前轮部件自带签名，必须严格校验合法性！)
             // [Pipeline First] 若存在 functionCall 强制优先从 functionCall 提取合法签名，
             // 避免前面紧随的 text 说明正文误抢签名导致真实工具调用凭据丢失或绕过 tool_signatures 穿透查库。
-            let turn_real_sig =
-                extract_turn_signature(&other_parts, !is_claude_turn, is_claude_turn);
+            let turn_real_sig = if untrusted_signatures {
+                None
+            } else {
+                extract_turn_signature(&other_parts, !is_claude_turn, is_claude_turn)
+            };
 
             // 1.1 工具调用签名多级检索与穿透回填（支持 Gemini 与 Claude 模型）：
             // ① 原生/传入 tool_id -> 内存 L1 + SQLite L2 (tool_signatures)
@@ -1976,7 +1980,7 @@ pub fn finalize_gemini_contents_thinking_with_options(
             };
 
             let cached_tool_sig: Option<String> =
-                if !is_in_compaction_history && turn_real_sig.is_none() {
+                if !untrusted_signatures && !is_in_compaction_history && turn_real_sig.is_none() {
                     let mut found_sig = None;
                     let mut fc_counter = 0usize;
                     for p in &other_parts {
@@ -2062,21 +2066,24 @@ pub fn finalize_gemini_contents_thinking_with_options(
                 };
 
             let is_last_model_turn = last_model_idx == Some(msg_idx);
-            let cached_session_sig: Option<String> =
-                if is_last_model_turn && turn_real_sig.is_none() && cached_tool_sig.is_none() {
-                    initial_session_sig
-                        .clone()
-                        .filter(|s| is_valid_family_sig(s))
-                        .map(|s| {
-                            if is_claude_turn {
-                                ensure_google_claude_thought_signature(&s)
-                            } else {
-                                s
-                            }
-                        })
-                } else {
-                    None
-                };
+            let cached_session_sig: Option<String> = if !untrusted_signatures
+                && is_last_model_turn
+                && turn_real_sig.is_none()
+                && cached_tool_sig.is_none()
+            {
+                initial_session_sig
+                    .clone()
+                    .filter(|s| is_valid_family_sig(s))
+                    .map(|s| {
+                        if is_claude_turn {
+                            ensure_google_claude_thought_signature(&s)
+                        } else {
+                            s
+                        }
+                    })
+            } else {
+                None
+            };
 
             // 2. 签名归位（终审出站门禁 Gatekeeper）：
             // 签名只写在该轮第一个非思考 part 上。Gemini 与 Claude 桌面端都是这个落点。
