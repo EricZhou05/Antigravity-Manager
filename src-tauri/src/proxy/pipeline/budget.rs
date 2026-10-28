@@ -67,6 +67,19 @@ impl RequestContext {
             .as_secs()
     }
 
+    /// 派生一个“共享截止时刻、但独立计数/独立估算”的子上下文
+    ///
+    /// 用于同一请求内并行的子任务（例如一次生成 n 张图片）：它们共享同一个 270s 总预算，
+    /// 但各自是不同的 body，不能共用「大 body 重放次数」计数器——
+    /// 否则正常的并行会被误判成“重放放大”，第 3 张图就会被护栏拦下。
+    pub fn fork(&self) -> Arc<Self> {
+        Arc::new(Self {
+            deadline: self.deadline,
+            upstream_calls: AtomicUsize::new(0),
+            estimated_tokens: AtomicU32::new(self.estimated_tokens.load(Ordering::Relaxed)),
+        })
+    }
+
     /// 记录一次上游调用并返回其序号（1-based）
     fn register_upstream_call(&self) -> usize {
         self.upstream_calls.fetch_add(1, Ordering::Relaxed) + 1
@@ -104,6 +117,20 @@ pub async fn scope<F: std::future::Future>(ctx: Arc<RequestContext>, fut: F) -> 
     REQUEST_CONTEXT.scope(ctx, fut).await
 }
 
+/// 在「可选」上下文上挂载请求预算（`None` 时直接执行）
+///
+/// task_local 不会跨 `tokio::spawn` 传递：图片生成等 `JoinSet` 子任务必须在**spawn 前**
+/// 捕获 `current()`，再在子任务内用本函数恢复，否则既看不到截止时刻，也不会被重放护栏计数。
+pub async fn scope_optional<F: std::future::Future>(
+    ctx: Option<Arc<RequestContext>>,
+    fut: F,
+) -> F::Output {
+    match ctx {
+        Some(ctx) => scope(ctx, fut).await,
+        None => fut.await,
+    }
+}
+
 /// 读取当前请求上下文（后台任务为 None）
 pub fn current() -> Option<Arc<RequestContext>> {
     REQUEST_CONTEXT.try_with(Arc::clone).ok()
@@ -132,6 +159,19 @@ pub fn exhausted() -> bool {
 pub fn clamp_budget_secs(budget_secs: u64) -> u64 {
     match remaining_secs() {
         Some(remaining) => budget_secs.min(remaining.max(MIN_ATTEMPT_BUDGET_SECS)),
+        None => budget_secs,
+    }
+}
+
+/// 把「响应头之后仍要等上游」的某个阶段超时夹到本请求剩余预算内（预留 2s 收尾余量）
+///
+/// 用于 peek 首个 chunk 之类的二次等待：这些阶段如果不受全局预算约束，
+/// 「270s 总预算」就只能约束单次调用，实际总时长可以叠加到 270s 之外。
+pub fn clamp_secs(budget_secs: u64) -> u64 {
+    match remaining_secs() {
+        Some(remaining) => {
+            budget_secs.min(remaining.saturating_sub(2).max(MIN_ATTEMPT_BUDGET_SECS))
+        }
         None => budget_secs,
     }
 }
@@ -230,6 +270,28 @@ mod tests {
             for _ in 0..20 {
                 assert!(register_upstream_call(1024).is_ok());
             }
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn fork_shares_deadline_but_resets_replay_counter() {
+        // 并行子任务（如一次生成 n 张图）共享同一个截止时刻，但重放计数必须各算各的：
+        // 否则第 3 张图就会被“大 body 重放上限”误拦。
+        let parent = RequestContext::new(deadline_now());
+        let child = parent.fork();
+        assert_eq!(child.deadline, parent.deadline);
+
+        scope(parent, async move {
+            assert!(register_upstream_call(REPLAY_GUARD_BODY_BYTES).is_ok());
+            assert!(register_upstream_call(REPLAY_GUARD_BODY_BYTES).is_ok());
+            assert!(register_upstream_call(REPLAY_GUARD_BODY_BYTES).is_err());
+
+            scope(child, async {
+                assert!(register_upstream_call(REPLAY_GUARD_BODY_BYTES).is_ok());
+                assert!(register_upstream_call(REPLAY_GUARD_BODY_BYTES).is_ok());
+            })
+            .await;
         })
         .await;
     }

@@ -16,14 +16,15 @@ pub mod inbound;
 mod official_alignment_tests;
 pub mod policy;
 pub mod stream_lifecycle;
+pub mod terminal;
 pub mod usage;
 
 pub use auto_heal::{wrap_stream_with_empty_thinking_auto_heal, ThinkingAutoHealContext};
 pub use budget::{
-    clamp_budget_secs, current_deadline, deadline_now, estimated_tokens, exhausted,
-    gateway_request_budget_secs, register_upstream_call, remaining_secs, set_estimated_tokens,
-    RequestContext, DEFAULT_GATEWAY_REQUEST_BUDGET_SECS, MAX_LARGE_BODY_UPSTREAM_CALLS,
-    REPLAY_GUARD_BODY_BYTES,
+    clamp_budget_secs, clamp_secs, current, current_deadline, deadline_now, estimated_tokens,
+    exhausted, gateway_request_budget_secs, register_upstream_call, remaining_secs, scope_optional,
+    set_estimated_tokens, RequestContext, DEFAULT_GATEWAY_REQUEST_BUDGET_SECS,
+    MAX_LARGE_BODY_UPSTREAM_CALLS, REPLAY_GUARD_BODY_BYTES,
 };
 pub use estimator::{estimate_tokens, PipelineTokenEstimator};
 pub use image::{
@@ -34,4 +35,8 @@ pub use image::{
 pub use inbound::{extract_client_thinking_switch, InboundThinkingPipeline};
 pub use policy::UpstreamClassification;
 pub use stream_lifecycle::{run_stream_lifecycle, ProtocolStreamHandler, StreamLifecycleConfig};
+pub use terminal::{
+    classify as classify_terminal_error, strip_markers, FailureStatusTracker, TerminalDisposition,
+    UpstreamTerminal,
+};
 pub use usage::CanonicalUsage;

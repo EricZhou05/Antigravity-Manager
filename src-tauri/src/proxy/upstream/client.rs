@@ -433,42 +433,34 @@ pub fn mask_email(email: &str) -> String {
     }
 }
 
-/// 大体积请求在上传阶段被中断且已按策略终止重传的错误标记。
-///
-/// 协议 Handler 通过 `is_upload_stage_failure` 判定后不再跨账号重发同一大 body，
-/// 避免“一个短上传看门狗导致同一大文件被反复从头重传”的放大效应。
-pub const UPLOAD_STAGE_TERMINAL_MARKER: &str = "[upstream_upload_stage_terminal]";
+// [Pipeline First] 终态标记与分类收敛到 `pipeline::terminal`：
+// 协议适配器不再各自 `contains` 字符串，也不再各自决定 504 / 502。
+// 这里保留同名导出，保证既有调用点（含单测）无需改动。
+pub use crate::proxy::pipeline::terminal::{
+    FIRST_BYTE_STAGE_TERMINAL_MARKER, GATEWAY_BUDGET_TERMINAL_MARKER, REPLAY_CAP_TERMINAL_MARKER,
+    UPLOAD_STAGE_TERMINAL_MARKER,
+};
 
 /// 判断上游错误是否为“大体积上传阶段终止、不应再跨账号重传”的终态失败
 pub fn is_upload_stage_failure(error_text: &str) -> bool {
-    error_text.contains(UPLOAD_STAGE_TERMINAL_MARKER)
+    crate::proxy::pipeline::terminal::classify(error_text)
+        == Some(crate::proxy::pipeline::terminal::UpstreamTerminal::Upload)
 }
-
-/// 首字节预算耗尽的终态标记。
-///
-/// 语义与 `UPLOAD_STAGE_TERMINAL_MARKER` 对称，但处置更严：
-/// 首字节超时的成因是上游排队 / 大上下文 prefill，**不是账号故障**。
-/// 若把它当成账号失败去轮换，每一次重试都会让上游从头 prefill 同一份大 body，
-/// 形成“越重试越慢”的活锁（实测 7 分钟 22 次、全在首字节阶段）。
-///
-/// 因此 Handler 见到本标记后：不标记账号失败、不跨账号重放，直接返回 504 交客户端决定。
-pub const FIRST_BYTE_STAGE_TERMINAL_MARKER: &str = "[upstream_first_byte_terminal]";
 
 /// 判断上游错误是否为“首字节预算耗尽、不应跨账号重放”的终态失败
 pub fn is_first_byte_stage_failure(error_text: &str) -> bool {
-    error_text.contains(FIRST_BYTE_STAGE_TERMINAL_MARKER)
+    crate::proxy::pipeline::terminal::classify(error_text)
+        == Some(crate::proxy::pipeline::terminal::UpstreamTerminal::FirstByte)
 }
 
-/// 任一终态重放抑制标记（上传阶段 / 首字节阶段）
+/// 任一终态（上传 / 首字节 / 全局预算 / 重放上限）：都不再跨账号重放
 pub fn is_terminal_replay_suppressed(error_text: &str) -> bool {
-    is_upload_stage_failure(error_text) || is_first_byte_stage_failure(error_text)
+    crate::proxy::pipeline::terminal::classify(error_text).is_some()
 }
 
 /// 剔除仅用于内部链路控制与诊断的标记，避免泄漏到客户端错误报文
 pub fn strip_internal_markers(error_text: &str) -> String {
-    error_text
-        .replace(UPLOAD_STAGE_TERMINAL_MARKER, "")
-        .replace(FIRST_BYTE_STAGE_TERMINAL_MARKER, "")
+    crate::proxy::pipeline::terminal::strip_markers(error_text)
 }
 
 /// [NEW] 错误日志脱敏：抹除报错信息中的 access_token, proxy_url 等敏感凭证
@@ -1234,7 +1226,61 @@ impl UpstreamClient {
 
     /// [FIX #765] 调用 v1internal API，支持透传额外的 Headers
     /// [ENHANCED] 返回 UpstreamCallResult，包含降级尝试记录，用于 debug 日志
+    ///
+    /// [Pipeline Budget] 这里是"请求级全局预算"的最终闸门：整次调用（含 403 降级重试、
+    /// 端点切换、分阶段上传与首字节等待）不得超过本请求的剩余全局预算。
+    /// 下沉到这里之后，四个协议适配器不再各自 `tokio::time::timeout` 包一层——
+    /// 历史上只有 Claude 包了，其余三条链路只能靠内部预算兜底。
     pub async fn call_v1_internal_with_headers(
+        &self,
+        method: &str,
+        access_token: &str,
+        body: Value,
+        query_string: Option<&str>,
+        extra_headers: std::collections::HashMap<String, String>,
+        account_id: Option<&str>,
+    ) -> Result<UpstreamCallResult, String> {
+        let Some(remaining_secs) = crate::proxy::pipeline::budget::remaining_secs() else {
+            // 无入口上下文（后台任务 / 辅助调用 / 单测）：行为不变
+            return self
+                .call_v1_internal_with_headers_inner(
+                    method,
+                    access_token,
+                    body,
+                    query_string,
+                    extra_headers,
+                    account_id,
+                )
+                .await;
+        };
+
+        let attempt_budget_secs =
+            remaining_secs.max(crate::proxy::pipeline::budget::MIN_ATTEMPT_BUDGET_SECS);
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(attempt_budget_secs),
+            self.call_v1_internal_with_headers_inner(
+                method,
+                access_token,
+                body,
+                query_string,
+                extra_headers,
+                account_id,
+            ),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(format!(
+                "{}Gateway global request budget ({}s) exhausted while awaiting upstream (method={})",
+                GATEWAY_BUDGET_TERMINAL_MARKER,
+                crate::proxy::pipeline::budget::gateway_request_budget_secs(),
+                method
+            )),
+        }
+    }
+
+    /// `call_v1_internal_with_headers` 的实际实现（已在外层完成请求级预算夹取）
+    async fn call_v1_internal_with_headers_inner(
         &self,
         method: &str,
         access_token: &str,
@@ -1386,7 +1432,7 @@ impl UpstreamClient {
         {
             return Err(format!(
                 "{}Cross-account replay cap reached for large body (call #{}, limit={}, body_len={})",
-                FIRST_BYTE_STAGE_TERMINAL_MARKER,
+                REPLAY_CAP_TERMINAL_MARKER,
                 call_no,
                 crate::proxy::pipeline::budget::MAX_LARGE_BODY_UPSTREAM_CALLS,
                 body_bytes.len()
@@ -1403,7 +1449,7 @@ impl UpstreamClient {
         if crate::proxy::pipeline::budget::exhausted() {
             return Err(format!(
                 "{}Gateway global request budget exhausted before upstream call (method={}, body_len={})",
-                FIRST_BYTE_STAGE_TERMINAL_MARKER,
+                GATEWAY_BUDGET_TERMINAL_MARKER,
                 method,
                 body_bytes.len()
             ));
@@ -1766,11 +1812,22 @@ impl UpstreamClient {
                             .unwrap_or(0);
                         let terminal_large_body_failure =
                             timeout_plan.large_body && timeout_plan.endpoint_attempt_limit <= 1;
-                        // 首字节预算耗尽 / 全局预算耗尽，均属终态：不再跨账号重放
+                        // 终态判定统一交给 `pipeline::terminal` 分类：
+                        // - 全局预算耗尽：整条请求已到点
+                        // - 首字节耗尽且后面没有可尝试端点：上游只是慢，不是账号故障
+                        // - 大体积单次尝试策略：继续 fallback 只会再次上传同一份大 body
                         let global_exhausted = crate::proxy::pipeline::budget::exhausted();
-                        let first_byte_terminal = (send_stage == SendStage::AwaitFirstByte
-                            && !has_next_for_send_stage)
-                            || global_exhausted;
+                        let terminal = if global_exhausted {
+                            Some(crate::proxy::pipeline::terminal::UpstreamTerminal::GlobalBudget)
+                        } else if send_stage == SendStage::AwaitFirstByte
+                            && !has_next_for_send_stage
+                        {
+                            Some(crate::proxy::pipeline::terminal::UpstreamTerminal::FirstByte)
+                        } else if terminal_large_body_failure {
+                            Some(crate::proxy::pipeline::terminal::UpstreamTerminal::Upload)
+                        } else {
+                            None
+                        };
                         let detail = format!(
                             "Upstream send failed at {} (method={}, kind={}, body_len={}, stage={}, bytes_sent={}, effective_bps={}, budget_source={}, upload_budget={}s, first_byte_budget={}s, total_elapsed={:.1}s): {}",
                             base_url,
@@ -1786,12 +1843,9 @@ impl UpstreamClient {
                             call_overall_start.elapsed().as_secs_f64(),
                             e
                         );
-                        let msg = if first_byte_terminal {
-                            format!("{}{}", FIRST_BYTE_STAGE_TERMINAL_MARKER, detail)
-                        } else if terminal_large_body_failure {
-                            format!("{}{}", UPLOAD_STAGE_TERMINAL_MARKER, detail)
-                        } else {
-                            detail
+                        let msg = match terminal {
+                            Some(terminal) => format!("{}{}", terminal.marker(), detail),
+                            None => detail,
                         };
                         tracing::warn!(
                             %msg,
@@ -1820,23 +1874,16 @@ impl UpstreamClient {
                         });
                         last_err = Some(msg);
 
-                        // 首字节预算耗尽：上游只是慢，不是账号故障。
-                        // 不再尝试下一个端点/账号 —— 换端点只会让同一份大 body 从头 prefill。
-                        if first_byte_terminal {
+                        // 终态：不再换端点、也不再换账号重放同一份 body。
+                        // - 首字节耗尽：上游只是慢，换端点只会让同一份大 body 从头 prefill
+                        // - 全局预算耗尽：整条请求已到点
+                        // - 大体积单次尝试：重试只会从头上传同一大 body
+                        if let Some(terminal) = terminal {
                             tracing::warn!(
                                 body_len = body_bytes.len(),
                                 first_byte_budget_secs,
-                                "First-byte budget exhausted: suppressing cross-account replay to avoid prefill amplification"
-                            );
-                            break;
-                        }
-
-                        // [Fixes #3763] 大体积请求默认单次尝试：无论失败在“上传”还是“等首字节”阶段，
-                        // 继续 fallback / 跨账号重发都只会从头上传同一大 body，造成重传放大。
-                        if terminal_large_body_failure {
-                            tracing::warn!(
-                                body_len = body_bytes.len(),
-                                "Large-body request failed under single-attempt policy; suppressing endpoint fallback and cross-account retry to avoid re-upload amplification"
+                                terminal = terminal.as_str(),
+                                "Terminal upstream failure: suppressing endpoint fallback and cross-account replay"
                             );
                             break;
                         }

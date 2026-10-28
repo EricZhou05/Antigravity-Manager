@@ -1744,7 +1744,6 @@ pub async fn handle_messages(
     let mut degraded_gemini_body: Option<serde_json::Value> = None;
     let mut last_email: Option<String> = None;
     let mut last_mapped_model: Option<String> = None;
-    let mut last_status = StatusCode::SERVICE_UNAVAILABLE; // Default to 503 if no response reached
     let mut failure_statuses = super::common::FailureStatusTracker::default();
     let mut force_rotate = false;
 
@@ -1756,12 +1755,9 @@ pub async fn handle_messages(
     let mut ttft_ms: f64 = 0.0;
     let mut fallback_overhead_ms: f64 = 0.0;
 
-    // 与 Pipeline 中间件共用同一个截止时刻（四大协议一致），而非各 handler 自算
-    let gateway_budget_secs = crate::proxy::pipeline::budget::gateway_request_budget_secs();
-    let global_deadline = tokio::time::Instant::from_std(
-        crate::proxy::pipeline::budget::current_deadline()
-            .unwrap_or_else(crate::proxy::pipeline::budget::deadline_now),
-    );
+    // [Pipeline Budget] 请求级截止时刻由中间件注入（`pipeline::budget`），
+    // 单次上游调用的硬上限已下沉到 `upstream::client`，循环闸门统一用 `budget::exhausted()`；
+    // 因此这里不再自算 `global_deadline`，也不再有 Claude 独有的一套超时。
 
     let image_scheduler = state.image_scheduler.clone();
     let mut image_permit = None;
@@ -1770,39 +1766,23 @@ pub async fn handle_messages(
         // [Stage 2 Timing] 中转归一计时起点
         let norm_start = std::time::Instant::now();
 
-        // 检查全局请求预算：严格防止内部轮换时间逼近客户端 300s 看门狗超时
-        let now = tokio::time::Instant::now();
-        if now >= global_deadline {
+        // [Pipeline Budget] 剩余预算不足以再发起一次上游尝试：统一走终态 504，
+        // 不罚账号、不轮换（判定与状态码均由 pipeline::terminal 给出）。
+        if crate::proxy::pipeline::budget::exhausted() {
             tracing::warn!(
                 "[{}] Claude 请求全局预算耗尽（{}s，共经历 {} 次尝试），终止重试以杜绝触发客户端超时看门狗",
                 trace_id,
-                gateway_budget_secs,
+                crate::proxy::pipeline::budget::gateway_request_budget_secs(),
                 attempt
             );
-            if last_status == StatusCode::SERVICE_UNAVAILABLE || last_status == StatusCode::OK {
-                last_status = StatusCode::GATEWAY_TIMEOUT;
-            }
-            failure_statuses.record(StatusCode::GATEWAY_TIMEOUT);
+            failure_statuses
+                .record_terminal(crate::proxy::pipeline::terminal::UpstreamTerminal::GlobalBudget);
             if last_error.is_empty() {
                 last_error = format!(
                     "Gateway global request budget exceeded ({}s)",
-                    gateway_budget_secs
+                    crate::proxy::pipeline::budget::gateway_request_budget_secs()
                 );
             }
-            break;
-        }
-
-        let remaining_global_secs = (global_deadline - now).as_secs();
-        if remaining_global_secs < 5 {
-            tracing::warn!(
-                "[{}] Claude 请求全局预算剩余不足 5s ({}s left)，安全退出重试循环",
-                trace_id,
-                remaining_global_secs
-            );
-            if last_status == StatusCode::SERVICE_UNAVAILABLE || last_status == StatusCode::OK {
-                last_status = StatusCode::GATEWAY_TIMEOUT;
-            }
-            failure_statuses.record(StatusCode::GATEWAY_TIMEOUT);
             break;
         }
 
@@ -2153,78 +2133,56 @@ pub async fn handle_messages(
             ),
         );
 
-        // 全局预算硬约束：单次上游调用不得超过本请求剩余全局预算。
-        // 否则单次调用内部预算（上传 + 首字）可能叠加出远超全局上限的总耗时——
-        // 那样“全局预算 270s”只是限制“尝试次数”，而不是真正的总时长封顶。
-        let upstream_timeout = std::time::Duration::from_secs(remaining_global_secs.max(5));
-        let upstream_call_outcome: Result<
-            crate::proxy::upstream::client::UpstreamCallResult,
-            String,
-        > = match tokio::time::timeout(
-            upstream_timeout,
-            upstream.call_v1_internal_with_headers(
+        // 请求级预算硬约束已下沉到 `upstream::client`（谁调谁受约束），此处不再套 timeout。
+        let call_result = match upstream
+            .call_v1_internal_with_headers(
                 method,
                 &access_token,
                 gemini_body.clone(),
                 query,
                 extra_headers.clone(),
                 Some(account_id.as_str()),
-            ),
-        )
-        .await
+            )
+            .await
         {
-            Ok(inner) => inner,
-            Err(_) => Err(format!(
-                "{}Gateway global request budget ({}s) exhausted while awaiting upstream (attempt {}/{})",
-                crate::proxy::upstream::client::FIRST_BYTE_STAGE_TERMINAL_MARKER,
-                gateway_budget_secs,
-                attempt + 1,
-                max_attempts
-            )),
-        };
-        let call_result = match upstream_call_outcome {
             Ok(r) => r,
             Err(e) => {
                 last_error = e.clone();
-                failure_statuses.record(StatusCode::GATEWAY_TIMEOUT);
-                // 首字节预算耗尽 = 上游排队 / 大上下文 prefill 慢，不是账号故障：
-                // 计入账号冷却只会让整池被逐一轮换，而每次重试都从头 prefill 同一份大 body。
-                let first_byte_terminal =
-                    crate::proxy::upstream::client::is_first_byte_stage_failure(&e);
-                crate::proxy::stage_trace::StageTrace::alert_current(
-                    "upstream_err",
-                    format!(
-                        "attempt={}/{} first_byte_terminal={} elapsed={:.1}s err={}",
-                        attempt + 1,
-                        max_attempts,
-                        first_byte_terminal,
-                        upstream_req_start.elapsed().as_secs_f64(),
-                        crate::proxy::upstream::client::strip_internal_markers(&e)
-                    ),
-                );
-                if !first_byte_terminal {
-                    token_manager.mark_account_transient_failure(&account_id, 30, &e);
+                // 终态（首字节 / 上传 / 全局预算 / 重放上限）都不是账号故障：
+                // 不冷却、不跨账号重放；状态码与处置统一由 pipeline::terminal 给出。
+                if let Some(terminal) = crate::proxy::pipeline::terminal::classify(&e) {
+                    let disposition = terminal.disposition();
+                    failure_statuses.record(disposition.status);
+                    crate::proxy::stage_trace::StageTrace::alert_current(
+                        "upstream_terminal",
+                        format!(
+                            "attempt={}/{} kind={} status={} elapsed={:.1}s",
+                            attempt + 1,
+                            max_attempts,
+                            terminal.as_str(),
+                            disposition.status.as_u16(),
+                            upstream_req_start.elapsed().as_secs_f64()
+                        ),
+                    );
+                    if disposition.penalize_account {
+                        token_manager.mark_account_transient_failure(&account_id, 30, &e);
+                    }
+                    if disposition.stop_rotation {
+                        break;
+                    }
+                    continue;
                 }
+
+                // 非终态（连接失败 / 调度错误）：按既有策略冷却并换账号。
+                // 状态码与其余三条链路对齐为 502，不再把所有错误都当 504。
+                failure_statuses.record(StatusCode::BAD_GATEWAY);
+                token_manager.mark_account_transient_failure(&account_id, 30, &e);
                 debug!(
                     "Request failed on attempt {}/{}: {}",
                     attempt + 1,
                     max_attempts,
                     e
                 );
-                // 终态重放抑制：上传被截断或首字节预算耗尽，均不再跨账号重发同一 body
-                if crate::proxy::upstream::client::is_terminal_replay_suppressed(&e) {
-                    if first_byte_terminal {
-                        tracing::warn!(
-                            account = %mask_email(&email),
-                            "First-byte budget exhausted upstream; returning 504 without account rotation (account not penalized)"
-                        );
-                    } else {
-                        tracing::warn!(
-                            "Large-body upload aborted before completion; stopping account rotation to avoid re-upload amplification"
-                        );
-                    }
-                    break;
-                }
                 // 账号轮换：属于调度异常，必须被看到
                 crate::proxy::stage_trace::StageTrace::alert_current(
                     "account_rotate",
@@ -2280,7 +2238,6 @@ pub async fn handle_messages(
         // [NEW] 提取实际请求的上游端点 URL，用于日志记录和排查
         let upstream_url = response.url().to_string();
         let status = response.status();
-        last_status = status;
 
         // 成功
         if status.is_success() {
@@ -2465,11 +2422,8 @@ pub async fn handle_messages(
                     is_thinking,
                     Some(raw_estimated),
                 );
-                let current_remaining_secs = global_deadline
-                    .saturating_duration_since(tokio::time::Instant::now())
-                    .as_secs();
-                let peek_timeout_secs =
-                    base_peek_secs.min(current_remaining_secs.saturating_sub(2).max(5));
+                // [Pipeline Budget] peek 同样受请求级剩余预算约束，不再各自算截止时刻
+                let peek_timeout_secs = crate::proxy::pipeline::budget::clamp_secs(base_peek_secs);
                 // [FIX #3621] 采用固定截止时间点，杜绝遇到心跳 : ping 时刷新重置 30s 倒计时导致的 100s 死等死循环
                 let peek_deadline =
                     tokio::time::Instant::now() + std::time::Duration::from_secs(peek_timeout_secs);
@@ -2810,7 +2764,6 @@ pub async fn handle_messages(
 
         // 1. 立即提取状态码和 headers（防止 response 被 move）
         let status_code = status.as_u16();
-        last_status = status;
         failure_statuses.record(status);
         let retry_after = response
             .headers()

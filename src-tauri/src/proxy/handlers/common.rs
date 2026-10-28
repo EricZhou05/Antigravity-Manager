@@ -116,30 +116,11 @@ pub fn next_rotation_attempt(
     Some(attempt)
 }
 
-#[derive(Debug, Default)]
-pub struct FailureStatusTracker {
-    saw_failure: bool,
-    last_non_rate_limit: Option<StatusCode>,
-}
-
-impl FailureStatusTracker {
-    pub fn record(&mut self, status: StatusCode) {
-        self.saw_failure = true;
-        if status != StatusCode::TOO_MANY_REQUESTS {
-            self.last_non_rate_limit = Some(status);
-        }
-    }
-
-    pub fn final_status(&self) -> StatusCode {
-        self.last_non_rate_limit.unwrap_or_else(|| {
-            if self.saw_failure {
-                StatusCode::TOO_MANY_REQUESTS
-            } else {
-                StatusCode::BAD_GATEWAY
-            }
-        })
-    }
-}
+/// 请求内「结构化失败状态」聚合器已下沉到 `pipeline::terminal`（协议无关）。
+///
+/// 这里仅保留兼容导出，避免四个适配器与既有测试一次性大改；
+/// 新代码请直接用 `crate::proxy::pipeline::terminal::FailureStatusTracker`。
+pub use crate::proxy::pipeline::terminal::FailureStatusTracker;
 
 /// 自适应计算最大重试次数
 /// - 单账号 (pool_size <= 1): 允许初次请求 + 2次基于 quotaResetDelay 的退避重试 (共 3 次)，绝不 50ms 刷死

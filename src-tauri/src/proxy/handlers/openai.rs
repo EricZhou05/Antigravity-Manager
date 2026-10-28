@@ -2392,6 +2392,19 @@ pub async fn handle_chat_completions(
         max_attempts,
         retry_credentials.is_some(),
     ) {
+        // [Pipeline Budget] 剩余预算不足以再发起一次上游尝试：统一 504，不再做选号/转换空转
+        if crate::proxy::pipeline::budget::exhausted() {
+            failure_statuses
+                .record_terminal(crate::proxy::pipeline::terminal::UpstreamTerminal::GlobalBudget);
+            if last_error.is_empty() {
+                last_error = format!(
+                    "Gateway global request budget exceeded ({}s)",
+                    crate::proxy::pipeline::budget::gateway_request_budget_secs()
+                );
+            }
+            break;
+        }
+
         let norm_start = std::time::Instant::now();
         // 将 OpenAI 工具转为 Value 数组以便探测联网
         let tools_val: Option<Vec<Value>> = openai_req
@@ -2640,27 +2653,37 @@ pub async fn handle_chat_completions(
             Ok(r) => r,
             Err(e) => {
                 last_error = e.clone();
-                failure_statuses.record(StatusCode::BAD_GATEWAY);
                 drop(image_permit.take());
-                // 首字节预算耗尽不是账号故障：不计入账号冷却，也不跨账号重放同一 body
-                let first_byte_terminal =
-                    crate::proxy::upstream::client::is_first_byte_stage_failure(&e);
-                if !first_byte_terminal {
-                    token_manager.mark_account_transient_failure(&account_id, 30, &e);
+                // 终态（首字节 / 上传 / 全局预算 / 重放上限）都不是账号故障：
+                // 不冷却、不跨账号重放；状态码与处置统一由 pipeline::terminal 给出。
+                if let Some(terminal) = crate::proxy::pipeline::terminal::classify(&e) {
+                    let disposition = terminal.disposition();
+                    failure_statuses.record(disposition.status);
+                    if disposition.penalize_account {
+                        token_manager.mark_account_transient_failure(&account_id, 30, &e);
+                    }
+                    debug!(
+                        "OpenAI Request failed on attempt {}/{} (terminal={}): {}",
+                        attempt + 1,
+                        max_attempts,
+                        terminal.as_str(),
+                        crate::proxy::upstream::client::strip_internal_markers(&e)
+                    );
+                    if disposition.stop_rotation {
+                        break;
+                    }
+                    continue;
                 }
+
+                // 非终态（连接失败 / 调度异常）：冷却该账号并继续轮换
+                failure_statuses.record(StatusCode::BAD_GATEWAY);
+                token_manager.mark_account_transient_failure(&account_id, 30, &e);
                 debug!(
                     "OpenAI Request failed on attempt {}/{}: {}",
                     attempt + 1,
                     max_attempts,
                     e
                 );
-                if crate::proxy::upstream::client::is_terminal_replay_suppressed(&e) {
-                    tracing::warn!(
-                        first_byte = first_byte_terminal,
-                        "Stopping account rotation to avoid re-upload/prefill amplification"
-                    );
-                    break;
-                }
                 continue;
             }
         };
@@ -2789,11 +2812,13 @@ pub async fn handle_chat_completions(
                         .get("generationConfig")
                         .and_then(|gc| gc.get("thinkingConfig"))
                         .is_some();
-                let peek_timeout_secs = super::common::calculate_adaptive_peek_timeout_full(
-                    false,
-                    config.request_type == "image_gen",
-                    is_thinking,
-                    None,
+                let peek_timeout_secs = crate::proxy::pipeline::budget::clamp_secs(
+                    super::common::calculate_adaptive_peek_timeout_full(
+                        false,
+                        config.request_type == "image_gen",
+                        is_thinking,
+                        None,
+                    ),
                 );
                 let peek_deadline =
                     tokio::time::Instant::now() + std::time::Duration::from_secs(peek_timeout_secs);
@@ -4389,6 +4414,19 @@ pub async fn handle_completions(
         max_attempts,
         retry_credentials.is_some(),
     ) {
+        // [Pipeline Budget] 剩余预算不足以再发起一次上游尝试：统一 504，不再做选号/转换空转
+        if crate::proxy::pipeline::budget::exhausted() {
+            failure_statuses
+                .record_terminal(crate::proxy::pipeline::terminal::UpstreamTerminal::GlobalBudget);
+            if last_error.is_empty() {
+                last_error = format!(
+                    "Gateway global request budget exceeded ({}s)",
+                    crate::proxy::pipeline::budget::gateway_request_budget_secs()
+                );
+            }
+            break;
+        }
+
         let norm_start = std::time::Instant::now();
         // 3. 模型配置解析
         // 将 OpenAI 工具转为 Value 数组以便探测联网
@@ -4623,26 +4661,36 @@ pub async fn handle_completions(
             Ok(r) => r,
             Err(e) => {
                 last_error = e.clone();
-                failure_statuses.record(StatusCode::BAD_GATEWAY);
-                // 首字节预算耗尽不是账号故障：不计入账号冷却，也不跨账号重放同一 body
-                let first_byte_terminal =
-                    crate::proxy::upstream::client::is_first_byte_stage_failure(&e);
-                if !first_byte_terminal {
-                    token_manager.mark_account_transient_failure(&account_id, 30, &e);
+                // 终态（首字节 / 上传 / 全局预算 / 重放上限）都不是账号故障：
+                // 不冷却、不跨账号重放；状态码与处置统一由 pipeline::terminal 给出。
+                if let Some(terminal) = crate::proxy::pipeline::terminal::classify(&e) {
+                    let disposition = terminal.disposition();
+                    failure_statuses.record(disposition.status);
+                    if disposition.penalize_account {
+                        token_manager.mark_account_transient_failure(&account_id, 30, &e);
+                    }
+                    debug!(
+                        "Codex Request failed on attempt {}/{} (terminal={}): {}",
+                        attempt + 1,
+                        max_attempts,
+                        terminal.as_str(),
+                        crate::proxy::upstream::client::strip_internal_markers(&e)
+                    );
+                    if disposition.stop_rotation {
+                        break;
+                    }
+                    continue;
                 }
+
+                // 非终态（连接失败 / 调度异常）：冷却该账号并继续轮换
+                failure_statuses.record(StatusCode::BAD_GATEWAY);
+                token_manager.mark_account_transient_failure(&account_id, 30, &e);
                 debug!(
                     "Codex Request failed on attempt {}/{}: {}",
                     attempt + 1,
                     max_attempts,
                     e
                 );
-                if crate::proxy::upstream::client::is_terminal_replay_suppressed(&e) {
-                    tracing::warn!(
-                        first_byte = first_byte_terminal,
-                        "Stopping account rotation to avoid re-upload/prefill amplification"
-                    );
-                    break;
-                }
                 continue;
             }
         };
@@ -4757,11 +4805,13 @@ pub async fn handle_completions(
                             .get("generationConfig")
                             .and_then(|gc| gc.get("thinkingConfig"))
                             .is_some();
-                    let peek_timeout_secs = super::common::calculate_adaptive_peek_timeout_full(
-                        false,
-                        config.request_type == "image_gen",
-                        is_thinking,
-                        None,
+                    let peek_timeout_secs = crate::proxy::pipeline::budget::clamp_secs(
+                        super::common::calculate_adaptive_peek_timeout_full(
+                            false,
+                            config.request_type == "image_gen",
+                            is_thinking,
+                            None,
+                        ),
                     );
                     let peek_deadline = tokio::time::Instant::now()
                         + std::time::Duration::from_secs(peek_timeout_secs);
@@ -4953,11 +5003,13 @@ pub async fn handle_completions(
                             .get("generationConfig")
                             .and_then(|gc| gc.get("thinkingConfig"))
                             .is_some();
-                    let peek_timeout_secs = super::common::calculate_adaptive_peek_timeout_full(
-                        false,
-                        config.request_type == "image_gen",
-                        is_thinking,
-                        None,
+                    let peek_timeout_secs = crate::proxy::pipeline::budget::clamp_secs(
+                        super::common::calculate_adaptive_peek_timeout_full(
+                            false,
+                            config.request_type == "image_gen",
+                            is_thinking,
+                            None,
+                        ),
                     );
                     let peek_deadline = tokio::time::Instant::now()
                         + std::time::Duration::from_secs(peek_timeout_secs);
@@ -6157,6 +6209,10 @@ pub async fn handle_images_generations_internal(
     // [FIX #3485] 自适应多账号池与单账号退避最大重试次数 (单账号3次，多账号整池两轮)
     let max_attempts = crate::proxy::handlers::common::calculate_max_retry_attempts(max_pool_size);
 
+    // [Pipeline Budget] JoinSet 子任务不会继承 task_local：在 spawn 前捕获请求上下文，
+    // 并在子任务内恢复，否则图片链路既没有 270s 总预算，也不会被大 body 重放护栏计数。
+    let request_budget = crate::proxy::pipeline::budget::current();
+
     let mut tasks = JoinSet::new();
 
     // Track the last account actually attempted, so error responses (502/503) can be
@@ -6166,6 +6222,7 @@ pub async fn handle_images_generations_internal(
     for _ in 0..n {
         let upstream = upstream.clone();
         let token_manager = token_manager.clone();
+        let request_budget = request_budget.as_ref().map(|ctx| ctx.fork());
         let contents_parts = contents_parts.clone();
         let image_config = image_config.clone(); // 使用解析后的完整配置
         let _response_format = response_format.to_string();
@@ -6265,15 +6322,18 @@ pub async fn handle_images_generations_internal(
                     }
                 });
 
-                match upstream
-                    .call_v1_internal(
-                        "generateContent",
-                        &access_token,
-                        gemini_body,
-                        None,
-                        Some(account_id.as_str()),
-                    )
-                    .await
+                let upstream_call = upstream.call_v1_internal(
+                    "generateContent",
+                    &access_token,
+                    gemini_body,
+                    None,
+                    Some(account_id.as_str()),
+                );
+                match crate::proxy::pipeline::budget::scope_optional(
+                    request_budget.clone(),
+                    upstream_call,
+                )
+                .await
                 {
                     Ok(call_result) => {
                         let response = call_result.response;
@@ -6428,6 +6488,25 @@ pub async fn handle_images_generations_internal(
                         }
                     }
                     Err(e) => {
+                        // 终态（首字节 / 上传 / 全局预算 / 重放上限）都不是账号故障：
+                        // 不轮换账号、不重复上传同一份 body（图片同样受预算与重放护栏约束）
+                        if let Some(terminal) = crate::proxy::pipeline::terminal::classify(&e) {
+                            let disposition = terminal.disposition();
+                            failure_statuses.record(disposition.status);
+                            if disposition.penalize_account {
+                                token_manager
+                                    .mark_account_transient_failure(&account_id, 30, &e);
+                            }
+                            last_error = format!(
+                                "Upstream terminal ({}): {}",
+                                terminal.as_str(),
+                                crate::proxy::upstream::client::strip_internal_markers(&e)
+                            );
+                            if disposition.stop_rotation {
+                                break;
+                            }
+                            continue;
+                        }
                         last_error = format!("Network error: {}", e);
                         failure_statuses.record(StatusCode::BAD_GATEWAY);
                         drop(image_permit.take());
@@ -6723,10 +6802,13 @@ pub async fn handle_images_edits(
     // [FIX #3485] 自适应多账号池与单账号退避最大重试次数 (单账号3次，多账号整池两轮)
     let max_attempts = crate::proxy::handlers::common::calculate_max_retry_attempts(max_pool_size);
 
+    let request_budget = crate::proxy::pipeline::budget::current();
+
     let mut tasks = JoinSet::new();
     for _ in 0..n {
         let upstream = upstream.clone();
         let token_manager = token_manager.clone();
+        let request_budget = request_budget.as_ref().map(|ctx| ctx.fork());
         let contents_parts = contents_parts.clone();
         let image_config = image_config.clone();
         let response_format = response_format.clone();
@@ -6795,15 +6877,18 @@ pub async fn handle_images_edits(
                     image_config.clone(),
                 );
 
-                match upstream
-                    .call_v1_internal(
-                        "generateContent",
-                        &access_token,
-                        gemini_body,
-                        None,
-                        Some(account_id.as_str()),
-                    )
-                    .await
+                let upstream_call = upstream.call_v1_internal(
+                    "generateContent",
+                    &access_token,
+                    gemini_body,
+                    None,
+                    Some(account_id.as_str()),
+                );
+                match crate::proxy::pipeline::budget::scope_optional(
+                    request_budget.clone(),
+                    upstream_call,
+                )
+                .await
                 {
                     Ok(call_result) => {
                         let response = call_result.response;
@@ -6938,6 +7023,25 @@ pub async fn handle_images_edits(
                         }
                     }
                     Err(e) => {
+                        // 终态（首字节 / 上传 / 全局预算 / 重放上限）都不是账号故障：
+                        // 不轮换账号、不重复上传同一份 body（图片同样受预算与重放护栏约束）
+                        if let Some(terminal) = crate::proxy::pipeline::terminal::classify(&e) {
+                            let disposition = terminal.disposition();
+                            failure_statuses.record(disposition.status);
+                            if disposition.penalize_account {
+                                token_manager
+                                    .mark_account_transient_failure(&account_id, 30, &e);
+                            }
+                            last_error = format!(
+                                "Upstream terminal ({}): {}",
+                                terminal.as_str(),
+                                crate::proxy::upstream::client::strip_internal_markers(&e)
+                            );
+                            if disposition.stop_rotation {
+                                break;
+                            }
+                            continue;
+                        }
                         last_error = format!("Network error: {}", e);
                         failure_statuses.record(StatusCode::BAD_GATEWAY);
                         drop(image_permit.take());

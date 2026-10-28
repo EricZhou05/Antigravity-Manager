@@ -196,6 +196,19 @@ pub async fn handle_generate(
         max_attempts,
         retry_credentials.is_some(),
     ) {
+        // [Pipeline Budget] 剩余预算不足以再发起一次上游尝试：统一 504，不再做选号/转换空转
+        if crate::proxy::pipeline::budget::exhausted() {
+            failure_statuses
+                .record_terminal(crate::proxy::pipeline::terminal::UpstreamTerminal::GlobalBudget);
+            if last_error.is_empty() {
+                last_error = format!(
+                    "Gateway global request budget exceeded ({}s)",
+                    crate::proxy::pipeline::budget::gateway_request_budget_secs()
+                );
+            }
+            break;
+        }
+
         // [Stage Timing] 中转归一计时起点
         let norm_start = std::time::Instant::now();
 
@@ -450,27 +463,37 @@ pub async fn handle_generate(
             Ok(r) => r,
             Err(e) => {
                 last_error = e.clone();
-                failure_statuses.record(StatusCode::BAD_GATEWAY);
                 drop(image_permit.take());
-                // 首字节预算耗尽不是账号故障：不计入账号冷却，也不跨账号重放同一 body
-                let first_byte_terminal =
-                    crate::proxy::upstream::client::is_first_byte_stage_failure(&e);
-                if !first_byte_terminal {
-                    token_manager.mark_account_transient_failure(&account_id, 30, &e);
+                // 终态（首字节 / 上传 / 全局预算 / 重放上限）都不是账号故障：
+                // 不冷却、不跨账号重放；状态码与处置统一由 pipeline::terminal 给出。
+                if let Some(terminal) = crate::proxy::pipeline::terminal::classify(&e) {
+                    let disposition = terminal.disposition();
+                    failure_statuses.record(disposition.status);
+                    if disposition.penalize_account {
+                        token_manager.mark_account_transient_failure(&account_id, 30, &e);
+                    }
+                    debug!(
+                        "Gemini Request failed on attempt {}/{} (terminal={}): {}",
+                        attempt + 1,
+                        max_attempts,
+                        terminal.as_str(),
+                        crate::proxy::upstream::client::strip_internal_markers(&e)
+                    );
+                    if disposition.stop_rotation {
+                        break;
+                    }
+                    continue;
                 }
+
+                // 非终态（连接失败 / 调度异常）：冷却该账号并继续轮换
+                failure_statuses.record(StatusCode::BAD_GATEWAY);
+                token_manager.mark_account_transient_failure(&account_id, 30, &e);
                 debug!(
                     "Gemini Request failed on attempt {}/{}: {}",
                     attempt + 1,
                     max_attempts,
                     e
                 );
-                if crate::proxy::upstream::client::is_terminal_replay_suppressed(&e) {
-                    tracing::warn!(
-                        first_byte = first_byte_terminal,
-                        "Stopping account rotation to avoid re-upload/prefill amplification"
-                    );
-                    break;
-                }
                 continue;
             }
         };
