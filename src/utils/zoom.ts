@@ -25,6 +25,17 @@ export function snapToClosestZoom(val: number): number {
     return closest;
 }
 
+/**
+ * The mini overlay (`index.html?mini=1`) is a fixed 360x360 floating panel whose
+ * children rely on fixed pixel sizes and `overflow-hidden`. It must never inherit
+ * the main window's zoom, otherwise its layout gets clipped.
+ */
+export function isMiniWindow(): boolean {
+    if (typeof window === 'undefined') return false;
+    if (window.location.search.includes('mini')) return true;
+    return (window as any).__TAURI_INTERNALS__?.metadata?.currentWindow?.label === 'mini';
+}
+
 export function getStoredZoom(): number {
     if (typeof window === 'undefined') return DEFAULT_ZOOM;
     try {
@@ -43,6 +54,11 @@ export function getStoredZoom(): number {
 
 export function applyZoom(level: number, notify = true): void {
     if (typeof window === 'undefined' || typeof document === 'undefined') {
+        return;
+    }
+
+    // Act narrowly: only the main window participates in UI scaling.
+    if (isMiniWindow()) {
         return;
     }
 
@@ -82,14 +98,16 @@ export function applyZoom(level: number, notify = true): void {
 
 export function zoomIn(): number {
     const current = getStoredZoom();
-    const next = ZOOM_LEVELS.find((l) => l > current) ?? Math.min(150, current + 10);
+    // `current` is always a preset, so `find` only fails at the maximum level
+    const next = ZOOM_LEVELS.find((l) => l > current) ?? current;
     applyZoom(next);
     return next;
 }
 
 export function zoomOut(): number {
     const current = getStoredZoom();
-    const prev = [...ZOOM_LEVELS].reverse().find((l) => l < current) ?? Math.max(85, current - 10);
+    // `current` is always a preset, so `find` only fails at the minimum level
+    const prev = [...ZOOM_LEVELS].reverse().find((l) => l < current) ?? current;
     applyZoom(prev);
     return prev;
 }

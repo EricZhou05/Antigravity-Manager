@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getStoredZoom, applyZoom, zoomIn, zoomOut, resetZoom } from '../../utils/zoom';
+import { isMac } from '../../utils/env';
 import { ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 
 export default function ZoomManager() {
@@ -29,6 +30,7 @@ export default function ZoomManager() {
     // Global keyboard shortcuts: Cmd/Ctrl + (+/=), Cmd/Ctrl + (-), Cmd/Ctrl + (0)
     useEffect(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
+        const macLike = isMac();
 
         const triggerHud = (level: number) => {
             setCurrentZoom(level);
@@ -43,9 +45,10 @@ export default function ZoomManager() {
             // Ignore key repeats to prevent continuous writes & layout thrashing
             if (e.repeat) return;
 
-            // Must have Cmd or Ctrl, but NOT Alt to avoid conflicting with custom hotkeys like Cmd+Alt+-
-            const isModifier = (e.metaKey || e.ctrlKey) && !e.altKey;
-            if (!isModifier) return;
+            // Platform modifier: Cmd on macOS, Ctrl elsewhere (Ctrl is not a primary modifier on macOS)
+            // Alt combos stay untouched to avoid conflicting with custom hotkeys like Cmd+Alt+-
+            const hasZoomModifier = macLike ? e.metaKey : e.ctrlKey;
+            if (!hasZoomModifier || e.altKey) return;
 
             // Do not intercept when typing in editable inputs, textareas, or contentEditable areas
             const target = e.target as HTMLElement | null;

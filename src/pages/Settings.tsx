@@ -684,9 +684,8 @@ function Settings() {
                                     className="w-full px-4 py-4 border border-gray-200 dark:border-base-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-base-content bg-gray-50 dark:bg-base-200"
                                     value={uiZoom}
                                     onChange={(e) => {
-                                        const newZoom = Number(e.target.value);
-                                        setUiZoom(newZoom);
-                                        applyZoom(newZoom);
+                                        // applyZoom dispatches 'app-ui-zoom-change', which syncs uiZoom
+                                        applyZoom(Number(e.target.value));
                                     }}
                                 >
                                     {ZOOM_LEVELS.map((level) => (
