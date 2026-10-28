@@ -3,6 +3,23 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.1-beta.8 (2026-10-29)**:
+        -   **[工具签名缓存读写闭环优化：消除 SQLite 写放大与读路径串行瓶颈] (PR #3765, PR #3774, Ref #753, Thanks to @zepeng-jin, @jeikl)**:
+            -   **写路径去重与容量对齐**: L1 `TOOL_CACHE_LIMIT` 由 500 提升至 10,000，与 SQLite L2 表上限完全对齐；`cache_tool_signature` 命中未过期同签名时仅刷新内存时间戳并跳过冗余落盘，彻底消除多轮历史重放（一次携带 125 条工具调用曾触发 250 次同步写库）导致的 10~17s 本地 CPU 与磁盘阻塞。(PR #3765, Thanks to @zepeng-jin)
+            -   **后台批写与脏签名防复活**: 新增 `ag-tool-sig-writer` 后台线程（有界队列 + 单事务最多 512 条 `INSERT OR REPLACE`），配合 `PERSIST_SEQ` 单调序号、`SESSION_MIN_PERSIST_SEQ` / `GLOBAL_MIN_PERSIST_SEQ` 双层水位与 `PENDING_SESSION_DELETES` 拦截，任意并发 Save 与 `delete_session_signature` / `invalidate_session` 交错下过期签名均被精准丢弃；写连接复用 + `prepare_cached` 预编译，表行数修剪改为每 128 条或 5 分钟节流执行，启动阶段预清理一次避免首写阻塞。(PR #3765)
+            -   **读路径批量化与只读连接池**: 新增 `get_tool_signatures_batch`，`finalize` 预取本轮全部 functionCall ID 一次 `IN` 查询并对未命中写负缓存；只读连接池默认 4 条 round-robin；L1 由单一 `Mutex<HashMap>` 改为 `DashMap` 分片，消除高并发下的全局锁争用。(PR #3774)
+            -   **删除优先级与环境自适应**: Delete 走独立高优先级通道、pending 查询降为 O(1)；队列满的 Save 进入 dirty 集合由 worker 空闲重试，Tauri Exit 尽力 flush；新增 `CacheProfile`（Low / Standard / High / Server）按 CPU、内存与部署形态自动选择 L1 容量、读池、批量、队列与保留行数，全部支持环境变量覆盖。(PR #3774)
+            -   **可观测性与配置入口**: 思考设置新增 L1/L2 命中率、批量调用/ID 数、队列丢弃、pending 删除与 L1 容量只读统计，并提供「清空签名缓存」入口（不暴露 SQLite 旋钮）；压缩历史段短路跳过无意义的签名与思考回查。(PR #3765, PR #3774)
+        -   **[首响应头并入统一首字延迟，四协议预算与重放护栏] (PR #3775, Ref #3763, Thanks to @jeikl)**:
+            -   **首字节预算统一**: 首字节预算改为 `max(用户 TTFT, 按 token 自适应)` 并封顶 150s，叠加媒体增量（常规 0 / 图片 +45 / 视频 +60 / 辅助 −30），备用端点增量减半；预算每请求一份、端点间共享并为备选预留 1/3，消除「端点 × 账号」时长相乘导致的超时误杀。(PR #3775, Ref #3763)
+            -   **终态重放抑制**: 首字节预算耗尽后不惩罚账号、不跨账号重放、直接返回 504，根治「越重试越慢」的活锁与客户端 5~10 分钟无响应。(PR #3775)
+            -   **全局预算下沉流水线**: 270s 全局预算（支持环境变量覆盖）统一下沉至 pipeline，四大协议统一生效，单次上游调用被夹到剩余预算，使全局预算成为真正的天花板。(PR #3775)
+        -   **[界面与字体缩放及全局快捷键调节] (PR #3766, Thanks to @nicolastinkl)**:
+            -   **缩放引擎双层兜底**: 桌面端优先调用 Tauri 原生 `webview.setZoom()`（WebView2 / WKWebView / WebKitGTK）实现全视口等比缩放，Web/Browser 模式与冷启动兜底平滑降级至 CSS `zoom`；`index.html` 首帧预读并预载缩放状态，杜绝视觉缩放跳变闪烁。(PR #3766, Thanks to @nicolastinkl)
+            -   **快捷键与交互边界**: 支持 `Cmd/Ctrl + =` 放大、`Cmd/Ctrl + -` 缩小、`Cmd/Ctrl + 0` 重置，调节时屏幕中上方浮现 1.2s 自动淡出的 HUD；拦截 `e.repeat` 防抖、排除 `Alt` 组合键与 `input` / `textarea` / `contentEditable` 焦点区域，修饰键按平台区分（macOS 仅 Cmd，其余平台仅 Ctrl）。(PR #3766, Thanks to @nicolastinkl)
+            -   **档位对齐与窗口隔离**: 设置 → 通用新增 85%~150% 缩放下拉与 `snapToClosestZoom`，非标准历史缓存值自动贴合合法档位，启动恢复与运行时档位口径一致；mini 悬浮窗双重守卫（启动脚本 + `applyZoom`）保持原生比例，避免 360×360 固定尺寸面板被裁切。(PR #3766)
+            -   **完整多语言**: 补齐 zh / zh-TW / en / ja / ko / es / pt / ru / tr / vi / ar / my 共 12 种语言词条，杜绝非中文界面夹杂中文。(PR #3766, Thanks to @nicolastinkl)
+
     *   **v5.0.1-beta.7 (2026-10-28)**:
         -   **[适配 Antigravity IDE 2.6.0 凭据结构与 agy 语言服务进程识别] (Fixes #3770, PR #3771, Thanks to @fuyangtian2003-beep)**:
             -   **凭据序列化对齐**: 在系统 Keyring (`KeyringTokenDetails` / `KeyringPayload`) 与 CLI 文件凭据 (`AgyTokenDetails` / `AgyOAuthTokenFile`) 模型中增补 `expires_in: 3599` 以及顶层 `id_token_email`，精准契合 Antigravity IDE 2.6.0 登录强校验规范，保持旧版本 100% 向下兼容。(Fixes #3770, PR #3771, Thanks to @fuyangtian2003-beep)
