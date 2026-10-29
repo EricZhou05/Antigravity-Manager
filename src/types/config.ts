@@ -33,6 +33,7 @@ export interface ProxyConfig {
     multimodal?: MultimodalConfig;
     stream_timeouts?: StreamTimeoutConfig;
     upload_timeouts?: UploadTimeoutConfig;
+    qos_auto_jail?: boolean; // [NEW] 遇到限流账号自动进小黑屋 (QoS 降速熔断)
 }
 
 export interface UploadTimeoutConfig {

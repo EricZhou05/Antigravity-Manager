@@ -622,6 +622,10 @@ pub async fn save_config(
             .axum_server
             .update_proxy_pool(config.proxy.proxy_pool.clone())
             .await;
+        // 更新 QoS 自动限流进小黑屋机制开关
+        instance
+            .axum_server
+            .update_qos_auto_jail(config.proxy.qos_auto_jail);
         // 更新熔断配置
         instance
             .token_manager
@@ -650,6 +654,10 @@ pub async fn save_config(
             .axum_server
             .update_proxy_pool(config.proxy.proxy_pool.clone())
             .await;
+        // 更新 QoS 自动限流进小黑屋机制开关
+        admin
+            .axum_server
+            .update_qos_auto_jail(config.proxy.qos_auto_jail);
         admin
             .axum_server
             .token_manager

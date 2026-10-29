@@ -7,6 +7,7 @@ import {
     Calendar,
     Clock,
     RefreshCw,
+    ShieldAlert,
     Sparkles,
     Zap,
 } from 'lucide-react';
@@ -19,6 +20,7 @@ import BestAccounts from '../components/dashboard/BestAccounts';
 import { findImageQuotaModel, findQuotaModel } from '../config/modelConfig';
 import CurrentAccount from '../components/dashboard/CurrentAccount';
 import { useAccountStore } from '../stores/useAccountStore';
+import { useConfigStore } from '../stores/useConfigStore';
 import { Account } from '../types/account';
 import { DashboardQuotaView } from '../utils/quotaDisplay';
 
@@ -37,6 +39,30 @@ function Dashboard() {
         refreshQuota,
         loading
     } = useAccountStore();
+    const { config, saveConfig } = useConfigStore();
+    const qosAutoJail = !!config?.proxy?.qos_auto_jail;
+
+    const handleToggleQoSAutoJail = async () => {
+        if (!config) return;
+        const nextVal = !qosAutoJail;
+        try {
+            await saveConfig({
+                ...config,
+                proxy: {
+                    ...config.proxy,
+                    qos_auto_jail: nextVal,
+                },
+            });
+            showToast(
+                nextVal
+                    ? t('dashboard.qos_auto_jail_on', '小黑屋: 开')
+                    : t('dashboard.qos_auto_jail_off', '小黑屋: 关'),
+                'info'
+            );
+        } catch (err) {
+            console.error('Failed to update QoS auto jail setting:', err);
+        }
+    };
 
     useEffect(() => {
         fetchAccounts();
@@ -442,6 +468,34 @@ function Dashboard() {
                                 title={t('dashboard.btn_title_all_available', '当前：统计所有正常未停用的可用账号配额')}
                             >
                                 {t('dashboard.btn_all_available', { count: stats.available, defaultValue: `可用账号 (${stats.available})` })}
+                            </button>
+                        </div>
+
+                        {/* 4. 自动限流进小黑屋 (QoS 降速熔断) 开关 */}
+                        <div className="flex items-center bg-gray-100 dark:bg-white/[0.04] p-1 rounded-xl text-xs dark:border dark:border-white/[0.08]">
+                            <button
+                                type="button"
+                                onClick={handleToggleQoSAutoJail}
+                                className={`px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer flex items-center gap-1.5 ${
+                                    qosAutoJail
+                                        ? 'bg-white dark:bg-zinc-800 text-amber-600 dark:text-amber-300 shadow-sm font-bold dark:border dark:border-white/[0.12]'
+                                        : 'text-gray-500 dark:text-zinc-400 hover:text-gray-800 dark:hover:text-zinc-200'
+                                }`}
+                                title={
+                                    qosAutoJail
+                                        ? t('dashboard.qos_auto_jail_enabled_tip', '当前：已开启自动限流进小黑屋。遇响应过长的限速账号将自动隔离并解绑会话（点击关闭）')
+                                        : t('dashboard.qos_auto_jail_disabled_tip', '当前：已关闭自动小黑屋。直接忽略校验时长，不因首字延迟过长标记疑似限速或解绑会话（点击开启）')
+                                }
+                            >
+                                <ShieldAlert className={`w-3.5 h-3.5 ${qosAutoJail ? 'text-amber-500 dark:text-amber-400' : 'text-gray-400 dark:text-zinc-500'}`} />
+                                <span>{t('dashboard.qos_auto_jail', '自动小黑屋')}</span>
+                                <span className={`text-[10px] px-1 py-0.5 rounded font-mono ${
+                                    qosAutoJail
+                                        ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300 font-bold'
+                                        : 'bg-gray-200 dark:bg-white/[0.08] text-gray-400 dark:text-zinc-500'
+                                }`}>
+                                    {qosAutoJail ? t('dashboard.qos_auto_jail_badge_on', '开') : t('dashboard.qos_auto_jail_badge_off', '关')}
+                                </span>
                             </button>
                         </div>
                     </div>

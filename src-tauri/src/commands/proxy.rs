@@ -271,6 +271,7 @@ pub async fn ensure_admin_server(
     // 默认空 TokenManager 用于管理界面
     let app_data_dir = crate::modules::account::get_data_dir()?;
     let token_manager = Arc::new(TokenManager::new(app_data_dir));
+    token_manager.set_qos_auto_jail(config.qos_auto_jail);
     // [NEW] 加载账号数据，否则管理界面统计为 0
     let _ = token_manager.load_accounts().await;
 

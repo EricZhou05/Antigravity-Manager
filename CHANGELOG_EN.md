@@ -3,6 +3,12 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.2-beta.0 (2026-10-30)**:
+        -   **[Dedicated QoS Auto-Quarantine Toggle and Duration Check Bypass] (Fixes #3783, Thanks to @TakimotoUki)**:
+            -   **Manual Control & Disabled by Default**: Added the `proxy.qos_auto_jail` configuration field, defaulted to disabled (`false`). In high-jitter network environments, users have full control to prevent accounts from being quarantined due to transient network stalls. (Fixes #3783, Thanks to @TakimotoUki)
+            -   **Duration Check Bypass & Instant Unjail**: When disabled, incoming TTFT durations are ignored during QoS evaluation—no suspicious tags are assigned, accounts are never jailed, and sticky sessions are preserved; toggling the switch from enabled to disabled immediately unjails and restores all restricted accounts to Healthy in memory. (Fixes #3783)
+            -   **Dashboard Quick Toggle & Full 12-Locale Support**: Introduced an intuitive pill toggle on the Dashboard header (adjacent to the available accounts filter) with dynamic badge states, instantaneous hot-reload, and contextual tooltips; aligned Settings UI and fully localized across all 12 supported languages. (Fixes #3783)
+
     *   **v5.0.1-beta.9 (2026-10-29)**:
         -   **[Pipeline Convergence: Unified Terminal Handling, Auto-Heal, Budgets, Routing, Rotation, and Observability] (Ref #3763, #3751, #3735)**:
             -   **Unified Four-Protocol Timeouts & Sunk Global Budget**: Timeout policies and the 270s global request budget across all four protocols (Google Responses / Chat Completions / Claude / Gemini) are now uniformly managed by the pipeline stage; requests with exhausted budget are short-circuited immediately to prevent redundant upstream rotation. (Ref #3763, #3735)

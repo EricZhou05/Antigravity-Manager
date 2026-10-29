@@ -263,7 +263,14 @@ impl TokenManager {
             image_scheduler: std::sync::RwLock::new(None),
             unsupported_models: Arc::new(DashMap::new()),
             in_flight_requests: Arc::new(DashMap::new()),
-            qos_guardian: Arc::new(crate::proxy::qos_guardian::QoSGuardian::new()),
+            qos_guardian: {
+                let qos_auto_jail = crate::modules::config::load_app_config()
+                    .map(|c| c.proxy.qos_auto_jail)
+                    .unwrap_or(false);
+                let guardian = Arc::new(crate::proxy::qos_guardian::QoSGuardian::new());
+                guardian.set_auto_jail_enabled(qos_auto_jail);
+                guardian
+            },
             qos_probe_handle: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
@@ -3935,6 +3942,11 @@ impl TokenManager {
             "[QoS] Account {} manually released from QoS jail",
             account_id
         ));
+    }
+
+    /// 更新 QoS 自动限流进小黑屋机制开关
+    pub fn set_qos_auto_jail(&self, enabled: bool) {
+        self.qos_guardian.set_auto_jail_enabled(enabled);
     }
 
     /// 清除过期的限流记录

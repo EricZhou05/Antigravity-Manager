@@ -507,6 +507,11 @@ impl AxumServer {
         tracing::info!("User-Agent 配置已热更新: {:?}", config.user_agent_override);
     }
 
+    pub fn update_qos_auto_jail(&self, enabled: bool) {
+        self.token_manager.set_qos_auto_jail(enabled);
+        tracing::info!("QoS 自动限流进小黑屋机制已热更新: enabled={}", enabled);
+    }
+
     pub async fn set_running(&self, running: bool) {
         let mut r = self.is_running.write().await;
         *r = running;
@@ -2007,6 +2012,11 @@ async fn admin_save_config(
         .upstream
         .set_user_agent_override(new_config.proxy.user_agent_override.clone())
         .await;
+
+    // 同步 QoS 自动限流进小黑屋机制开关
+    state
+        .token_manager
+        .set_qos_auto_jail(new_config.proxy.qos_auto_jail);
 
     // 同步健康检查日志捕获开关
     state

@@ -1214,6 +1214,12 @@ pub struct ProxyConfig {
     /// 上游发送阶段分级超时配置 (连接 → 上传 → 等待响应头)
     #[serde(default)]
     pub upload_timeouts: UploadTimeoutConfig,
+
+    /// 遇到限流账号自动进小黑屋 (QoS 降速熔断守卫)
+    /// - false: 默认关闭。直接忽略校验时长，不标记疑似限速，不进小黑屋，不解绑会话。
+    /// - true: 开启。当账号 TTFT 显著异常时标记疑似限速，累计超标关入小黑屋并解绑会话。
+    #[serde(default)]
+    pub qos_auto_jail: bool,
 }
 
 /// Request log retention policy.
@@ -1358,6 +1364,7 @@ impl Default for ProxyConfig {
             upload_timeouts: UploadTimeoutConfig::default(),
             image_thinking_mode: None,
             image_scheduler: ImageSchedulerConfig::default(),
+            qos_auto_jail: false,
         }
     }
 }
