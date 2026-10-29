@@ -500,6 +500,8 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 
                         // 4. 给予底层套接字彻底注销的微小缓冲，然后干净退出进程
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        // `process::exit` 会绕过 Tauri 事件循环，签名缓存必须在退出前主动 flush。
+                        crate::proxy::signature_cache::flush_on_exit();
                         std::process::exit(0);
                     });
                 }

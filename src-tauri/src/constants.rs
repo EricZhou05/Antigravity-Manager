@@ -238,8 +238,8 @@ pub static USER_AGENT: LazyLock<String> = LazyLock::new(build_official_upstream_
 
 /// 当前生效的出站 User-Agent（动态读取已解析的 Hub 指纹）
 ///
-/// 启动时会由 `hub_version::detect_and_update_hub_fingerprint()` 异步刷新为官方最新版本
-/// （当前兜底基线 `OFFICIAL_HUB_VERSION`），CL 与版本号始终成对下发。
+/// 启动阶段**不做**远程版本跟随（版本与 CL 必须成对人工校准）；
+/// `/releases` 探测只驱动前端启动提示，出站指纹仍以下方的稳态基线为准。
 pub fn current_egress_user_agent() -> String {
     crate::modules::hub_version::get_current_hub_user_agent()
 }

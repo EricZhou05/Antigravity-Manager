@@ -23,6 +23,7 @@ use crate::proxy::mappers::claude::{
 use crate::proxy::mappers::context_manager::ContextManager;
 use crate::proxy::mappers::gemini::SUMMARY_REQUEST_TIMEOUT_SECS;
 use crate::proxy::model_specs;
+use crate::proxy::pipeline::timing::{TimingBuilderExt, TimingHeaders};
 use crate::proxy::server::AppState;
 use crate::proxy::upstream::client::{mask_email, parse_endpoint_name};
 use axum::http::HeaderMap;
@@ -501,93 +502,6 @@ fn extract_thinking_hint(body: &Value) -> ThinkingHint {
     hint
 }
 
-/// Map thinking level to suggested budget tokens
-fn level_to_budget(level: &str, cap: u64) -> u32 {
-    let base = match level {
-        "minimal" => 1024,
-        "low" => 8192,
-        "medium" => 16384,
-        "high" => 24576,
-        _ => 8192, // default to low
-    };
-    base.min(cap as u32)
-}
-
-/// Map thinking level to effort level for output_config
-fn level_to_effort(level: &str) -> String {
-    match level {
-        "minimal" | "low" => "low".to_string(),
-        "medium" => "medium".to_string(),
-        "high" => "high".to_string(),
-        _ => "low".to_string(),
-    }
-}
-
-/// Apply thinking hints to ClaudeRequest
-fn apply_thinking_hints(
-    request: &mut crate::proxy::mappers::claude::models::ClaudeRequest,
-    hint: &ThinkingHint,
-    trace_id: &str,
-    budget_cap: u64, // [NEW]
-) {
-    let mut applied = false;
-
-    // If budget is provided, set/override thinking config
-    if let Some(budget) = hint.budget_tokens {
-        let existing_effort = request
-            .thinking
-            .as_ref()
-            .and_then(|t| t.effort.clone())
-            .or_else(|| hint.level.clone());
-        request.thinking = Some(crate::proxy::mappers::claude::models::ThinkingConfig {
-            type_: "enabled".to_string(),
-            budget_tokens: Some(budget),
-            effort: existing_effort,
-            display: None,
-        });
-        tracing::debug!(
-            "[{}] Applied thinking hint: budget_tokens={}",
-            trace_id,
-            budget
-        );
-        applied = true;
-    }
-
-    // If level is provided
-    if let Some(ref level) = hint.level {
-        // Map to output_config.effort if not already set
-        if request.output_config.is_none() {
-            request.output_config = Some(crate::proxy::mappers::claude::models::OutputConfig {
-                effort: Some(level_to_effort(level)),
-            });
-            tracing::debug!("[{}] Applied thinking hint: effort={}", trace_id, level);
-            applied = true;
-        }
-
-        // If no budget provided but level is, map level to budget
-        if hint.budget_tokens.is_none() {
-            let budget = level_to_budget(level, budget_cap);
-            request.thinking = Some(crate::proxy::mappers::claude::models::ThinkingConfig {
-                type_: "enabled".to_string(),
-                budget_tokens: Some(budget),
-                effort: None,
-                display: None,
-            });
-            tracing::debug!(
-                "[{}] Applied thinking hint: level={} -> budget_tokens={}",
-                trace_id,
-                level,
-                budget
-            );
-            applied = true;
-        }
-    }
-
-    if applied {
-        tracing::info!("[{}] Applied OpenCode thinking hints to request", trace_id);
-    }
-}
-
 const MAX_RETRY_ATTEMPTS: usize = 3;
 
 // ===== Layer 3: XML Summary Prompt Template =====
@@ -763,9 +677,10 @@ mod variant_tests {
             .expect("gemini-3-flash must resolve with max effort");
 
         assert_eq!(request.model, "gemini-3-flash-agent");
+        // 官方 thinkingBudget=-1（自适应）：适配层不再伪造数字预算
         assert_eq!(
             request.thinking.as_ref().and_then(|t| t.budget_tokens),
-            Some(10_000)
+            None
         );
     }
 
@@ -806,61 +721,59 @@ fn apply_variant(
         effort_tier,
         client_budget,
     )?;
+    Some(apply_spec_to_request(request, spec, client_budget))
+}
 
+/// 路由已完成后的纯 spec 应用：只写 thinking / max_tokens，不再改模型名。
+fn apply_routed_spec(
+    request: &mut ClaudeRequest,
+    client_budget: Option<u32>,
+) -> Option<crate::proxy::common::variant_mapping::RealModelSpec> {
+    let spec =
+        crate::proxy::common::variant_mapping::resolve_spec_exact(&request.model, client_budget)?;
+    Some(apply_spec_to_request(request, spec, client_budget))
+}
+
+fn apply_spec_to_request(
+    request: &mut ClaudeRequest,
+    spec: crate::proxy::common::variant_mapping::RealModelSpec,
+    client_budget: Option<u32>,
+) -> crate::proxy::common::variant_mapping::RealModelSpec {
     request.model = spec.id.to_string();
-    if spec.thinking_budget == 0 {
+    if !spec.supports_thinking() {
         request.thinking = None;
         request.tools = None;
     } else {
         request.thinking = Some(crate::proxy::mappers::claude::models::ThinkingConfig {
             type_: "enabled".to_string(),
-            budget_tokens: Some(spec.effective_thinking_budget(client_budget)),
+            // 0 / 自适应不写数字预算，由流水线按官方 thinkingLevel 通道决定
+            budget_tokens: spec.budget_tokens_option(client_budget),
             effort: None,
             display: None,
         });
     }
     request.output_config = None;
-    request.max_tokens = Some(spec.max_output_tokens);
+    // 尊重客户端显式 max_tokens，只做官方硬顶收敛；缺省交给流水线按官方上限补齐/协商
+    if let Some(client_max) = request.max_tokens {
+        // 单点硬顶在流水线：`configure_inbound_thinking` 会按官方 max_output_tokens
+        // 收敛客户端显式值，这里只负责把客户端值写进统一 IR。
+        request.max_tokens = Some(client_max);
+    }
 
-    Some(spec)
+    spec
 }
 
 /// [FIX #3593] 检查 Claude 流数据块是否包含错误事件
 /// 在 Peek 预读阶段识别流错误（如上游断连、错误帧），触发账号轮换重试，避免将错误误判为合法首包导致 500
 fn claude_stream_chunk_has_error_event(bytes: &[u8]) -> bool {
-    let text = String::from_utf8_lossy(bytes);
-    let mut saw_error_event = false;
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed == "event: error" {
-            saw_error_event = true;
-        } else if let Some(data) = trimmed.strip_prefix("data:") {
-            if saw_error_event {
-                return true;
-            }
-            if let Ok(payload) = serde_json::from_str::<Value>(data.trim()) {
-                if payload.get("type").and_then(Value::as_str) == Some("error")
-                    || payload.get("error").is_some_and(|e| !e.is_null())
-                {
-                    return true;
-                }
-            }
-        } else if trimmed.is_empty() {
-            saw_error_event = false;
-        }
-    }
-    false
+    crate::proxy::pipeline::stream_peek::has_anthropic_error_event(bytes)
 }
 
 /// [Issue #3634] 规范化 Claude 协议的 HTTP 错误状态码。
 /// 1. HTTP 529 统一转为 HTTP 429：避免触发 Claude Code PB(an) 的过载降级状态机（强制关闭 fastMode 并进入 10~30 分钟过载冷却）；
 /// 2. HTTP 403 统一转为 HTTP 503：避免 Claude Code 客户端误判为鉴权失效并强制退出登录。
 pub(crate) fn normalize_claude_error_status(status_code: u16) -> StatusCode {
-    match status_code {
-        403 => StatusCode::SERVICE_UNAVAILABLE,
-        529 => StatusCode::TOO_MANY_REQUESTS,
-        code => StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-    }
+    crate::proxy::pipeline::terminal::protocol_status("claude", status_code)
 }
 
 /// 处理 Claude messages 请求
@@ -991,9 +904,6 @@ pub async fn handle_messages(
         || model_lower.ends_with("-extra-low");
 
     let thinking_hint = extract_thinking_hint(&original_body);
-    let tb_config = crate::proxy::config::get_thinking_budget_config();
-    let is_client_control =
-        tb_config.control_source == crate::proxy::config::ThinkingControlSource::Client;
 
     let client_switch = crate::proxy::pipeline::extract_client_thinking_switch(
         request.thinking.as_ref().map(|t| t.type_.as_str()),
@@ -1009,19 +919,8 @@ pub async fn handle_messages(
     );
     let client_disabled = client_switch.is_disabled();
 
-    let raw_client_budget = request.thinking.as_ref().and_then(|t| t.budget_tokens);
-
     // [USER RULE] 对于 Gemini >= 3 或显式指定档位的模型，进站阶段彻底忽略客户端思考与预算参数，绝不被客户端 1024 或 low 污染
-    if is_client_control {
-        if client_disabled {
-            request.thinking = Some(crate::proxy::mappers::claude::models::ThinkingConfig {
-                type_: "disabled".to_string(),
-                budget_tokens: Some(0),
-                effort: None,
-                display: None,
-            });
-        }
-    } else if is_v3_or_above || is_explicit_tier_model {
+    if is_v3_or_above || is_explicit_tier_model {
         // 无论客户端未提供 thinking，或者传了 disabled，只要是 3+ 或显式模型，强制矫正为 enabled，清理客户端 budget_tokens
         let effort_in_thinking = request.thinking.as_ref().and_then(|t| t.effort.clone());
         request.thinking = Some(crate::proxy::mappers::claude::models::ThinkingConfig {
@@ -1031,14 +930,12 @@ pub async fn handle_messages(
             display: None,
         });
     } else {
-        // 由于此时还没拿到账号，先用模型默认限额兜底
-        let temp_cap = model_specs::get_thinking_budget(&request.model, None);
-        apply_thinking_hints(&mut request, &thinking_hint, &trace_id, temp_cap);
+        // 非 3.x / 非显式档位模型：保持客户端原样；预算与通道全部交给流水线
+        // （官方目录命中时以官方值，未命中时仅用用户 Custom 配置，不再内置预算表）
     }
 
     // [USER RULE] 对显式指定档位或 Gemini >= 3 的思考模型，进站阶段彻底忽略客户端思考预算，绝不参与档位推断
-    let effective_budget_hint = if !is_client_control && (is_explicit_tier_model || is_v3_or_above)
-    {
+    let effective_budget_hint = if is_explicit_tier_model || is_v3_or_above {
         None
     } else {
         original_body
@@ -1050,48 +947,32 @@ pub async fn handle_messages(
 
     // 当客户端显式关闭思考或预算为 0 时（如 Claude Desktop 自动模式安全门禁），
     // 统一归一为 "none"：具体降到哪个档位由路由层根据官方档位数组推导（不再硬编码 low）。
-    let effort_hint = if client_disabled {
-        Some("none".to_string())
-    } else {
-        request
-            .output_config
-            .as_ref()
-            .and_then(|config| config.effort.clone())
-            .or_else(|| request.thinking.as_ref().and_then(|t| t.effort.clone()))
-            .or_else(|| thinking_hint.level.clone())
-    };
-    let effort_tier =
-        crate::proxy::common::variant_mapping::tier_from_effort(effort_hint.as_deref());
+    // [Pipeline First] 四协议共用同一个 `routing_effort` 抽象，避免各自手写归一规则。
+    let raw_effort = request
+        .output_config
+        .as_ref()
+        .and_then(|config| config.effort.clone())
+        .or_else(|| request.thinking.as_ref().and_then(|t| t.effort.clone()))
+        .or_else(|| thinking_hint.level.clone());
+    let effort_hint =
+        crate::proxy::pipeline::routing_effort(client_disabled, raw_effort.as_deref())
+            .map(str::to_string);
     let canonical_model = request.model.clone();
-    if let Some(spec) = apply_variant(&mut request, effort_tier, effective_budget_hint) {
-        if is_client_control && client_disabled {
-            request.thinking = Some(crate::proxy::mappers::claude::models::ThinkingConfig {
-                type_: "disabled".to_string(),
-                budget_tokens: Some(0),
-                effort: None,
-                display: None,
-            });
-        } else if is_client_control && raw_client_budget.is_some() {
-            request.thinking = Some(crate::proxy::mappers::claude::models::ThinkingConfig {
-                type_: "enabled".to_string(),
-                budget_tokens: raw_client_budget,
-                effort: effort_hint.clone(),
-                display: None,
-            });
-        } else if is_client_control {
-            // [CRITICAL FIX] 客户端控制模式下，客户端未传数字预算（全缺省或仅传等级）
-            // 严禁保留 apply_variant 内部赋予的 spec.thinking_budget (4000)！保持真实客户端状态
-            // 必须保留客户端传来的 effort_hint 思考等级提示，避免进入下游 Pipeline 时因双空丢失导致上游静默抑制
-            if let Some(ref mut t) = request.thinking {
-                t.budget_tokens = None;
+    // [ROUTE SINGLE ENTRY] 路由只由 router 决定；variant 仅根据已路由的物理模型
+    // 解析 spec（budget / max / supports_thinking），不再做第二套档位选择。
+    request.model = {
+        let mapping = state.custom_mapping.read().await;
+        crate::proxy::common::model_mapping::resolve_model_route_with_effort(
+            &request.model,
+            &mapping,
+            effort_hint.as_deref(),
+        )
+    };
+    if let Some(spec) = apply_routed_spec(&mut request, effective_budget_hint) {
+        // 网关权威控制模式（唯一模式）：保留客户端 effort 等级提示供下游 Pipeline 精准感知
+        if let Some(ref mut t) = request.thinking {
+            if t.effort.is_none() && effort_hint.is_some() {
                 t.effort = effort_hint.clone();
-            }
-        } else {
-            // 网关权威控制模式下，若客户端携带了 effort_hint，保留其思考等级提示供下游 Pipeline 精准感知
-            if let Some(ref mut t) = request.thinking {
-                if t.effort.is_none() && effort_hint.is_some() {
-                    t.effort = effort_hint.clone();
-                }
             }
         }
         tracing::info!(
@@ -1739,21 +1620,29 @@ pub async fn handle_messages(
 
     let mut last_error = String::new();
     let mut retried_without_thinking = false;
-    let mut retried_tool_choice_conflict = false;
-    let mut retried_with_budget_degraded = false;
-    let mut retried_with_image_omitted = false;
+    let mut heal_flags = crate::proxy::pipeline::AutoHealFlags::default();
     let mut degraded_gemini_body: Option<serde_json::Value> = None;
     let mut last_email: Option<String> = None;
     let mut last_mapped_model: Option<String> = None;
     let mut failure_statuses = super::common::FailureStatusTracker::default();
+    // [Grace Policy] 有状态重试裁决：同一账号在一次请求内最多 GraceRetry 一次。
+    // 历史上 Claude 使用无状态裁决 + 调度模式 allow_grace，会在单账号/缓存优先场景
+    // 反复原地等待直到 270s 全局预算耗尽，形成“越重试越慢”的活锁。
+    let mut retry_state = super::common::RequestRetryState::default();
     let mut force_rotate = false;
+    let mut used_attempts = 0usize;
+    // GraceRetry 复用同一账号凭据：不重新选号，也不消耗轮换次数（与 gemini/openai 同构）
+    let mut retry_credentials: Option<(String, String, String, String, u64)> = None;
 
     // [Stage Timing] 阶段耗时度量变量 (毫秒，保留微秒级浮点精度)
     let clean_micros = clean_start.elapsed().as_micros() as u64;
     let clean_ms: f64 = clean_micros as f64 / 1000.0;
     let mut norm_ms: f64 = 0.0;
     let mut think_fill_ms: f64 = 0.0;
-    let mut ttft_ms: f64 = 0.0;
+    // TTFT 单源口径：仅记录“首个上游数据块”；流式发头时写 -1。
+    // 响应头耗时单独用 headers_ms 表达，不再冒充 TTFT。
+    let mut ttft_ms: f64 = crate::proxy::pipeline::stream_peek::TTFT_UNKNOWN_MS;
+    let mut headers_ms: f64 = 0.0;
     let mut fallback_overhead_ms: f64 = 0.0;
 
     // [Pipeline Budget] 请求级截止时刻由中间件注入（`pipeline::budget`），
@@ -1763,27 +1652,27 @@ pub async fn handle_messages(
     let image_scheduler = state.image_scheduler.clone();
     let mut image_permit = None;
 
-    for attempt in 0..max_attempts {
+    while let Some(attempt) = super::common::next_rotation_attempt(
+        &mut used_attempts,
+        max_attempts,
+        retry_credentials.is_some(),
+    ) {
         // [Stage 2 Timing] 中转归一计时起点
         let norm_start = std::time::Instant::now();
 
-        // [Pipeline Budget] 剩余预算不足以再发起一次上游尝试：统一走终态 504，
-        // 不罚账号、不轮换（判定与状态码均由 pipeline::terminal 给出）。
-        if crate::proxy::pipeline::budget::exhausted() {
+        // [Pipeline Terminal] 全局预算耗尽：统一记终态、补 last_error、直接退出轮换
+        if crate::proxy::pipeline::terminal::gate_exhausted(
+            "claude",
+            attempt + 1,
+            &mut failure_statuses,
+            &mut last_error,
+        ) {
             tracing::warn!(
                 "[{}] Claude 请求全局预算耗尽（{}s，共经历 {} 次尝试），终止重试以杜绝触发客户端超时看门狗",
                 trace_id,
                 crate::proxy::pipeline::budget::gateway_request_budget_secs(),
                 attempt
             );
-            failure_statuses
-                .record_terminal(crate::proxy::pipeline::terminal::UpstreamTerminal::GlobalBudget);
-            if last_error.is_empty() {
-                last_error = format!(
-                    "Gateway global request budget exceeded ({}s)",
-                    crate::proxy::pipeline::budget::gateway_request_budget_secs()
-                );
-            }
             break;
         }
 
@@ -1830,7 +1719,10 @@ pub async fn handle_messages(
         let session_id = Some(affinity_key.as_str());
 
         drop(image_permit.take());
-        let mut token_result = if config.request_type == "image_gen" {
+        // [Rotation] GraceRetry 优先复用上一轮的账号凭据，避免重新选号导致粘性丢失
+        let mut token_result = if let Some(creds) = retry_credentials.take() {
+            Ok(creds)
+        } else if config.request_type == "image_gen" {
             match token_manager
                 .get_image_token(
                     force_rotate,
@@ -1980,7 +1872,7 @@ pub async fn handle_messages(
                             .into_response();
                     }
                 };
-            if retried_with_budget_degraded {
+            if heal_flags.retried_with_budget_degraded {
                 crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(
                     &mut b,
                 );
@@ -2150,28 +2042,30 @@ pub async fn handle_messages(
             Err(e) => {
                 last_error = e.clone();
                 // 终态（首字节 / 上传 / 全局预算 / 重放上限）都不是账号故障：
-                // 不冷却、不跨账号重放；状态码与处置统一由 pipeline::terminal 给出。
-                if let Some(terminal) = crate::proxy::pipeline::terminal::classify(&e) {
-                    let disposition = terminal.disposition();
-                    failure_statuses.record(disposition.status);
-                    crate::proxy::stage_trace::StageTrace::alert_current(
-                        "upstream_terminal",
-                        format!(
-                            "attempt={}/{} kind={} status={} elapsed={:.1}s",
-                            attempt + 1,
-                            max_attempts,
-                            terminal.as_str(),
-                            disposition.status.as_u16(),
-                            upstream_req_start.elapsed().as_secs_f64()
-                        ),
-                    );
-                    if disposition.penalize_account {
-                        token_manager.mark_account_transient_failure(&account_id, 30, &e);
-                    }
-                    if disposition.stop_rotation {
+                // 不冷却、不跨账号重放；判定、状态码与观测统一由 pipeline::terminal 给出。
+                if let Some(handling) = crate::proxy::pipeline::terminal::apply_terminal(
+                    &e,
+                    &mut failure_statuses,
+                    "claude",
+                    attempt + 1,
+                    max_attempts,
+                    upstream_req_start.elapsed().as_secs_f64(),
+                    |err| token_manager.mark_account_transient_failure(&account_id, 30, err),
+                ) {
+                    if handling.disposition.stop_rotation {
                         break;
                     }
                     continue;
+                }
+
+                // [Gateway Self-Answer Guard] 模型不存在 / 无可用账号：网关一手结论，
+                // 不归属任何账号 → 不罚号、不解绑、不轮换。
+                if let Some((status, reason)) =
+                    crate::proxy::common::model_gate::self_answer_disposition(&e)
+                {
+                    failure_statuses.record(status);
+                    last_error = reason.to_string();
+                    break;
                 }
 
                 // 非终态（连接失败 / 调度错误）：按既有策略冷却并换账号。
@@ -2293,6 +2187,7 @@ pub async fn handle_messages(
                     extra_headers: extra_headers.clone(),
                     account_id: Some(account_id.clone()),
                     trace_id: trace_id.clone(),
+                    budget: crate::proxy::pipeline::budget::current(),
                 };
                 let gemini_stream =
                     crate::proxy::pipeline::auto_heal::wrap_stream_with_empty_thinking_auto_heal(
@@ -2331,20 +2226,16 @@ pub async fn handle_messages(
                 // 上游已经成功建立连接返回 HTTP 200，网关必须立即向客户端返回 HTTP 200 与 text/event-stream 响应头，
                 // 并由 stream_lifecycle 驱动器每 3 秒实时下发官方 SSE ping 心跳 (`event: ping\ndata: {"type": "ping"}\n\n`)。
                 // 这确保下游客户端（Claude Code 等）看门狗持续被心跳保活，绝不会因 Prefill 或推理思考等待触发 5 分钟无响应断连 (CLI error 'Request timed out')。
+                // [TTFT 单源] 响应头耗时单独记录；流式发头时 TTFT 未知。
+                headers_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
                 if client_wants_stream {
-                    ttft_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
-                    crate::proxy::handlers::common::report_qos_ttft(
-                        &token_manager,
-                        &account_id,
-                        Some(affinity_key.as_str()),
-                        ttft_ms,
-                        request_enables_thinking(request.thinking.is_some(), &gemini_body),
-                        Some(raw_estimated as u32),
-                    );
+                    // TTFT 仍记录“响应头到达”用于 X-Timing 头，但**不**作为 QoS 样本：
+                    // QoS 以首个真实数据块为准（见下方 stream 探针），避免把握手时间混入 prefill 基线。
+                    ttft_ms = crate::proxy::pipeline::stream_peek::TTFT_UNKNOWN_MS;
                     if let Some(effective_item) =
                         fallback_attempts.iter_mut().find(|a| a.is_effective)
                     {
-                        effective_item.duration_s = ttft_ms / 1000.0;
+                        effective_item.duration_s = headers_ms / 1000.0;
                     }
                     let attempts_b64 =
                         crate::proxy::handlers::common::encode_attempts_header(&fallback_attempts);
@@ -2381,6 +2272,36 @@ pub async fn handle_messages(
                             }
                         });
 
+                    // [QoS] 以首个真实数据块为准上报 TTFT（与 peek / 非流式口径一致）
+                    let ttft_probe_start = effective_attempt_start;
+                    let ttft_tm = token_manager.clone();
+                    let ttft_account = account_id.clone();
+                    let ttft_session = affinity_key.clone();
+                    let ttft_is_thinking =
+                        request_enables_thinking(request.thinking.is_some(), &gemini_body);
+                    let ttft_tokens = raw_estimated as u32;
+                    let stream_mapped =
+                        crate::proxy::pipeline::stream_peek::wrap_stream_with_ttft_probe(
+                            stream_mapped,
+                            ttft_probe_start,
+                            |bytes: &[u8]| {
+                                crate::proxy::pipeline::stream_peek::is_heartbeat(
+                                    bytes,
+                                    crate::proxy::pipeline::stream_peek::StreamDialect::Anthropic,
+                                )
+                            },
+                            move |ttft| {
+                                crate::proxy::handlers::common::report_qos_ttft(
+                                    &ttft_tm,
+                                    &ttft_account,
+                                    Some(ttft_session.as_str()),
+                                    ttft,
+                                    ttft_is_thinking,
+                                    Some(ttft_tokens),
+                                );
+                            },
+                        );
+
                     return Response::builder()
                         .status(StatusCode::OK)
                         .header(header::CONTENT_TYPE, "text/event-stream")
@@ -2394,18 +2315,15 @@ pub async fn handle_messages(
                         .header("X-Session-Id", &client_session_id)
                         .header("X-Antigravity-Session-Id", &client_session_id)
                         .header("X-Context-Purified", "false")
-                        .header("X-Timing-Clean-Ms", format!("{:.3}", clean_ms))
-                        .header("X-Timing-Norm-Ms", format!("{:.3}", norm_ms))
-                        .header("X-Timing-Thinking-Ms", format!("{:.3}", think_fill_ms))
-                        .header("X-Timing-Ttft-Ms", format!("{:.3}", ttft_ms))
-                        .header(
-                            "X-Timing-Ttft-Overhead-Ms",
-                            format!("{:.3}", fallback_overhead_ms),
-                        )
-                        .header(
-                            "X-Timing-Ttft-Attempts",
+                        .timing(&TimingHeaders::new(
+                            clean_ms,
+                            norm_ms,
+                            think_fill_ms,
+                            ttft_ms,
+                            headers_ms,
+                            fallback_overhead_ms,
                             attempts_b64.as_deref().unwrap_or(""),
-                        )
+                        ))
                         .body(Body::from_stream(stream_mapped))
                         .unwrap();
                 }
@@ -2413,124 +2331,79 @@ pub async fn handle_messages(
                 let mut first_data_chunk = None;
                 let mut retry_this_account = false;
 
-                // Loop to skip heartbeats during peek (for non-streaming requests)
-                // [FIX #3634, #3693] 动态自适应计算 Peek 超时时间（支持 thinking 宽限），并受全局剩余请求预算严格约束，
-                // 彻底杜绝大 Prompt / 深度思考预热（TTFT > 30s）被误杀，同时杜绝累积超时触发客户端 5 分钟看门狗
+                // [Pipeline StreamPeek] 非流式请求必须在返回前拿到首个数据块：
+                // 统一由 pipeline::stream_peek 执行（心跳跳过 / 错误事件识别 / 分档表唯一实现）。
+                // 流式请求已在上面直接返回，交给 run_stream_lifecycle 的 InitialTtft 负责。
                 let is_thinking = request.thinking.is_some() || mapped_model.contains("thinking");
-                let base_peek_secs = super::common::calculate_adaptive_peek_timeout_full(
-                    is_compaction_request,
-                    false,
-                    is_thinking,
-                    Some(raw_estimated),
+                let peek_timeout_secs = crate::proxy::pipeline::budget::clamp_secs(
+                    crate::proxy::pipeline::stream_peek::peek_budget_secs(
+                        is_compaction_request,
+                        false,
+                        is_thinking,
+                        Some(raw_estimated),
+                    ),
                 );
-                // [Pipeline Budget] peek 同样受请求级剩余预算约束，不再各自算截止时刻
-                let peek_timeout_secs = crate::proxy::pipeline::budget::clamp_secs(base_peek_secs);
-                // [FIX #3621] 采用固定截止时间点，杜绝遇到心跳 : ping 时刷新重置 30s 倒计时导致的 100s 死等死循环
-                let peek_deadline =
-                    tokio::time::Instant::now() + std::time::Duration::from_secs(peek_timeout_secs);
-                loop {
-                    let now = tokio::time::Instant::now();
-                    if now >= peek_deadline {
-                        tracing::warn!(
-                            "[{}] Total timeout waiting for first data ({}s) during peek, retrying...",
-                            trace_id,
-                            peek_timeout_secs
+                match crate::proxy::pipeline::stream_peek::peek_first_data(
+                    &mut claude_stream,
+                    peek_timeout_secs,
+                    |bytes| {
+                        crate::proxy::pipeline::stream_peek::is_heartbeat(
+                            bytes,
+                            crate::proxy::pipeline::stream_peek::StreamDialect::Anthropic,
+                        )
+                    },
+                    |bytes| claude_stream_chunk_has_error_event(bytes),
+                )
+                .await
+                {
+                    crate::proxy::pipeline::stream_peek::PeekOutcome::Data { bytes, .. } => {
+                        ttft_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
+                        crate::proxy::handlers::common::report_qos_ttft(
+                            &token_manager,
+                            &account_id,
+                            Some(affinity_key.as_str()),
+                            ttft_ms,
+                            request_enables_thinking(request.thinking.is_some(), &gemini_body),
+                            Some(raw_estimated as u32),
                         );
-                        last_error =
-                            format!("Timeout waiting for first data ({}s)", peek_timeout_secs);
-                        retry_this_account = true;
+                        if let Some(effective_item) =
+                            fallback_attempts.iter_mut().find(|a| a.is_effective)
+                        {
+                            effective_item.duration_s = ttft_ms / 1000.0;
+                        }
+                        let _ =
+                            crate::proxy::monitor::CURRENT_UPSTREAM_CAPTURE.try_with(|holder| {
+                                holder.set_attempts(fallback_attempts.clone());
+                            });
+                        first_data_chunk = Some(bytes);
+                    }
+                    crate::proxy::pipeline::stream_peek::PeekOutcome::Timeout {
+                        budget_secs,
+                        ..
+                    } => {
+                        // 首包预算耗尽 = 上游排队 / 大上下文 prefill 慢，**不是账号故障**：
+                        // 不跨账号重放（换号只会把同一份 body 从头 prefill 一遍），直接 504。
+                        last_error = format!("Timeout waiting for first data ({}s)", budget_secs);
+                        crate::proxy::pipeline::terminal::record_first_byte_timeout(
+                            "claude",
+                            budget_secs,
+                            &mut failure_statuses,
+                        );
                         break;
                     }
-                    let remaining = peek_deadline - now;
-
-                    match tokio::time::timeout(
-                        // [FIX #Bug1] Reduced from 300s to 30s for normal requests;
-                        // Extended to 180s for compaction summary requests due to heavy prompt processing (Fixes #3614).
-                        remaining,
-                        claude_stream.next(),
-                    )
-                    .await
-                    {
-                        Ok(Some(Ok(bytes))) => {
-                            if bytes.is_empty() {
-                                continue;
-                            }
-
-                            let text = String::from_utf8_lossy(&bytes);
-                            // Skip SSE comments/pings
-                            if text.trim().starts_with(":")
-                                || text.contains("\"type\":\"ping\"")
-                                || text.contains("\"type\": \"ping\"")
-                            {
-                                debug!("[{}] Skipping peek heartbeat: {}", trace_id, text.trim());
-                                continue;
-                            }
-
-                            // [FIX #3593] 识别 Peek 阶段的错误事件，触发账号轮换重试而非误判为首包
-                            if claude_stream_chunk_has_error_event(&bytes) {
-                                tracing::warn!(
-                                    "[{}] Error event detected during peek: {}, retrying...",
-                                    trace_id,
-                                    text.trim()
-                                );
-                                last_error = format!("Error event during peek: {}", text.trim());
-                                retry_this_account = true;
-                                break;
-                            }
-
-                            // We found real data!
-                            ttft_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
-                            crate::proxy::handlers::common::report_qos_ttft(
-                                &token_manager,
-                                &account_id,
-                                Some(affinity_key.as_str()),
-                                ttft_ms,
-                                request_enables_thinking(request.thinking.is_some(), &gemini_body),
-                                Some(raw_estimated as u32),
-                            );
-                            if let Some(effective_item) =
-                                fallback_attempts.iter_mut().find(|a| a.is_effective)
-                            {
-                                effective_item.duration_s = ttft_ms / 1000.0;
-                            }
-                            let _ = crate::proxy::monitor::CURRENT_UPSTREAM_CAPTURE.try_with(
-                                |holder| {
-                                    holder.set_attempts(fallback_attempts.clone());
-                                },
-                            );
-                            first_data_chunk = Some(bytes);
-                            break;
-                        }
-                        Ok(Some(Err(e))) => {
-                            tracing::warn!(
-                                "[{}] Stream error during peek: {}, retrying...",
-                                trace_id,
-                                e
-                            );
-                            last_error = format!("Stream error during peek: {}", e);
-                            retry_this_account = true;
-                            break;
-                        }
-                        Ok(None) => {
-                            tracing::warn!(
-                                "[{}] Stream ended during peek (Empty Response), retrying...",
-                                trace_id
-                            );
-                            last_error = "Empty response stream during peek".to_string();
-                            retry_this_account = true;
-                            break;
-                        }
-                        Err(_) => {
-                            tracing::warn!(
-                                "[{}] Timeout waiting for first data ({}s), retrying...",
-                                trace_id,
-                                peek_timeout_secs
-                            );
-                            last_error =
-                                format!("Timeout waiting for first data ({}s)", peek_timeout_secs);
-                            retry_this_account = true;
-                            break;
-                        }
+                    crate::proxy::pipeline::stream_peek::PeekOutcome::ErrorEvent { .. } => {
+                        last_error = "Error event during peek".to_string();
+                        retry_this_account = true;
+                    }
+                    crate::proxy::pipeline::stream_peek::PeekOutcome::StreamError {
+                        error, ..
+                    } => {
+                        last_error = format!("Stream error during peek: {}", error);
+                        retry_this_account = true;
+                    }
+                    crate::proxy::pipeline::stream_peek::PeekOutcome::Eof { .. } => {
+                        last_error = "Empty response stream during peek".to_string();
+                        retry_this_account = true;
                     }
                 }
 
@@ -2574,18 +2447,15 @@ pub async fn handle_messages(
                                     .header("X-Session-Id", &client_session_id)
                                     .header("X-Antigravity-Session-Id", &client_session_id)
                                     .header("X-Context-Purified", "false")
-                                    .header("X-Timing-Clean-Ms", format!("{:.3}", clean_ms))
-                                    .header("X-Timing-Norm-Ms", format!("{:.3}", norm_ms))
-                                    .header("X-Timing-Thinking-Ms", format!("{:.3}", think_fill_ms))
-                                    .header("X-Timing-Ttft-Ms", format!("{:.3}", ttft_ms))
-                                    .header(
-                                        "X-Timing-Ttft-Overhead-Ms",
-                                        format!("{:.3}", fallback_overhead_ms),
-                                    )
-                                    .header(
-                                        "X-Timing-Ttft-Attempts",
+                                    .timing(&TimingHeaders::new(
+                                        clean_ms,
+                                        norm_ms,
+                                        think_fill_ms,
+                                        ttft_ms,
+                                        headers_ms,
+                                        fallback_overhead_ms,
                                         attempts_b64.as_deref().unwrap_or(""),
-                                    )
+                                    ))
                                     .body(Body::from(
                                         serde_json::to_string(&full_response).unwrap(),
                                     ))
@@ -2716,15 +2586,7 @@ pub async fn handle_messages(
                     cache_info
                 );
 
-                ttft_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
-                crate::proxy::handlers::common::report_qos_ttft(
-                    &token_manager,
-                    &account_id,
-                    Some(affinity_key.as_str()),
-                    ttft_ms,
-                    request_enables_thinking(request.thinking.is_some(), &gemini_body),
-                    Some(raw_estimated as u32),
-                );
+                // QoS/TTFT 已由 peek 在首个数据块上报；这里不能再用“整条响应完成时间”覆盖
                 if let Some(effective_item) = fallback_attempts.iter_mut().find(|a| a.is_effective)
                 {
                     effective_item.duration_s = ttft_ms / 1000.0;
@@ -2744,18 +2606,15 @@ pub async fn handle_messages(
                     .header("X-Upstream-Model", config.final_model.as_str())
                     .header("X-Session-Id", &client_session_id)
                     .header("X-Antigravity-Session-Id", &client_session_id)
-                    .header("X-Timing-Clean-Ms", format!("{:.3}", clean_ms))
-                    .header("X-Timing-Norm-Ms", format!("{:.3}", norm_ms))
-                    .header("X-Timing-Thinking-Ms", format!("{:.3}", think_fill_ms))
-                    .header("X-Timing-Ttft-Ms", format!("{:.3}", ttft_ms))
-                    .header(
-                        "X-Timing-Ttft-Overhead-Ms",
-                        format!("{:.3}", fallback_overhead_ms),
-                    )
-                    .header(
-                        "X-Timing-Ttft-Attempts",
+                    .timing(&TimingHeaders::new(
+                        clean_ms,
+                        norm_ms,
+                        think_fill_ms,
+                        ttft_ms,
+                        headers_ms,
+                        fallback_overhead_ms,
                         attempts_b64.as_deref().unwrap_or(""),
-                    )
+                    ))
                     .body(Body::from(
                         serde_json::to_string(&claude_response).unwrap_or_default(),
                     ))
@@ -2810,15 +2669,17 @@ pub async fn handle_messages(
         );
 
         if classification.is_model_not_found() {
-            // [NEW] 针对特定账号记录单模型临时熔断（例如该 PRO 账号未开通 Claude 5.5），绝不连坐其他模型
-            token_manager.mark_model_unsupported(
-                &account_id,
-                &request_with_mapped.model,
-                Some(900),
-            );
+            // [Pipeline Policy] 单模型临时熔断 + 是否换号的决策已下沉
+            let can_rotate =
+                crate::proxy::pipeline::policy::apply_model_not_found(attempt, pool_size, || {
+                    token_manager.mark_model_unsupported(
+                        &account_id,
+                        &request_with_mapped.model,
+                        Some(900),
+                    )
+                });
 
-            // 如果账号池中还有其他未尝试的候选账号，则顺畅换号重试，而不是直接放弃报错
-            if attempt < pool_size {
+            if can_rotate {
                 tracing::warn!(
                     "[{}] 上游报错模型不可用 (HTTP {})，已标记账号 {} 对模型 [{}] 临时熔断，继续换号重试 ({}/{})...",
                     trace_id, status_code, email, request_with_mapped.model, attempt, pool_size
@@ -2868,147 +2729,59 @@ pub async fn handle_messages(
             );
         }
 
-        // [FIX #3713] 503 / 529 服务端过载：思考预算原地降级自愈 (Pipeline First)
-        // 当模型遭遇过载 (503/529 / overloaded)，若当前请求带有 -1 或超大思考预算，优先在当前账号上降级预算原地重试一次，
-        // 杜绝盲目全池轮换导致跨账号缓存丢失 (Prefix Cache Protection)。
-        if crate::proxy::pipeline::UpstreamClassification::is_server_overloaded(
+        // [Pipeline Auto-Heal] 503 过载 / 400 tool_choice 冲突 / 400 损坏图片：
+        // 三者均是对已转出的 Gemini 报文的原地修复，统一在同账号重试（换号只会重蹈覆车）。
+        if let Some(heal) = crate::proxy::pipeline::try_auto_heal(
+            &classification,
             status_code,
             &error_text,
-        ) && !retried_with_budget_degraded
-            && crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(
-                &mut gemini_body,
-            )
-        {
-            retried_with_budget_degraded = true;
-            degraded_gemini_body = Some(gemini_body);
+            &mut gemini_body,
+            &mut degraded_gemini_body,
+            &mut heal_flags,
+        ) {
             force_rotate = false;
-            tracing::warn!(
-                "[{}] Upstream {}/overloaded detected. In-place self-healing: degraded thinking budget to 4000 on account {} (preserving prefix cache)",
-                trace_id, status_code, email
+            crate::proxy::stage_trace::StageTrace::alert_current(
+                "self_heal",
+                format!(
+                    "protocol=claude kind={} status={} account={}",
+                    heal.kind, status_code, email
+                ),
             );
-            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(heal.delay_ms)).await;
             continue;
         }
 
-        // [FIX #3721] 400 强制工具调用与思考冲突：自愈剔除 thinkingConfig 原地重试 (Pipeline First)
-        if crate::proxy::pipeline::UpstreamClassification::is_thinking_tool_choice_conflict(
-            status_code,
-            &error_text,
-        ) && !retried_tool_choice_conflict
-        {
-            retried_tool_choice_conflict = true;
-            if let Some(req) = gemini_body
-                .get_mut("request")
-                .and_then(Value::as_object_mut)
-            {
-                if let Some(gc) = req
-                    .get_mut("generationConfig")
-                    .and_then(Value::as_object_mut)
-                {
-                    gc.remove("thinkingConfig");
-                }
-            } else if let Some(gc) = gemini_body
-                .get_mut("generationConfig")
-                .and_then(Value::as_object_mut)
-            {
-                gc.remove("thinkingConfig");
-            }
-            degraded_gemini_body = Some(gemini_body);
-            force_rotate = false;
-            tracing::warn!(
-                "[{}] Upstream 400 tool_choice/thinking conflict detected. In-place self-healing: stripped thinkingConfig on account {}, retrying.",
-                trace_id, email
-            );
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            continue;
-        }
-
-        // [FIX Corrupted Image] 400 多模态图像解码/处理失败：自愈降级损坏图片为占位符并在同账号原地重试
-        if classification.is_image_processing_error() && !retried_with_image_omitted {
-            let purged_count =
-                crate::proxy::mappers::common_utils::purge_corrupted_images_from_gemini_payload(
-                    &mut gemini_body,
-                );
-            if purged_count == 0 {
-                tracing::warn!(
-                    "[{}] Upstream 400 Unable to process input image detected, but no inline image was purged. Skipping retry to prevent duplicate 400.",
-                    trace_id
-                );
-            } else {
-                retried_with_image_omitted = true;
-                tracing::warn!(
-                    "[{}] Upstream 400 Unable to process input image detected. In-place self-healing: purged {} image(s) to text placeholders on account {}, retrying.",
-                    trace_id, purged_count, email
-                );
-                degraded_gemini_body = Some(gemini_body);
-                force_rotate = false;
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                continue;
-            }
-        }
-
-        // 4. 处理 400 错误 (Thinking 签名失效 或 块顺序错误)
-        // [FIX 2026-08-28] Use case-insensitive matching and cover Google's exact phrasing:
-        // "Invalid thought signature." / "thoughtSignature" / "thought_signature"
-        let lower_err = error_text.to_lowercase();
-        if status_code == 400
-            && !retried_without_thinking
-            && (lower_err.contains("invalid thought signature")
-                || lower_err.contains("invalid `signature`")
-                || lower_err.contains("invalid signature")
-                || lower_err.contains("thought_signature")
-                || lower_err.contains("thoughtsignature")
-                || lower_err.contains("thinking.signature: field required")
-                || lower_err.contains("thinking.thinking: field required")
-                || lower_err.contains("thinking.signature")
-                || lower_err.contains("thinking.thinking")
-                || lower_err.contains("corrupted thought signature")
-                || lower_err.contains("failed to deserialise")
-                || lower_err.contains("thinking block")
-                || lower_err.contains("found `text`")
-                || lower_err.contains("found 'text'")
-                || lower_err.contains("must be `thinking`")
-                || lower_err.contains("must be 'thinking'"))
-        {
-            // Existing logic for thinking signature.
+        // 4. 处理 400 错误（Thinking 签名失效 / 块顺序错误）
+        // [Pipeline First] cue 集合与分类全部由 `pipeline::policy` 统一：
+        // 适配器不再自己维护 16 条 contains，也不再按已下线代际做模型名改写。
+        if classification.is_thought_signature_error() && !retried_without_thinking {
             retried_without_thinking = true;
 
-            // 使用 WARN 级别,因为这不应该经常发生(已经主动过滤过)
             tracing::warn!(
                 "[{}] Unexpected thinking signature error (should have been filtered). \
-                 Retrying with all thinking blocks removed.",
+                 Purging corrupted signatures.",
                 trace_id
             );
 
             // [Pipeline First] 不再在适配器里做 Thinking → Text。
             // 正常轮次：有合法签名时由流水线保留官方思考块 / 签名连续性；
             // 仅当签名失效或缺失时，流水线才把历史思考降级为正文（保留推理内容）。
-            // 这里只标记重试状态并保持 thinking 配置不变。
 
-            // 精准定向净化 ThinkingStore 中当前 session 的异构污染签名，保留思考文本与健康历史签名，
-            // 彻底防止重试阶段再次把坏签名还原回 contents
+            // 精准定向净化 ThinkingStore 中当前 session 的异构污染签名，保留思考文本与健康历史签名
             session_scope.purge_signatures(&mapped_model);
 
-            // [FIX Prompt-Cache] 严禁在重试路径中注入合成消息 (close_tool_loop_for_thinking)！
-            // 保持历史消息真实纯净，由 InboundThinkingPipeline 与 finalize_gemini_contents_thinking 统一兜底签名与占位。
-
-            // 清理模型名中的 -thinking 后缀
+            // 模型名归一：仅剔除 -thinking 后缀与 4.6 代内的快照后缀（4.5 及以下已被门禁下线）
             if request_for_body.model.contains("claude-") {
-                let mut m = request_for_body.model.clone();
-                m = m.replace("-thinking", "");
+                let mut m = request_for_body.model.replace("-thinking", "");
                 if m.contains("claude-sonnet-4-6-") {
-                    m = "claude-sonnet-4-6".to_string();
-                } else if m.contains("claude-sonnet-4-5-") {
                     m = "claude-sonnet-4-6".to_string();
                 } else if m.contains("claude-opus-4-6-") {
                     m = "claude-opus-4-6".to_string();
-                } else if m.contains("claude-opus-4-5-") || m.contains("claude-opus-4-") {
-                    m = "claude-opus-4-5".to_string();
                 }
                 request_for_body.model = m;
             }
 
-            // [FIX] 强制重试：因为我们已经清理了 thinking block，所以这是一个新的、可以重试的请求
+            // [FIX] 强制重试：因为已经清理了 thinking block，所以这是一个新的、可以重试的请求
             // 不要使用 determine_retry_strategy，因为它会因为 retried_without_thinking=true 而返回 NoRetry
             if apply_retry_strategy(
                 RetryStrategy::FixedDelay(Duration::from_millis(200)),
@@ -3021,6 +2794,11 @@ pub async fn handle_messages(
             {
                 continue;
             }
+        } else if classification.is_thought_signature_error() {
+            tracing::warn!(
+                "[{}] Thinking signature error persisted after purge. Terminating retry loop.",
+                trace_id
+            );
         }
 
         // 5. 统一处理所有可重试错误
@@ -3068,24 +2846,23 @@ pub async fn handle_messages(
             continue; // 重试:下一轮 transform 时读取新代数,派生全新 sessionId
         }
 
-        let scheduling_mode = token_manager.get_scheduling_mode().await;
-        let allow_grace = match scheduling_mode {
-            crate::proxy::sticky_config::SchedulingMode::Balance => {
-                token_manager.tokens_count() <= 1
-            }
-            crate::proxy::sticky_config::SchedulingMode::CacheFirst => true,
-            crate::proxy::sticky_config::SchedulingMode::PerformanceFirst => false,
-        };
+        // 调度模式只表达“是否接受在当前账号原地等待”，由有状态裁决器保证每账号仅一次；
+        // 档位表（退避时长/换号判定）不随调度模式变化。
+        let allow_grace = crate::proxy::pipeline::rotation::scheduling_allows_grace(
+            token_manager.get_scheduling_mode().await,
+            pool_size,
+        );
 
         // 确定重试策略：传入当前 attempt 与 pool_size，执行智能自适应裁决
-        let retry_strategy = super::common::determine_retry_strategy_adaptive(
+        let retry_strategy = retry_state.determine_strategy_adaptive_with_policy(
+            &account_id,
             status_code,
             &error_text,
             retry_after.as_deref(),
             retried_without_thinking,
-            allow_grace,
             attempt,
             pool_size,
+            allow_grace,
         );
 
         // 执行退避
@@ -3098,6 +2875,16 @@ pub async fn handle_messages(
         )
         .await
         {
+            // [Rotation] GraceRetry 复用同一账号凭据：不重新选号，也不消耗轮换次数
+            if matches!(retry_strategy, RetryStrategy::GraceRetry(_)) {
+                retry_credentials = Some((
+                    access_token.clone(),
+                    project_id.clone(),
+                    email.clone(),
+                    account_id.clone(),
+                    0,
+                ));
+            }
             // 判断是否需要轮换账号
             if !should_rotate_account(status_code, Some(&retry_strategy)) {
                 debug!(
@@ -3154,63 +2941,8 @@ pub async fn handle_messages(
 
 /// 列出可用模型
 pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoResponse {
-    use crate::proxy::common::model_mapping::{
-        get_all_dynamic_models, get_all_dynamic_models_metadata,
-    };
-
-    let only_raw = *state.only_raw_quota_models.read().await;
-    let model_ids =
-        get_all_dynamic_models(&state.custom_mapping, Some(&state.token_manager), only_raw).await;
-    let metadata_map = get_all_dynamic_models_metadata(
-        &state.custom_mapping,
-        Some(&state.token_manager),
-        only_raw,
-    )
-    .await;
-
-    let data: Vec<_> = model_ids
-        .into_iter()
-        .map(|id| {
-            let (fallback_ctx, fallback_out) =
-                crate::proxy::handlers::openai::resolve_model_token_limits(&id);
-            let meta = metadata_map
-                .get(&id)
-                .or_else(|| metadata_map.get(&id.to_lowercase()));
-            let ctx_len = meta
-                .and_then(|m| m.max_tokens)
-                .map(|v| v as i64)
-                .unwrap_or(fallback_ctx);
-            let out_len = meta
-                .and_then(|m| m.max_output_tokens)
-                .map(|v| v as i64)
-                .unwrap_or(fallback_out);
-            let mut obj = json!({
-                "id": id,
-                "object": "model",
-                "created": 1706745600,
-                "owned_by": "antigravity",
-                "context_length": ctx_len,
-                "max_context_length": ctx_len,
-                "max_input_tokens": ctx_len,
-                "max_model_len": ctx_len,
-                "max_tokens": ctx_len,
-                "input_token_limit": ctx_len,
-                "max_completion_tokens": out_len,
-                "max_output_tokens": out_len,
-                "output_token_limit": out_len,
-            });
-            if let Some(m) = meta {
-                if let Ok(serde_json::Value::Object(map)) = serde_json::to_value(m) {
-                    if let Some(target) = obj.as_object_mut() {
-                        for (k, v) in map {
-                            target.insert(k, v);
-                        }
-                    }
-                }
-            }
-            obj
-        })
-        .collect();
+    let entries = crate::proxy::handlers::common::collect_model_list_entries(&state).await;
+    let data = crate::proxy::handlers::common::openai_style_model_objects(entries);
 
     Json(json!({
         "object": "list",

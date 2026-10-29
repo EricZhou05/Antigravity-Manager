@@ -6,7 +6,6 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelSpec {
     pub max_output_tokens: Option<u64>,
-    pub thinking_budget: Option<u64>,
     pub is_thinking: Option<bool>,
 }
 
@@ -51,74 +50,22 @@ pub fn get_max_output_tokens(model_id: &str, token: Option<&ProxyToken>) -> u64 
         }
     }
 
-    // 2. 回退到静态 JSON
+    // 2. 官方模型目录（唯一权威）
+    if let Some(info) = crate::models::OfficialModelCatalog::get(model_id) {
+        if let Some(limit) = info.max_output_tokens.filter(|v| *v > 0) {
+            return limit as u64;
+        }
+    }
+
+    // 3. 静态 JSON（历史兼容兜底）
     if let Some(spec) = SPECS.models.get(&std_id) {
         if let Some(limit) = spec.max_output_tokens {
             return limit;
         }
     }
 
-    // 3. 全局兜底
+    // 4. 全局兜底
     65535
-}
-
-/// 获取思维链预算 (动态优先，根据模型 ID 档位字典自动填充)
-pub fn get_thinking_budget(model_id: &str, _token: Option<&ProxyToken>) -> u64 {
-    let lower_raw = model_id.to_lowercase();
-    if is_bare_gemini_v3_flash(&lower_raw) {
-        return 4000;
-    }
-    let std_id = resolve_alias(model_id);
-    let lower = std_id.to_lowercase();
-
-    // 1. 显式档位匹配（支持所有模型的通用分级）
-    // 规则：只要不是轻量级（flash/lite），带 high 档位的均按顶级模型赋予思考预算
-    let is_lightweight = lower.contains("flash") || lower.contains("lite");
-    if lower.contains("high") || lower.contains("agent") || lower.contains("max") {
-        if !is_lightweight {
-            return 10001; // 高级/旗舰模型（Pro / Opus / 新一代代号模型等）满血思考规范预算
-        }
-        return 10000; // Flash 等高速轻量模型 high 满血思考规范预算
-    }
-    if lower.contains("medium") {
-        return 4000; // medium 内置逆向规范预算
-    }
-    if lower.contains("extra-low") {
-        return 1000; // extra-low 规范预算
-    }
-    if lower.contains("low") {
-        if is_gemini_v4_or_above(&std_id) || lower.contains("argon") {
-            return 1024; // Gemini 4 (Argon) 思考预算下限必须 >= 1024，防止触发 THINKING_LEVEL_MINIMAL 400
-        }
-        if !is_lightweight {
-            return 1001; // 高级模型 low 规范预算
-        }
-        return 1000; // flash-low 规范预算
-    }
-
-    // 2. 静态 JSON 配置 (model_specs.json)
-    if let Some(spec) = SPECS.models.get(&std_id) {
-        if let Some(budget) = spec.thinking_budget {
-            return budget;
-        }
-    }
-
-    // 3. 所有 Gemini >= 3.0 未带显式后缀的 Flash 模型：
-    // medium 或者不带档位后缀，统一默认赋予 4000（内置逆向标准）
-    if is_gemini_v3_or_above(&std_id) && lower.contains("flash") {
-        return 4000;
-    }
-
-    // 4. 传统模型系列默认限额
-    if lower.contains("claude") {
-        16384
-    } else if lower.contains("2.5-flash") || lower.contains("2.0-flash") {
-        24576
-    } else if lower.contains("pro") {
-        49152
-    } else {
-        24576
-    }
 }
 
 /// 判断是否为 >= 3.0 的无后缀 Gemini Pro 裸模型（如 gemini-3.1-pro, gemini-3-pro 等）
@@ -184,99 +131,6 @@ pub fn is_explicit_heuristic_tier_model(model_id: &str) -> bool {
                 || lower.contains("-max-")
                 || lower.contains("-agent")
                 || lower.contains("-thinking")))
-}
-
-/// 权威解析思维链预算（全协议统一：处理启发式模型强制锁死 vs 裸模型接管客户端 effort）
-pub fn resolve_authoritative_thinking_budget(
-    model: &str,
-    client_effort: Option<&str>,
-    _client_budget: Option<u64>,
-    token: Option<&ProxyToken>,
-) -> u64 {
-    // 1. 若为 Gemini < 3 的非思考模型，返回 0
-    if is_gemini_under_v3(model) {
-        return 0;
-    }
-
-    // 2. 启发式模型：绝对最高优先级，根据后缀字典强制返回，彻底忽略客户端 effort
-    if is_explicit_heuristic_tier_model(model) {
-        return get_thinking_budget(model, token);
-    }
-
-    // 3. 非 Gemini 3 系列（例如纯 Claude 或其他传统模型），走传统默认
-    if !is_gemini_v3_or_above(model) && !model.to_lowercase().contains("gemini") {
-        return get_thinking_budget(model, token);
-    }
-
-    // 4. 裸模型（不带显式档位后缀，如 gemini-3-flash, gemini-3.1-pro 等）
-    let std_id = resolve_alias(model);
-    let lower = std_id.to_lowercase();
-    let is_pro = lower.contains("pro");
-
-    // 由客户端 effort / thinkingLevel 接管：
-    // high / max / xhigh → 10000 / 10001
-    // medium / default / json字段不填 → 4000 / 10001
-    // low / extra-low → 1000 / 1001
-    // 若客户端试图关闭思考 (none / 0 / disabled) 或未传：绝不关闭思考，强制按 -medium 字典预算填充兜底！
-    if let Some(effort) = client_effort {
-        let eff_lower = effort.trim().to_lowercase();
-        match eff_lower.as_str() {
-            "high" | "max" | "xhigh" => {
-                if is_pro {
-                    10001
-                } else {
-                    10000
-                }
-            }
-            "low" | "extra-low" => {
-                if is_pro {
-                    1001
-                } else {
-                    1000
-                }
-            }
-            "medium" | "default" => {
-                if is_pro {
-                    10001
-                } else {
-                    4000
-                }
-            }
-            "none" | "0" | "disabled" => {
-                // 试图关闭思考：绝不关闭！强制以 -medium 字典预算填充兜底
-                if is_pro {
-                    10001
-                } else {
-                    4000
-                }
-            }
-            _ => {
-                // 未知 effort，默认 -medium 字典预算
-                if is_pro {
-                    10001
-                } else {
-                    4000
-                }
-            }
-        }
-    } else {
-        // 客户端未传 effort 或 json 字段不填：默认以 -medium 字典预算填充兜底
-        if is_pro {
-            10001
-        } else {
-            4000
-        }
-    }
-}
-
-/// 判断是否为思维模型
-#[allow(dead_code)]
-pub fn is_thinking_model(model_id: &str) -> bool {
-    let std_id = resolve_alias(model_id);
-    if let Some(spec) = SPECS.models.get(&std_id) {
-        return spec.is_thinking.unwrap_or(false);
-    }
-    model_id.contains("-thinking") || model_id.contains("thinking")
 }
 
 /// 判断是否为 Gemini 且主版本号 < 3.0 的模型（例如 gemini-2.5-flash, gemini-2.5-pro, gemini-2.0-flash, gemini-1.5-pro 等）
@@ -500,8 +354,25 @@ pub fn pick_optimal_default_tier(available_tiers: &[String]) -> Option<String> {
         return Some(t.clone());
     }
 
-    // 3. 再次找「high 下的一个等级」：在权重严格低于 high 的档位中取最高档
-    // （例：[low, high] → low；[lite, low, medium, high] 中 medium 已在第 2 步命中）
+    // 3. 没有 tiered/medium：优先取严格高于 low 的最低档
+    //    （Pro 官方只有 low/high → high，与 variant 的 Medium→Pro high 契约一致）
+    if let Some(low_weight) = available_tiers
+        .iter()
+        .find(|t| t.eq_ignore_ascii_case("low"))
+        .map(|t| tier_weight(t))
+    {
+        let mut above_low: Vec<(&String, i32)> = available_tiers
+            .iter()
+            .map(|t| (t, tier_weight(t)))
+            .filter(|(_, w)| *w > low_weight)
+            .collect();
+        if !above_low.is_empty() {
+            above_low.sort_by_key(|(_, w)| *w);
+            return Some(above_low[0].0.clone());
+        }
+    }
+
+    // 4. 无 low 档：取 high 下的最高档（保守默认）
     let high_weight = tier_weight("high");
     let mut below_high: Vec<(&String, i32)> = available_tiers
         .iter()
@@ -513,7 +384,7 @@ pub fn pick_optimal_default_tier(available_tiers: &[String]) -> Option<String> {
         below_high.sort_by_key(|(_, w)| std::cmp::Reverse(*w));
         return Some(below_high[0].0.clone());
     }
-    // 4. 极端保底：仅从真实存在的可用档位中取第一个，绝不虚构不存在的档位
+    // 5. 极端保底：仅从真实存在的可用档位中取第一个，绝不虚构不存在的档位
     available_tiers.first().cloned()
 }
 
@@ -662,264 +533,65 @@ pub fn normalize_client_thinking_level(effort: &str) -> Option<&'static str> {
 pub fn resolve_custom_budget(
     model: &str,
     client_effort: Option<&str>,
-    client_budget: Option<u64>,
+    _client_budget: Option<u64>,
     tb_config: &crate::proxy::config::ThinkingBudgetConfig,
-    token: Option<&ProxyToken>,
+    _token: Option<&ProxyToken>,
 ) -> Option<i64> {
-    use crate::proxy::config::{ThinkingBudgetMode, ThinkingControlSource};
+    use crate::proxy::config::ThinkingBudgetMode;
 
-    // 1. 若为 Gemini < 3 的非思考模型，返回 None（不支持任何思考配置）
     if is_gemini_under_v3(model) {
         return None;
     }
 
-    // 2. 顶级大选择：客户端直接控制（危险模式）
-    if tb_config.control_source == ThinkingControlSource::Client {
-        if let Some(b) = client_budget {
-            return Some(b as i64);
-        }
+    // 官方目录未收录的模型：不再维护任何按系列 / 档位的硬编码预算表。
+    // 仅当用户显式选择 Custom 模式时，才使用用户配置的数字；否则保持自适应（None）。
+    if tb_config.mode != ThinkingBudgetMode::Custom {
         return None;
     }
 
-    // 3. 顶级大选择：网关权威控制
-    let std_id = resolve_alias(model);
-    let lower = std_id.to_lowercase();
-    let is_claude = lower.contains("claude");
-    let is_legacy_thinking = lower.contains("gemini") && lower.contains("thinking");
-
-    // 3.0 早期思维实验模型（如 gemini-2.0-flash-thinking, gemini-2.0-flash-thinking-exp, gemini-2.0-pro-thinking-exp 等）
-    if is_legacy_thinking {
-        let max_cap = get_thinking_budget(&std_id, token) as i64;
-        if tb_config.mode == ThinkingBudgetMode::Custom
-            && tb_config.custom_value != 24576
-            && tb_config.custom_value > 0
-        {
-            let custom = tb_config.custom_value as i64;
-            return Some(if custom > max_cap { max_cap } else { custom });
-        }
-        if max_cap > 0 {
-            return Some(max_cap);
-        } else {
-            return None;
-        }
-    }
-
-    let is_pro = lower.contains("pro");
-    let is_flash =
-        is_tiered_flash_model(&std_id) || lower.contains("flash") || is_gemini_v3_or_above(&std_id);
-
-    // 兼容历史单值测试逻辑：仅针对未指定显式档位后缀且非 tiered 的裸模型生效
-    if tb_config.mode == ThinkingBudgetMode::Custom
-        && tb_config.custom_value != 24576
-        && tb_config.custom_value > 0
-        && !is_tiered_flash_model(&std_id)
-        && !lower.contains("-high")
-        && !lower.contains("-low")
-        && !lower.contains("-medium")
-    {
+    // 24576 是历史配置的“未设置”哨兵值，不能当作真实预算下发。
+    if tb_config.custom_value > 0 && tb_config.custom_value != 24576 {
         return Some(tb_config.custom_value as i64);
     }
 
-    // 3.1 Claude 系列
-    if is_claude {
-        if tb_config.claude_mode == ThinkingBudgetMode::Default {
-            return None;
-        }
-        let eff = client_effort
+    let lower = resolve_alias(model).to_lowercase();
+    // 档位优先级：模型名后缀（绝对优先）> 客户端 effort > 配置 effort
+    let level = if lower.ends_with("-high") || lower.ends_with("-max") || lower.ends_with("-agent")
+    {
+        Some("HIGH")
+    } else if lower.ends_with("-low") || lower.ends_with("-extra-low") || lower.ends_with("-lite") {
+        Some("LOW")
+    } else if lower.ends_with("-medium") || lower.ends_with("-default") {
+        Some("MEDIUM")
+    } else {
+        client_effort
             .or(tb_config.effort.as_deref())
-            .map(|s| s.trim().to_lowercase().replace('_', "-"));
-        let has_explicit_suffix = lower.contains("-low")
-            || lower.contains("haiku")
-            || lower.contains("-med")
-            || lower.contains("-medium")
-            || lower.contains("-high")
-            || lower.contains("-max");
+            .and_then(normalize_client_thinking_level)
+    };
 
-        let is_low = lower.contains("-low")
-            || lower.contains("haiku")
-            || (!has_explicit_suffix && matches!(eff.as_deref(), Some("low") | Some("extra-low")));
-        let is_med = lower.contains("-med")
-            || lower.contains("-medium")
-            || (!has_explicit_suffix && matches!(eff.as_deref(), Some("medium") | Some("default")));
-        let is_high = lower.contains("-high")
-            || lower.contains("-max")
-            || (!has_explicit_suffix
-                && matches!(
-                    eff.as_deref(),
-                    Some("high") | Some("max") | Some("xhigh") | Some("x-high")
-                ));
-
-        if is_low {
-            if tb_config.claude_low > 0 {
-                Some(tb_config.claude_low as i64)
-            } else {
-                None
-            }
-        } else if is_med {
-            if tb_config.claude_medium > 0 {
-                Some(tb_config.claude_medium as i64)
-            } else {
-                None
-            }
-        } else if is_high {
-            if tb_config.claude_high > 0 {
-                Some(tb_config.claude_high as i64)
-            } else {
-                None
-            }
-        } else {
-            // 针对未指定档位后缀的 Claude 思考模型（如 claude-sonnet-4-6、claude-opus-4-6-thinking）：
-            // 填 > 0 则精确覆盖；<= 0 则回退至官方模型结构体默认值 (如 1024)
-            if tb_config.claude_budget > 0 {
-                Some(tb_config.claude_budget as i64)
-            } else {
-                None
-            }
+    let configured = if lower.contains("claude") {
+        match level {
+            Some("LOW") => tb_config.claude_low,
+            Some("HIGH") => tb_config.claude_high,
+            _ => tb_config.claude_medium,
         }
-    } else if is_pro {
-        // 3.2 Gemini Pro 系列（与 Gemini 系列统一配置，继承 Low 与 High 档位）
-        if tb_config.pro_mode == ThinkingBudgetMode::Default
-            || tb_config.flash_mode == ThinkingBudgetMode::Default
-        {
-            return None;
-        }
-        let eff = client_effort
-            .or(tb_config.effort.as_deref())
-            .map(|s| s.trim().to_lowercase().replace('_', "-"));
-        let has_explicit_suffix = lower.contains("-low")
-            || lower.ends_with("-low")
-            || lower.contains("-high")
-            || lower.ends_with("-high");
-
-        let is_low = lower.contains("-low")
-            || lower.ends_with("-low")
-            || (!has_explicit_suffix && matches!(eff.as_deref(), Some("low") | Some("extra-low")));
-
-        if is_low {
-            if tb_config.pro_low >= 0 {
-                Some(tb_config.pro_low as i64)
-            } else if tb_config.flash_low >= 0 {
-                Some(tb_config.flash_low as i64)
-            } else {
-                None
-            }
-        } else {
-            // High 档位（包含未指定 effort、medium 等，均由 High 档位接管保证 Pro 深度推理）
-            if tb_config.pro_high >= 0 {
-                Some(tb_config.pro_high as i64)
-            } else if tb_config.flash_high >= 0 {
-                Some(tb_config.flash_high as i64)
-            } else {
-                None
-            }
-        }
-    } else if is_flash {
-        // 3.3 Gemini Flash 系列
-        if is_tiered_flash_model(&std_id) || lower.contains("tiered") {
-            // [TIERED-THINKING] Tiered 自适应模型：
-            // 不动模型名，严格按照 tiered 模型的 low / high / medium 的预算填写
-            let client_level = client_effort
-                .or(tb_config.effort.as_deref())
-                .and_then(normalize_client_thinking_level);
-            if let Some(level) = client_level {
-                match level {
-                    "LOW" => {
-                        if tb_config.flash_low >= 0 {
-                            Some(tb_config.flash_low as i64)
-                        } else {
-                            Some(1000) // 官方 low 默认值 1000
-                        }
-                    }
-                    "HIGH" => {
-                        if tb_config.flash_high >= 0 {
-                            Some(tb_config.flash_high as i64)
-                        } else {
-                            Some(-1) // 官方 high 默认值 -1 (无上限自适应深度思考)
-                        }
-                    }
-                    _ => {
-                        // MEDIUM
-                        if tb_config.flash_medium >= 0 {
-                            Some(tb_config.flash_medium as i64)
-                        } else {
-                            Some(4000) // 官方 medium 默认值 4000
-                        }
-                    }
-                }
-            } else {
-                // 客户端未传思考参数：看网关 flash_tiered 配置，未配或为 -1 则走官方默认 -1
-                if tb_config.flash_mode == ThinkingBudgetMode::Default {
-                    Some(-1)
-                } else if tb_config.flash_tiered >= 0 {
-                    Some(tb_config.flash_tiered as i64)
-                } else {
-                    Some(-1)
-                }
-            }
-        } else {
-            // [NON-TIERED FLASH] 具名非 Tiered 模型（如 gemini-3.8-flash-high, gemini-3.8-flash-low, gemini-3.8-flash-medium 等）：
-            // 1. 若网关配置为 Default 默认模式，返回 None，交由 configure_inbound_thinking 回落到官方模型结构体默认值
-            if tb_config.flash_mode == ThinkingBudgetMode::Default {
-                return None;
-            }
-
-            // 2. 根据模型自身后缀或 client_effort 匹配档位配置：
-            // 模型名后缀（-low, -medium, -high）具有绝对最高优先级，仅在 bare 裸模型时才使用 client_effort 映射！
-            let is_bare = is_bare_gemini_v3_flash(model);
-            let eff_level = client_effort
-                .or(tb_config.effort.as_deref())
-                .and_then(normalize_client_thinking_level);
-
-            let is_low = lower.contains("-low")
-                || lower.ends_with("-low")
-                || lower.contains("-extra-low")
-                || (is_bare && matches!(eff_level, Some("LOW")));
-
-            let is_medium = lower.contains("-medium")
-                || lower.ends_with("-medium")
-                || (is_bare && matches!(eff_level, Some("MEDIUM")));
-
-            let is_high = lower.contains("-high")
-                || lower.ends_with("-high")
-                || lower.contains("-max")
-                || lower.contains("agent")
-                || (is_bare && matches!(eff_level, Some("HIGH")));
-
-            if is_low {
-                if tb_config.flash_low >= 0 {
-                    Some(tb_config.flash_low as i64)
-                } else {
-                    Some(1000) // 官方 low 默认值 1000
-                }
-            } else if is_medium {
-                if tb_config.flash_medium >= 0 {
-                    Some(tb_config.flash_medium as i64)
-                } else {
-                    Some(4000) // 官方 medium 默认值 4000
-                }
-            } else if is_high {
-                if tb_config.flash_high >= 0 {
-                    Some(tb_config.flash_high as i64)
-                } else {
-                    Some(-1) // 官方 high 默认值 -1
-                }
-            } else {
-                // 未指定任何档位的默认平衡档位 (Medium)
-                if tb_config.flash_medium >= 0 {
-                    Some(tb_config.flash_medium as i64)
-                } else {
-                    Some(4000) // 官方 medium 默认值 4000
-                }
-            }
+    } else if lower.contains("pro") {
+        match level {
+            Some("LOW") => tb_config.pro_low,
+            _ => tb_config.pro_high,
         }
     } else {
-        // 3.4 传统模型（如 gemini-2.0-flash-thinking-exp 等）
-        let b = get_thinking_budget(&std_id, token);
-        if b > 0 {
-            Some(b as i64)
-        } else {
-            None
+        match level {
+            Some("LOW") => tb_config.flash_low,
+            Some("HIGH") => tb_config.flash_high,
+            _ => tb_config.flash_medium,
         }
+    };
+
+    if configured > 0 {
+        Some(configured as i64)
+    } else {
+        None
     }
 }
 
@@ -955,157 +627,29 @@ mod tests {
     }
 
     #[test]
-    fn test_gemini_thinking_budget() {
-        // 显式 -high 后缀模型赋予 10000 满血预算
-        assert_eq!(get_thinking_budget("gemini-3.7-flash-high", None), 10000);
-        assert_eq!(get_thinking_budget("gemini-3.8-flash-high", None), 10000);
-        assert_eq!(get_thinking_budget("gemini-3.9-flash-high", None), 10000);
-
-        // 显式 -medium 后缀模型赋予 4000 预算
-        assert_eq!(get_thinking_budget("gemini-3.7-flash-medium", None), 4000);
-        assert_eq!(get_thinking_budget("gemini-3.8-flash-medium", None), 4000);
-
-        // 显式 -low 后缀模型赋予 1000 预算
-        assert_eq!(get_thinking_budget("gemini-3.7-flash-low", None), 1000);
-        assert_eq!(get_thinking_budget("gemini-3.8-flash-low", None), 1000);
-
-        // 未带显式档位后缀的 Gemini >= 3.0 模型，默认赋予 medium 预算 (4000)
-        assert_eq!(get_thinking_budget("gemini-3.7-flash", None), 4000);
-        assert_eq!(get_thinking_budget("gemini-3.8-flash", None), 4000);
-        assert_eq!(get_thinking_budget("gemini-3.9-flash", None), 4000);
-
-        // Pro 系列
-        assert_eq!(get_thinking_budget("gemini-3.1-pro-high", None), 10001);
-        assert_eq!(get_thinking_budget("gemini-pro-agent", None), 10001);
-        assert_eq!(get_thinking_budget("gemini-3.1-pro-low", None), 1001);
-
-        // Gemini 4 Argon 系列
-        assert_eq!(get_thinking_budget("gemini-4-argon-high", None), 10001);
-        assert_eq!(get_thinking_budget("gemini-4-argon-medium", None), 4000);
-        assert_eq!(get_thinking_budget("gemini-4-argon-low", None), 1024);
-    }
-
-    #[test]
-    fn test_resolve_authoritative_thinking_budget() {
-        // 1. 启发式模型：强制按字典锁定，完全忽略客户端 effort
+    fn pick_default_tier_prefers_above_low_without_medium() {
+        let tiers = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // Pro 官方只有 low/high：默认必须回到 high，与 variant 的 Medium→Pro high 契约一致
         assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3.7-flash-high", Some("low"), None, None),
-            10000
+            pick_optimal_default_tier(&tiers(&["low", "high"])),
+            Some("high".to_string())
         );
         assert_eq!(
-            resolve_authoritative_thinking_budget(
-                "gemini-3.7-flash-high",
-                Some("none"),
-                None,
-                None
-            ),
-            10000
+            pick_optimal_default_tier(&tiers(&["extra-low", "low", "high"])),
+            Some("high".to_string())
+        );
+        // 有 medium / tiered 时仍按优先级
+        assert_eq!(
+            pick_optimal_default_tier(&tiers(&["low", "medium", "high"])),
+            Some("medium".to_string())
         );
         assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3.1-pro-low", Some("high"), None, None),
-            1001
+            pick_optimal_default_tier(&tiers(&["tiered", "high"])),
+            Some("tiered".to_string())
         );
         assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-pro-agent", Some("low"), None, None),
-            10001
-        );
-
-        // 2. 裸模型 Flash 系列：接管客户端 effort
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3-flash", Some("high"), None, None),
-            10000
-        );
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3-flash", Some("max"), None, None),
-            10000
-        );
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3-flash", Some("xhigh"), None, None),
-            10000
-        );
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3-flash", Some("low"), None, None),
-            1000
-        );
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3-flash", Some("extra-low"), None, None),
-            1000
-        );
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3-flash", Some("medium"), None, None),
-            4000
-        );
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3-flash", Some("default"), None, None),
-            4000
-        );
-
-        // 裸模型 Flash 系列：客户端不填或试图关闭，绝不关闭思考，强制回填 -medium (4000)
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3-flash", None, None, None),
-            4000
-        );
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3-flash", Some("none"), None, None),
-            4000
-        );
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3-flash", Some("disabled"), None, None),
-            4000
-        );
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3-flash", Some("0"), None, None),
-            4000
-        );
-
-        // 3. 裸模型 Pro 系列：接管客户端 effort
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3.1-pro", Some("high"), None, None),
-            10001
-        );
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3.1-pro", Some("low"), None, None),
-            1001
-        );
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3.1-pro", Some("medium"), None, None),
-            10001
-        );
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3.1-pro", None, None, None),
-            10001
-        );
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3.1-pro", Some("none"), None, None),
-            10001
-        );
-
-        // 4. Gemini < 3 非思考模型：返回 0
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-2.5-flash", Some("high"), None, None),
-            0
-        );
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-1.5-pro", None, None, None),
-            0
-        );
-
-        // 5. 裸模型传入思考预算字段 (client_budget) 直接被彻底忽略，完全由客户端等级或服务器兜底接管
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3-flash", Some("high"), Some(1024), None),
-            10000
-        );
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3-flash", None, Some(1024), None),
-            4000
-        );
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3-flash", None, Some(32000), None),
-            4000
-        );
-        assert_eq!(
-            resolve_authoritative_thinking_budget("gemini-3.1-pro", None, Some(1000), None),
-            10001
+            pick_optimal_default_tier(&tiers(&["low"])),
+            Some("low".to_string())
         );
     }
 
@@ -1138,117 +682,41 @@ mod tests {
     }
 
     #[test]
-    fn test_tiered_flash_budget_and_client_effort() {
-        let mut tb = crate::proxy::config::ThinkingBudgetConfig::default();
-        tb.flash_mode = crate::proxy::config::ThinkingBudgetMode::Custom;
-        tb.flash_low = 1024;
-        tb.flash_medium = 4096;
-        tb.flash_high = 16384;
-        tb.flash_tiered = -1;
+    fn test_unknown_model_budget_is_config_driven_or_adaptive() {
+        use crate::proxy::config::{ThinkingBudgetConfig, ThinkingBudgetMode};
 
-        // 1. 无思考参数，且 flash_tiered 为 -1：走官方默认 -1
+        // 非 Custom：保持自适应，不伪造数字预算
+        let mut tb = ThinkingBudgetConfig::default();
+        tb.mode = ThinkingBudgetMode::Default;
         assert_eq!(
             resolve_custom_budget("gemini-3.7-flash-tiered", None, None, &tb, None),
-            Some(-1)
+            None
         );
 
-        // 2. 忽略客户端传入的数字 budget，无 effort 依然返回 Some(-1)
-        assert_eq!(
-            resolve_custom_budget("gemini-3.7-flash-tiered", None, Some(9999), &tb, None),
-            Some(-1)
-        );
-
-        // 3. 客户端传入思考参数 low / medium / high：分别映射到网关设置的 flash_low, flash_medium, flash_high
-        assert_eq!(
-            resolve_custom_budget(
-                "gemini-3.7-flash-tiered",
-                Some("low"),
-                Some(5000),
-                &tb,
-                None
-            ),
-            Some(1024)
-        );
-        assert_eq!(
-            resolve_custom_budget(
-                "gemini-3.7-flash-tiered",
-                Some("extra-low"),
-                None,
-                &tb,
-                None
-            ),
-            Some(1024)
-        );
-        assert_eq!(
-            resolve_custom_budget("gemini-3.7-flash-tiered", Some("medium"), None, &tb, None),
-            Some(4096)
-        );
-        assert_eq!(
-            resolve_custom_budget("gemini-3.7-flash-tiered", Some("high"), None, &tb, None),
-            Some(16384)
-        );
-        assert_eq!(
-            resolve_custom_budget(
-                "gemini-3.7-flash-tiered",
-                Some("max"),
-                Some(2048),
-                &tb,
-                None
-            ),
-            Some(16384)
-        );
-
-        // 4. 网关自定义 flash_tiered 为正数，且客户端无思考参数：返回自定义正数
-        tb.flash_tiered = 8192;
+        // Custom + 明确单值：使用用户配置
+        tb.mode = ThinkingBudgetMode::Custom;
+        tb.custom_value = 8192;
         assert_eq!(
             resolve_custom_budget("gemini-3.7-flash-tiered", None, None, &tb, None),
             Some(8192)
         );
 
-        // 5. 默认模式 (Default)，无思考参数：返回 Some(-1)（官方默认 -1）
-        tb.flash_mode = crate::proxy::config::ThinkingBudgetMode::Default;
+        // Custom 但单值为历史哨兵：按 effort 取用户档位配置；未配置(-1) → 自适应
+        tb.custom_value = 24576;
         assert_eq!(
-            resolve_custom_budget("gemini-3.7-flash-tiered", None, None, &tb, None),
-            Some(-1)
+            resolve_custom_budget("gemini-3.8-flash", Some("high"), None, &tb, None),
+            None
         );
-
-        // 6. 具名非 tiered 模型 (gemini-3.7-flash-high)：在 Gateway 模式下锁死由模型后缀决定的档位，不受客户端 effort 篡改
-        tb.flash_mode = crate::proxy::config::ThinkingBudgetMode::Custom;
-        assert_eq!(
-            resolve_custom_budget("gemini-3.7-flash-high", Some("low"), None, &tb, None),
-            Some(16384) // 依然保持 high 档位设置 16384，绝不被客户端 low 降级！
-        );
-    }
-
-    #[test]
-    fn test_tiered_and_bare_flash_budget_inherits_gateway_effort() {
-        let mut tb = crate::proxy::config::ThinkingBudgetConfig::default();
-        tb.flash_mode = crate::proxy::config::ThinkingBudgetMode::Custom;
-        tb.flash_low = 1024;
-        tb.flash_medium = 4096;
         tb.flash_high = 16384;
-        tb.effort = Some("low".to_string());
-
-        // 1. Tiered Flash 在无客户端 effort 时继承网关配置的 effort ("low" -> 1024)
         assert_eq!(
-            resolve_custom_budget("gemini-3.7-flash-tiered", None, None, &tb, None),
-            Some(1024)
-        );
-
-        // 2. Bare Flash 裸模型在无客户端 effort 时继承网关配置的 effort ("low" -> 1024)
-        assert_eq!(
-            resolve_custom_budget("gemini-3-flash", None, None, &tb, None),
-            Some(1024)
-        );
-
-        // 3. 当客户端传入自身 effort ("high") 时，优先遵循客户端 effort (16384)
-        assert_eq!(
-            resolve_custom_budget("gemini-3.7-flash-tiered", Some("high"), None, &tb, None),
+            resolve_custom_budget("gemini-3.8-flash", Some("high"), None, &tb, None),
             Some(16384)
         );
+
+        // 客户端数字预算永远不直控
         assert_eq!(
-            resolve_custom_budget("gemini-3-flash", Some("high"), None, &tb, None),
-            Some(16384)
+            resolve_custom_budget("gemini-3.8-flash", Some("low"), Some(9999), &tb, None),
+            None
         );
     }
 

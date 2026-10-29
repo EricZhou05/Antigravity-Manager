@@ -193,16 +193,11 @@ pub fn estimate_payload_tokens(body_len: usize) -> u32 {
 
 /// 按 token 规模给出 TTFT 下限（与大上下文 prefill 的真实耗时曲线对齐）
 ///
-/// 与 `handlers::common::calculate_adaptive_peek_timeout_full` 同源分档，
-/// 避免“预算 30s / 阈值 20s”这类跨层错配。
+/// 唯一实现在 `pipeline::stream_peek::adaptive_ttft_secs`：
+/// 握手首字节预算与「响应头之后等首 chunk」的 peek 预算必须使用同一张表，
+/// 否则会出现“预算 30s / 阈值 120s”这类跨层错配。
 fn adaptive_ttft_secs(estimated_tokens: u32) -> u64 {
-    match estimated_tokens {
-        t if t > 200_000 => 150,
-        t if t > 100_000 => 120,
-        t if t > 50_000 => 90,
-        t if t > 20_000 => 60,
-        _ => 30,
-    }
+    crate::proxy::pipeline::stream_peek::adaptive_ttft_secs(estimated_tokens)
 }
 
 /// 上传预算来源（诊断可观测性：明确本次预算是按体积自适应还是用户手填）
@@ -915,7 +910,7 @@ impl UpstreamClient {
     /// - 基准 = max(用户设置的首字响应宽限, 按 token 规模的 prefill 自适应下限)
     /// - 叠加媒体增量：常规 +0 / 图片 +45 / 视频 +60 / 辅助 -30
     /// - 备用端点增量减半，避免一个慢端点吃掉整条请求的预算
-    /// - 旧配置 `header_wait_secs` 降级为下限（灰度期兼容，不再是 30/25 硬编码）
+    /// - 旧配置 `header_wait_secs` 已废弃：不再作为下限参与预算（统一 TTFT 为唯一来源）
     pub fn calculate_first_byte_wait_secs(
         media_kind: PayloadMediaKind,
         attempt_idx: usize,
@@ -946,7 +941,7 @@ impl UpstreamClient {
         };
         let value =
             (base as i64 + scaled_offset).clamp(15, MAX_FIRST_BYTE_CEILING_SECS as i64) as u64;
-        value.max(cfg.header_wait_secs)
+        value
     }
 
     /// 构造带进度回传的分块请求体
@@ -1543,6 +1538,21 @@ impl UpstreamClient {
                 }
 
                 let mut req_builder = client.post(&url).headers(headers.clone());
+
+                // [Pipeline Budget] 非流式请求必须把 body 读取也纳入请求预算：
+                // `RequestBuilder::timeout` 的作用域是“建连 → 响应体读完”，
+                // 否则全局预算只能约束到响应头，body 直读路径（Claude bytes /
+                // OpenAI json / 音频 / 生图 / countTokens）会退化到客户端 7200s 总超时。
+                // 流式方法不设：长回答由 stream_lifecycle 的空闲/过渡超时约束，
+                // 不能按整条流时长截断。
+                if method != "streamGenerateContent"
+                    && crate::proxy::pipeline::budget::current().is_some()
+                {
+                    req_builder = req_builder.timeout(Duration::from_secs(
+                        remaining_budget
+                            .max(crate::proxy::pipeline::budget::MIN_ATTEMPT_BUDGET_SECS),
+                    ));
+                }
 
                 // [FIX] 仅对流式接口 (streamGenerateContent) 使用分块传输仿真
                 // 对其他接口 (如 generateContent, loadCodeAssist) 发送正常的固定长度 Body
@@ -2435,7 +2445,7 @@ mod tests {
         );
         assert!(huge >= MAX_FIRST_BYTE_BUDGET_SECS);
 
-        // 旧配置 header_wait_secs 降级为下限
+        // header_wait_secs 已废弃：不再抬高统一 TTFT 预算
         let raised = crate::proxy::config::UploadTimeoutConfig {
             header_wait_secs: 200,
             ..cfg.clone()
@@ -2449,7 +2459,7 @@ mod tests {
                 1024,
                 false
             ),
-            200
+            text
         );
 
         // 端点预算共享：总预算 = 上传×端点数 + 一份首字预算，而非逐端点相乘

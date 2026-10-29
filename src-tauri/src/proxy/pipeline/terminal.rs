@@ -171,9 +171,153 @@ impl FailureStatusTracker {
     }
 }
 
+/// [`apply_terminal`] 的返回值：分类结果 + 统一处置
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalHandling {
+    pub terminal: UpstreamTerminal,
+    pub disposition: TerminalDisposition,
+}
+
+/// 适配器唯一需要调用的终态处置入口
+///
+/// 一次调用完成四件事，四个协议不再各写一份：
+/// 1. 从错误文本分类终态；
+/// 2. 把状态码记进 [`FailureStatusTracker`]；
+/// 3. 打一条统一的阶段时间线（`upstream_terminal`），观测口径不再随协议漂移；
+/// 4. 按策略决定是否罚号（`on_penalize` 由调用方注入账号层动作）。
+///
+/// 返回 `None` 表示不是终态，调用方继续走既有的换号 / 退避逻辑。
+pub fn apply_terminal(
+    error_text: &str,
+    tracker: &mut FailureStatusTracker,
+    protocol: &str,
+    attempt: usize,
+    max_attempts: usize,
+    elapsed_secs: f64,
+    on_penalize: impl FnOnce(&str),
+) -> Option<TerminalHandling> {
+    let terminal = classify(error_text)?;
+    let disposition = terminal.disposition();
+    tracker.record(disposition.status);
+
+    crate::proxy::stage_trace::StageTrace::alert_current(
+        "upstream_terminal",
+        format!(
+            "protocol={} attempt={}/{} kind={} status={} elapsed={:.1}s",
+            protocol,
+            attempt,
+            max_attempts,
+            terminal.as_str(),
+            disposition.status.as_u16(),
+            elapsed_secs
+        ),
+    );
+
+    if disposition.penalize_account {
+        on_penalize(error_text);
+    }
+
+    Some(TerminalHandling {
+        terminal,
+        disposition,
+    })
+}
+
+/// 记录一次「首包预算耗尽」终态（504 / 不罚号 / 不轮换）
+///
+/// 供 peek 这类已经拿到响应头、但首块迟迟不到的阶段使用：
+/// 语义与上游客户端触发的 [`UpstreamTerminal::FirstByte`] 完全一致。
+pub fn record_first_byte_timeout(
+    protocol: &str,
+    budget_secs: u64,
+    tracker: &mut FailureStatusTracker,
+) {
+    tracker.record_terminal(UpstreamTerminal::FirstByte);
+    crate::proxy::stage_trace::StageTrace::alert_current(
+        "upstream_terminal",
+        format!(
+            "protocol={} kind=first_byte_timeout status=504 budget={}s",
+            protocol, budget_secs
+        ),
+    );
+}
+
+/// 请求级全局预算的循环闸门（四协议统一）
+///
+/// 预算耗尽时记终态、补一条 last_error 并留阶段时间线；返回 `true` 表示调用方
+/// 应立即 `break` 退出轮换循环（不罚号、不跨账号重放）。
+pub fn gate_exhausted(
+    protocol: &str,
+    attempt: usize,
+    tracker: &mut FailureStatusTracker,
+    last_error: &mut String,
+) -> bool {
+    if !super::budget::exhausted() {
+        return false;
+    }
+    tracker.record_terminal(UpstreamTerminal::GlobalBudget);
+    if last_error.is_empty() {
+        *last_error = format!(
+            "Gateway global request budget exceeded ({}s)",
+            super::budget::gateway_request_budget_secs()
+        );
+    }
+    crate::proxy::stage_trace::StageTrace::alert_current(
+        "gateway_budget",
+        format!(
+            "protocol={} attempt={} budget={}s",
+            protocol,
+            attempt,
+            super::budget::gateway_request_budget_secs()
+        ),
+    );
+    true
+}
+
+/// 各协议对外状态码方言（统一处置之后仍需保持的协议层差异）
+///
+/// 绝大多数状态码四协议一致；仅 Anthropic 客户端有自己的语义映射：
+/// - `403 Forbidden` → `503`：告诉 Claude Code 这是上游权限/容量问题，
+///   而不是请求本身被拒（避免其触发 `permission_error` 硬失败）；
+/// - `529 Overloaded` → `429`：Anthropic 专属的过载语义在客户端等同限流。
+///
+/// 放在这里是为了让“状态码”只有一个决策入口；适配器不再各写一份 `match`。
+pub fn protocol_status(protocol: &str, status: u16) -> StatusCode {
+    match (protocol, status) {
+        ("claude", 403) => StatusCode::SERVICE_UNAVAILABLE,
+        ("claude", 529) => StatusCode::TOO_MANY_REQUESTS,
+        _ => StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn protocol_status_keeps_anthropic_dialect_only() {
+        // Anthropic 方言：403 → 503、529 → 429
+        assert_eq!(
+            protocol_status("claude", 403),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            protocol_status("claude", 529),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        // 其余协议与其余状态码保持原语义
+        for protocol in ["openai", "responses", "gemini"] {
+            assert_eq!(protocol_status(protocol, 403), StatusCode::FORBIDDEN);
+            assert_eq!(
+                protocol_status(protocol, 529),
+                StatusCode::from_u16(529).unwrap()
+            );
+        }
+        assert_eq!(
+            protocol_status("claude", 500),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
 
     #[test]
     fn classifies_each_terminal_marker() {
@@ -253,5 +397,39 @@ mod tests {
             FailureStatusTracker::default().final_status(),
             StatusCode::BAD_GATEWAY
         );
+    }
+
+    #[test]
+    fn apply_terminal_records_unified_disposition() {
+        let mut tracker = FailureStatusTracker::default();
+        let mut penalized = false;
+        let handling = apply_terminal(
+            &format!("{}boom", FIRST_BYTE_STAGE_TERMINAL_MARKER),
+            &mut tracker,
+            "claude",
+            1,
+            3,
+            12.5,
+            |_| penalized = true,
+        )
+        .expect("terminal must be classified");
+        assert_eq!(handling.terminal, UpstreamTerminal::FirstByte);
+        assert_eq!(handling.disposition.status, StatusCode::GATEWAY_TIMEOUT);
+        assert!(!penalized, "time-like terminals must never penalize");
+        assert_eq!(tracker.final_status(), StatusCode::GATEWAY_TIMEOUT);
+
+        // 非终态错误不得被吞掉
+        let mut tracker = FailureStatusTracker::default();
+        assert!(apply_terminal(
+            "ordinary network error",
+            &mut tracker,
+            "gemini",
+            1,
+            3,
+            1.0,
+            |_| {}
+        )
+        .is_none());
+        assert_eq!(tracker.final_status(), StatusCode::BAD_GATEWAY);
     }
 }

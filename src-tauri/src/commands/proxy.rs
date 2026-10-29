@@ -1010,6 +1010,43 @@ pub async fn check_hub_update() -> HubUpdateStatus {
     }
 }
 
+/// 当前生效的首字节（TTFT）预算（秒）
+///
+/// 前端不再自行维护 150 / 210 / +45 / +60 / -30 一组常量，
+/// 统一由后端 `upstream::client::calculate_first_byte_wait_secs` 计算后下发。
+#[derive(serde::Serialize)]
+pub struct FirstByteTimeouts {
+    /// 常规文本
+    pub text: u64,
+    /// 图片
+    pub image: u64,
+    /// 视频
+    pub video: u64,
+    /// 辅助接口（标题生成等）
+    pub aux: u64,
+    /// 基准硬上限
+    pub cap: u64,
+}
+
+#[tauri::command]
+pub fn get_effective_first_byte_timeouts() -> FirstByteTimeouts {
+    use crate::proxy::upstream::client::{PayloadMediaKind, UpstreamClient};
+
+    let upload_cfg = crate::proxy::get_upload_timeout_config();
+    let stream_cfg = crate::proxy::get_stream_timeout_config();
+    let calc = |kind: PayloadMediaKind| {
+        UpstreamClient::calculate_first_byte_wait_secs(kind, 0, &upload_cfg, &stream_cfg, 0, false)
+    };
+
+    FirstByteTimeouts {
+        text: calc(PayloadMediaKind::TextChat),
+        image: calc(PayloadMediaKind::Image),
+        video: calc(PayloadMediaKind::Video),
+        aux: calc(PayloadMediaKind::Other),
+        cap: crate::proxy::upstream::client::MAX_FIRST_BYTE_BUDGET_SECS,
+    }
+}
+
 /// 强制探测官方远程更新源并返回最新 Hub 指纹信息
 #[tauri::command]
 pub async fn detect_remote_hub_fingerprint(

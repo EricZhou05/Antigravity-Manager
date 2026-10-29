@@ -11,6 +11,16 @@ use crate::proxy::rate_limit::RateLimitTracker;
 use crate::proxy::server::{ImagePermit, ImageScheduler};
 use crate::proxy::sticky_config::StickySessionConfig;
 
+/// 账号 JSON 模型清单的解析缓存快照（模块级，见 `get_available_models_from_json`）
+struct AccountModelFileSnapshot {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+    models: Option<HashSet<String>>,
+}
+
+static ACCOUNT_MODEL_FILE_CACHE: once_cell::sync::Lazy<DashMap<PathBuf, AccountModelFileSnapshot>> =
+    once_cell::sync::Lazy::new(DashMap::new);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OnDiskAccountState {
     Enabled,
@@ -1776,7 +1786,38 @@ impl TokenManager {
         legacy_claude_quota
     }
 
+    /// 账号 JSON 中模型清单的解析缓存（按文件长度 + mtime 失效）。
+    ///
+    /// 模型门禁与 `/v1/models` 会在**每个请求**上汇总全池模型，历史实现每次都
+    /// `read_to_string + serde_json::from_str` 每个账号文件。这里只缓存解析结果，
+    /// 文件变化（长度或 mtime）时立即失效，不引入 TTL 语义漂移。
     fn get_available_models_from_json(account_path: &PathBuf) -> Option<HashSet<String>> {
+        let meta = std::fs::metadata(account_path).ok()?;
+        let len = meta.len();
+        let modified = meta.modified().ok();
+
+        if let Some(hit) = ACCOUNT_MODEL_FILE_CACHE.get(account_path) {
+            if hit.len == len && hit.modified == modified {
+                return hit.models.clone();
+            }
+        }
+
+        let models = Self::parse_available_models_from_json(account_path);
+        if ACCOUNT_MODEL_FILE_CACHE.len() > 4096 {
+            ACCOUNT_MODEL_FILE_CACHE.clear();
+        }
+        ACCOUNT_MODEL_FILE_CACHE.insert(
+            account_path.clone(),
+            AccountModelFileSnapshot {
+                len,
+                modified,
+                models: models.clone(),
+            },
+        );
+        models
+    }
+
+    fn parse_available_models_from_json(account_path: &PathBuf) -> Option<HashSet<String>> {
         let content = std::fs::read_to_string(account_path).ok()?;
         let account: serde_json::Value = serde_json::from_str(&content).ok()?;
         let mut result = HashSet::new();
@@ -9414,5 +9455,35 @@ mod tests {
 
         let body = TokenManager::build_probe_envelope(&token, "gemini-3-flash");
         assert_eq!(body["project"], DEFAULT_PROJECT_ID);
+    }
+
+    /// 账号模型清单缓存必须以「长度 + mtime」失效，避免门禁热路径每请求 read+parse。
+    #[test]
+    fn test_available_models_file_cache_invalidates_on_change() {
+        let path = std::env::temp_dir().join(format!(
+            "am-account-model-cache-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::write(&path, r#"{"quota":{"models":[{"name":"Model-A"}]}}"#).unwrap();
+
+        let first =
+            TokenManager::get_available_models_from_json(&path).expect("first parse must succeed");
+        assert!(first.contains("model-a"));
+
+        // 文件未变化：命中缓存，结果一致
+        let second = TokenManager::get_available_models_from_json(&path).unwrap();
+        assert_eq!(first, second);
+
+        // 内容变化（长度不同）：必须立即失效
+        std::fs::write(
+            &path,
+            r#"{"quota":{"models":[{"name":"Model-B"},{"name":"Model-C"}]}}"#,
+        )
+        .unwrap();
+        let third = TokenManager::get_available_models_from_json(&path).unwrap();
+        assert!(third.contains("model-b") && third.contains("model-c"));
+        assert!(!third.contains("model-a"));
+
+        let _ = std::fs::remove_file(&path);
     }
 }

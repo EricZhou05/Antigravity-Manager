@@ -631,13 +631,17 @@ impl Default for ThinkingBudgetMode {
 }
 
 /// Thinking Budget 配置
+///
+/// 官方模型目录已收录的模型完全由官方 `thinkingBudget` / `thinkingLevel` 驱动；
+/// 这里的数值仅作为「官方目录未收录的实验模型」的兜底，且必须 `mode = Custom`。
+/// 设置界面已不再暴露这些字段，保留仅为兼容旧配置与 headless 用户。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThinkingBudgetConfig {
     /// 控制权大选择：网关控制 vs 客户端控制
     #[serde(default = "default_control_source")]
     pub control_source: ThinkingControlSource,
 
-    // --- Gemini Flash 系列配置 ---
+    // --- Gemini Flash 系列配置（仅对官方目录未收录模型生效）---
     #[serde(default = "default_thinking_budget_mode")]
     pub flash_mode: ThinkingBudgetMode,
     #[serde(default = "default_flash_low")]
@@ -672,7 +676,7 @@ pub struct ThinkingBudgetConfig {
     #[serde(default = "default_claude_high")]
     pub claude_high: i32, // 默认 16000
 
-    // --- 历史向后兼容字段 ---
+    // --- 历史向后兼容字段（仅对官方目录未收录模型生效）---
     #[serde(default = "default_thinking_budget_mode")]
     pub mode: ThinkingBudgetMode,
     #[serde(default = "default_thinking_budget_custom_value")]
@@ -863,12 +867,12 @@ pub struct UploadTimeoutConfig {
     #[serde(default = "default_upload_stall_secs")]
     pub stall_secs: u64,
 
-    /// 统一首字延迟的旧版兼容下限（秒，默认 0 = 不额外抬高）
+    /// 已废弃：仅为配置 round-trip 保留，不再参与首字预算。
     ///
-    /// 自本版本起「首响应头」与「首字」合并为统一首字延迟（TTFB≡TTFT），
-    /// 实际预算 = max(用户 TTFT 设置, 按 token 规模的自适应下限) + 媒体增量，
+    /// 「首响应头」与「首字」已合并为统一首字延迟（TTFB≡TTFT），唯一来源是
+    /// [`StreamTimeoutConfig::initial_ttft_secs`] + 按 token 规模的自适应下限；
     /// 媒体增量：常规 +0 / 图片 +45 / 视频 +60 / 辅助 −30，备用端点增量减半。
-    /// 本字段仅在非 0 时作为上述结果的**下限**，不再有 30/25s 的内置绝对表。
+    /// 新配置请只使用 `initial_ttft_secs`。
     #[serde(default = "default_header_wait_secs")]
     pub header_wait_secs: u64,
 

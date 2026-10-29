@@ -1815,10 +1815,6 @@ static CORE_GATEWAY_MODELS: &[CoreModel] = &[
         context_window: 1_048_576,
     },
     CoreModel {
-        id: "gemini-3.1-flash-lite",
-        context_window: 1_048_576,
-    },
-    CoreModel {
         id: "gemini-3.1-flash-image",
         context_window: 65_536,
     },

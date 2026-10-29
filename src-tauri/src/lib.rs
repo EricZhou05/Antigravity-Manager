@@ -685,6 +685,8 @@ pub fn run() {
                     }
                     tracing::info!("[Linux Display Guard] Received termination signal in background mode, shutting down cleanly.");
                     linux_display_guard::mark_user_initiated_exit();
+                    // 信号退出不会走 Tauri 事件循环，签名缓存同样需要尽力落盘。
+                    crate::proxy::signature_cache::flush_on_exit();
                     std::process::exit(0);
                 });
             }
@@ -860,6 +862,7 @@ pub fn run() {
             commands::proxy::get_hub_fingerprint,
             commands::proxy::detect_remote_hub_fingerprint,
             commands::proxy::check_hub_update,
+            commands::proxy::get_effective_first_byte_timeouts,
             commands::proxy::clear_proxy_rate_limit,
             commands::proxy::clear_all_proxy_rate_limits,
             // Proxy Pool Binding commands
@@ -994,8 +997,7 @@ pub fn run() {
                 tauri::RunEvent::Exit => {
                     tracing::info!("Application exiting, cleaning up background tasks and releasing ports...");
                     // 尽力把签名缓存队列刷入 SQLite，避免直接退出丢失最近写入。
-                    crate::proxy::SignatureCache::global()
-                        .flush_persist(std::time::Duration::from_secs(2));
+                    crate::proxy::signature_cache::flush_on_exit();
                     if let Some(state) =
                         app_handle.try_state::<crate::commands::proxy::ProxyServiceState>()
                     {

@@ -9,17 +9,25 @@
 
 pub mod auto_heal;
 pub mod budget;
+pub mod errors;
 pub mod estimator;
 pub mod image;
 pub mod inbound;
 #[cfg(test)]
 mod official_alignment_tests;
 pub mod policy;
+pub mod qos;
+pub mod rotation;
 pub mod stream_lifecycle;
+pub mod stream_peek;
 pub mod terminal;
+pub mod timing;
 pub mod usage;
 
-pub use auto_heal::{wrap_stream_with_empty_thinking_auto_heal, ThinkingAutoHealContext};
+pub use auto_heal::{
+    try_auto_heal, wrap_stream_with_empty_thinking_auto_heal, AutoHealFlags, AutoHealOutcome,
+    ThinkingAutoHealContext,
+};
 pub use budget::{
     clamp_budget_secs, clamp_secs, current, current_deadline, deadline_now, estimated_tokens,
     exhausted, gateway_request_budget_secs, register_upstream_call, remaining_secs, scope_optional,
@@ -34,9 +42,21 @@ pub use image::{
 };
 pub use inbound::{extract_client_thinking_switch, routing_effort, InboundThinkingPipeline};
 pub use policy::UpstreamClassification;
+pub use rotation::{
+    apply_retry_strategy, calculate_max_retry_attempts, clamp_retry_after_for_claude,
+    decide_rotation, determine_retry_strategy, determine_retry_strategy_adaptive,
+    determine_retry_strategy_with_grace, extract_retry_after_seconds, is_model_not_found_error,
+    next_rotation_attempt, scheduling_allows_grace, should_rotate_account, RequestRetryState,
+    RetryStrategy, RotationDecision,
+};
 pub use stream_lifecycle::{run_stream_lifecycle, ProtocolStreamHandler, StreamLifecycleConfig};
+pub use stream_peek::{
+    has_anthropic_error_event, has_openai_error_event, peek_budget_secs, peek_first_data,
+    wrap_stream_with_ttft_probe, PeekOutcome,
+};
 pub use terminal::{
-    classify as classify_terminal_error, strip_markers, FailureStatusTracker, TerminalDisposition,
-    UpstreamTerminal,
+    apply_terminal, classify as classify_terminal_error, gate_exhausted, protocol_status,
+    record_first_byte_timeout, strip_markers, FailureStatusTracker, TerminalDisposition,
+    TerminalHandling, UpstreamTerminal,
 };
 pub use usage::CanonicalUsage;

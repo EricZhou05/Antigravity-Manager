@@ -56,6 +56,10 @@ impl UpstreamClassification {
         }
 
         // 3. 判定 Thinking 签名失效或跨模型异构签名污染
+        //
+        // cue 集合是四协议的并集（Claude 适配器历史上维护了最宽的一份，
+        // 包含字段缺失 / 反序列化失败 / 块顺序错误等上游原始措辞）。
+        // 任何新增方言都应补到这里，而不是在各适配器里再写一份 contains。
         let has_signature_error_cue = lower.contains("invalid thought signature")
             || lower.contains("invalid `signature`")
             || lower.contains("invalid signature")
@@ -63,7 +67,13 @@ impl UpstreamClassification {
             || lower.contains("thoughtsignature")
             || lower.contains("thinking.signature")
             || lower.contains("thinking.thinking")
-            || lower.contains("corrupted thought signature");
+            || lower.contains("corrupted thought signature")
+            || lower.contains("failed to deserialise")
+            || lower.contains("thinking block")
+            || lower.contains("found `text`")
+            || lower.contains("found 'text'")
+            || lower.contains("must be `thinking`")
+            || lower.contains("must be 'thinking'");
 
         if status == 400 && has_signature_error_cue {
             return UpstreamClassification::ThoughtSignatureError;
@@ -161,6 +171,20 @@ impl UpstreamClassification {
                 && lower.contains("tool_choice")
                 && lower.contains("forces tool use"))
     }
+}
+
+/// 404「单模型不可用」的统一处置（协议无关）
+///
+/// 四个适配器过去各写 30 行：标记账号对**该模型**临时熔断，再决定是否换号。
+/// 这里只保留决策与副作用，协议专属的响应体仍由适配器构造。
+///
+/// `mark` 由调用方注入（`token_manager.mark_model_unsupported`），避免 Pipeline
+/// 直接依赖账号层实现。
+///
+/// 返回 `true` 表示账号池仍有其他候选，调用方应换号重试。
+pub fn apply_model_not_found(attempt: usize, pool_size: usize, mut mark: impl FnMut()) -> bool {
+    mark();
+    attempt < pool_size
 }
 
 #[cfg(test)]

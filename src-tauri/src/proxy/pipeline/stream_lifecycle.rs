@@ -85,9 +85,19 @@ impl StreamLifecycleConfig {
         trace_info: String,
     ) -> Self {
         let timeouts = crate::proxy::get_stream_timeout_config();
+        // 首字阶段与上游首字节预算同源：
+        // - 同一 15..210 上限，避免前端配置 > 上限时两段行为不一致；
+        // - 再用全局剩余预算封顶，避免“响应头已耗时 + 又等满 180s”超出 270s。
+        let mut initial_ttft_secs = timeouts.initial_ttft_secs.clamp(
+            15,
+            crate::proxy::upstream::client::MAX_FIRST_BYTE_CEILING_SECS,
+        );
+        if let Some(remaining) = crate::proxy::pipeline::budget::remaining_secs() {
+            initial_ttft_secs = initial_ttft_secs.min(remaining.max(3));
+        }
         Self {
             heartbeat_secs: 3,
-            initial_ttft_secs: timeouts.initial_ttft_secs,
+            initial_ttft_secs,
             transition_secs: timeouts.transition_secs,
             streaming_sliding_secs: timeouts.streaming_sliding_secs,
             adapter_name,

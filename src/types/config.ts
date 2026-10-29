@@ -40,6 +40,7 @@ export interface UploadTimeoutConfig {
     min_upload_mbps?: number;
     extra_wait_ratio?: number;
     stall_secs?: number;
+    /** @deprecated 已合并进 StreamTimeoutConfig.initial_ttft_secs；新代码不要再读写。 */
     header_wait_secs?: number;
     large_body_threshold_mb?: number;
     large_body_endpoint_attempts?: number;
@@ -76,7 +77,7 @@ export interface InternalErrorLogRetentionConfig {
 // Thinking Budget 配置 (控制 AI 深度思考时的 Token 预算)
 // ============================================================================
 
-/** 思考预算控制权归属 */
+/** 思考预算控制权归属（仅兼容旧配置；运行期强制 gateway） */
 export type ThinkingControlSource = 'gateway' | 'client';
 
 /** Thinking Budget 处理模式 */
@@ -85,32 +86,39 @@ export type ThinkingBudgetMode = 'default' | 'custom' | 'auto' | 'passthrough' |
 /** Thinking Effort 等级 (仅 adaptive 模式) */
 export type ThinkingEffort = 'low' | 'medium' | 'high';
 
-/** Thinking Budget 配置 */
+/**
+ * Thinking Budget 配置。
+ *
+ * 官方模型目录已收录的模型完全由官方 thinkingBudget / thinkingLevel 驱动；
+ * 这里的数值仅作为「官方目录未收录的实验模型」的兜底，且需 mode = 'custom'。
+ * 设置界面已不再暴露这些字段，保留仅为兼容旧配置 round-trip。
+ */
 export interface ThinkingBudgetConfig {
-    /** 控制权大选择：网关权威控制 (gateway) vs 客户端直接控制 (client) */
+    /** 控制权大选择（仅兼容旧配置；运行期强制 gateway） */
     control_source?: ThinkingControlSource;
 
-    // --- Gemini Flash 系列配置 ---
+    // --- Gemini Flash 系列（仅官方未收录模型生效；-1 = 自适应）---
     flash_mode?: ThinkingBudgetMode;
-    flash_low?: number;       // 默认 1000
-    flash_medium?: number;    // 默认 4000
-    flash_high?: number;      // 默认 -1，走官方模型结构体
-    flash_tiered?: number;    // 默认 -1
+    flash_low?: number;
+    flash_medium?: number;
+    flash_high?: number;
+    flash_tiered?: number;
 
-    // --- Gemini Pro 系列配置（官方仅 Low 与 High 两档） ---
+    // --- Gemini Pro 系列（仅官方未收录模型生效；-1 = 自适应）---
     pro_mode?: ThinkingBudgetMode;
-    pro_low?: number;         // 默认 1001
-    pro_high?: number;        // 默认 10001
+    pro_low?: number;
+    pro_high?: number;
 
-    // --- Claude 系列配置 ---
+    // --- Claude 系列（仅官方未收录模型生效；-1 = 自适应）---
     claude_mode?: ThinkingBudgetMode;
-    claude_budget?: number;    // 统一思考预算 (默认 16000, 填 -1 自适应)
-    claude_low?: number;       // 默认 1024
-    claude_medium?: number;    // 默认 4096
-    claude_high?: number;      // 默认 16000
+    claude_budget?: number;
+    claude_low?: number;
+    claude_medium?: number;
+    claude_high?: number;
 
-    // --- 旧版兼容字段 ---
+    // --- 旧版兼容字段（仅 custom 模式 + 官方未收录模型生效）---
     mode?: ThinkingBudgetMode;
+    /** 历史单值；24576 为「未设置」哨兵 */
     custom_value?: number;
     effort?: ThinkingEffort;
     custom_low?: number;

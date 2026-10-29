@@ -19,6 +19,7 @@ use crate::proxy::handlers::common::{
 };
 use crate::proxy::mappers::gemini::{unwrap_response, wrap_request_v2};
 use crate::proxy::pipeline::response_has_inline_image_data;
+use crate::proxy::pipeline::timing::{TimingBuilderExt, TimingHeaders};
 use crate::proxy::server::AppState;
 use crate::proxy::session_manager::SessionManager;
 use crate::proxy::upstream::client::mask_email;
@@ -80,7 +81,9 @@ pub async fn handle_generate(
     let clean_ms: f64 = clean_micros as f64 / 1000.0;
     let mut norm_ms: f64 = 0.0;
     let mut think_fill_ms: f64 = 0.0;
-    let mut ttft_ms: f64 = 0.0;
+    // TTFT 单源口径：仅记录“首个上游数据块”；流式发头时写 -1。
+    let mut ttft_ms: f64 = crate::proxy::pipeline::stream_peek::TTFT_UNKNOWN_MS;
+    let mut headers_ms: f64 = 0.0;
     let mut fallback_overhead_ms: f64 = 0.0;
 
     // 1. 验证方法
@@ -172,9 +175,7 @@ pub async fn handle_generate(
     let mut failure_statuses = FailureStatusTracker::default();
     let mut used_attempts = 0;
     let mut retried_without_thinking = false;
-    let mut retried_tool_choice_conflict = false;
-    let mut retried_with_budget_degraded = false;
-    let mut retried_with_image_omitted = false;
+    let mut heal_flags = crate::proxy::pipeline::AutoHealFlags::default();
     let mut degraded_wrapped_body: Option<Value> = None;
 
     let thinking_cfg = body
@@ -203,16 +204,13 @@ pub async fn handle_generate(
         max_attempts,
         retry_credentials.is_some(),
     ) {
-        // [Pipeline Budget] 剩余预算不足以再发起一次上游尝试：统一 504，不再做选号/转换空转
-        if crate::proxy::pipeline::budget::exhausted() {
-            failure_statuses
-                .record_terminal(crate::proxy::pipeline::terminal::UpstreamTerminal::GlobalBudget);
-            if last_error.is_empty() {
-                last_error = format!(
-                    "Gateway global request budget exceeded ({}s)",
-                    crate::proxy::pipeline::budget::gateway_request_budget_secs()
-                );
-            }
+        // [Pipeline Terminal] 全局预算耗尽：统一记终态、补 last_error、直接退出轮换
+        if crate::proxy::pipeline::terminal::gate_exhausted(
+            "gemini",
+            attempt + 1,
+            &mut failure_statuses,
+            &mut last_error,
+        ) {
             break;
         }
 
@@ -369,7 +367,7 @@ pub async fn handle_generate(
                 Some(&affinity_key),
                 retried_without_thinking,
             );
-            if retried_with_budget_degraded {
+            if heal_flags.retried_with_budget_degraded {
                 crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(
                     &mut wb,
                 );
@@ -472,24 +470,37 @@ pub async fn handle_generate(
                 last_error = e.clone();
                 drop(image_permit.take());
                 // 终态（首字节 / 上传 / 全局预算 / 重放上限）都不是账号故障：
-                // 不冷却、不跨账号重放；状态码与处置统一由 pipeline::terminal 给出。
-                if let Some(terminal) = crate::proxy::pipeline::terminal::classify(&e) {
-                    let disposition = terminal.disposition();
-                    failure_statuses.record(disposition.status);
-                    if disposition.penalize_account {
-                        token_manager.mark_account_transient_failure(&account_id, 30, &e);
-                    }
+                // 不冷却、不跨账号重放；判定、状态码与观测统一由 pipeline::terminal 给出。
+                if let Some(handling) = crate::proxy::pipeline::terminal::apply_terminal(
+                    &e,
+                    &mut failure_statuses,
+                    "gemini",
+                    attempt + 1,
+                    max_attempts,
+                    upstream_req_start.elapsed().as_secs_f64(),
+                    |err| token_manager.mark_account_transient_failure(&account_id, 30, err),
+                ) {
                     debug!(
                         "Gemini Request failed on attempt {}/{} (terminal={}): {}",
                         attempt + 1,
                         max_attempts,
-                        terminal.as_str(),
+                        handling.terminal.as_str(),
                         crate::proxy::upstream::client::strip_internal_markers(&e)
                     );
-                    if disposition.stop_rotation {
+                    if handling.disposition.stop_rotation {
                         break;
                     }
                     continue;
+                }
+
+                // [Gateway Self-Answer Guard] 模型不存在 / 无可用账号属于网关自答，
+                // 不对应任何账号：绝不罚号、绝不轮换，直接终止并由外层构造响应。
+                if let Some((status, reason)) =
+                    crate::proxy::common::model_gate::self_answer_disposition(&e)
+                {
+                    failure_statuses.record(status);
+                    last_error = reason.to_string();
+                    break;
                 }
 
                 // 非终态（连接失败 / 调度异常）：冷却该账号并继续轮换
@@ -596,6 +607,7 @@ pub async fn handle_generate(
                     extra_headers: extra_headers.clone(),
                     account_id: Some(account_id.clone()),
                     trace_id: trace_id.clone(),
+                    budget: crate::proxy::pipeline::budget::current(),
                 };
                 let response_stream =
                     crate::proxy::pipeline::auto_heal::wrap_stream_with_empty_thinking_auto_heal(
@@ -607,23 +619,17 @@ pub async fn handle_generate(
                 // [对齐其他协议] 上游已返回 200：立即向客户端返回响应头，
                 // 由流生命周期的 InitialTtft 负责首字宽限；不再阻塞式 peek 首包，
                 // 避免响应头被推迟、peek 期间无心跳。
-                ttft_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
+                // [TTFT 单源] 响应头耗时单独记录；流式发头时 TTFT 未知。
+                headers_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
+                ttft_ms = crate::proxy::pipeline::stream_peek::TTFT_UNKNOWN_MS;
                 let is_thinking = body
                     .get("generationConfig")
                     .and_then(|g| g.get("thinkingConfig"))
                     .is_some()
                     || mapped_model.to_lowercase().contains("thinking");
-                crate::proxy::handlers::common::report_qos_ttft(
-                    &token_manager,
-                    &account_id,
-                    Some(&affinity_key),
-                    ttft_ms,
-                    is_thinking,
-                    Some(estimated_input_tokens),
-                );
                 if let Some(effective_item) = fallback_attempts.iter_mut().find(|a| a.is_effective)
                 {
-                    effective_item.duration_s = ttft_ms / 1000.0;
+                    effective_item.duration_s = headers_ms / 1000.0;
                 }
                 let _ = crate::proxy::monitor::CURRENT_UPSTREAM_CAPTURE.try_with(|holder| {
                     holder.set_attempts(fallback_attempts.clone());
@@ -665,6 +671,35 @@ pub async fn handle_generate(
                         yield item;
                     }
                 };
+                // [QoS] 与响应头共用同一个 TTFT 值：首个真实数据块
+                let ttft_seen = std::sync::Arc::new(std::sync::OnceLock::<f64>::new());
+                let ttft_seen_cb = ttft_seen.clone();
+                let ttft_start = effective_attempt_start;
+                let ttft_tm = token_manager.clone();
+                let ttft_account = account_id.clone();
+                let ttft_session = affinity_key.clone();
+                let ttft_tokens = estimated_input_tokens;
+                let stream = crate::proxy::pipeline::stream_peek::wrap_stream_with_ttft_probe(
+                    stream,
+                    ttft_start,
+                    |bytes: &[u8]| {
+                        crate::proxy::pipeline::stream_peek::is_heartbeat(
+                            bytes,
+                            crate::proxy::pipeline::stream_peek::StreamDialect::Gemini,
+                        )
+                    },
+                    move |ttft| {
+                        let _ = ttft_seen_cb.set(ttft);
+                        crate::proxy::handlers::common::report_qos_ttft(
+                            &ttft_tm,
+                            &ttft_account,
+                            Some(ttft_session.as_str()),
+                            ttft,
+                            is_thinking,
+                            Some(ttft_tokens),
+                        );
+                    },
+                );
 
                 if client_wants_stream {
                     let body = Body::from_stream(stream);
@@ -678,18 +713,15 @@ pub async fn handle_generate(
                         .header("X-Upstream-Model", config.final_model.as_str())
                         .header("X-Session-Id", &client_session_id)
                         .header("X-Antigravity-Session-Id", &client_session_id)
-                        .header("X-Timing-Clean-Ms", format!("{:.3}", clean_ms))
-                        .header("X-Timing-Norm-Ms", format!("{:.3}", norm_ms))
-                        .header("X-Timing-Thinking-Ms", format!("{:.3}", think_fill_ms))
-                        .header("X-Timing-Ttft-Ms", format!("{:.3}", ttft_ms))
-                        .header(
-                            "X-Timing-Ttft-Overhead-Ms",
-                            format!("{:.3}", fallback_overhead_ms),
-                        )
-                        .header(
-                            "X-Timing-Ttft-Attempts",
+                        .timing(&TimingHeaders::new(
+                            clean_ms,
+                            norm_ms,
+                            think_fill_ms,
+                            ttft_ms,
+                            headers_ms,
+                            fallback_overhead_ms,
                             attempts_b64.as_deref().unwrap_or(""),
-                        )
+                        ))
                         .body(body)
                         .unwrap()
                         .into_response());
@@ -705,6 +737,11 @@ pub async fn handle_generate(
                     .await
                     {
                         Ok(gemini_resp) => {
+                            // 非流式：首块探针已产生唯一 TTFT 值
+                            ttft_ms = ttft_seen
+                                .get()
+                                .copied()
+                                .unwrap_or(crate::proxy::pipeline::stream_peek::TTFT_UNKNOWN_MS);
                             let unwrapped = unwrap_response(&gemini_resp);
                             if track_image_success && response_has_inline_image_data(&unwrapped) {
                                 token_manager.commit_session(&affinity_key, &account_id);
@@ -732,14 +769,15 @@ pub async fn handle_generate(
                                     .header("X-Upstream-Model", config.final_model.as_str())
                                     .header("X-Session-Id", &client_session_id)
                                     .header("X-Antigravity-Session-Id", &client_session_id)
-                                    .header("X-Timing-Clean-Ms", format!("{:.3}", clean_ms))
-                                    .header("X-Timing-Norm-Ms", format!("{:.3}", norm_ms))
-                                    .header("X-Timing-Thinking-Ms", format!("{:.3}", think_fill_ms))
-                                    .header("X-Timing-Ttft-Ms", format!("{:.3}", ttft_ms))
-                                    .header(
-                                        "X-Timing-Ttft-Overhead-Ms",
-                                        format!("{:.3}", fallback_overhead_ms),
-                                    )
+                                    .timing_overhead(&TimingHeaders::new(
+                                        clean_ms,
+                                        norm_ms,
+                                        think_fill_ms,
+                                        ttft_ms,
+                                        headers_ms,
+                                        fallback_overhead_ms,
+                                        "",
+                                    ))
                                     .body(Body::from(serde_json::to_string(&unwrapped).unwrap()))
                                     .unwrap()
                                     .into_response());
@@ -757,14 +795,15 @@ pub async fn handle_generate(
                                 .header("X-Upstream-Model", config.final_model.as_str())
                                 .header("X-Session-Id", &client_session_id)
                                 .header("X-Antigravity-Session-Id", &client_session_id)
-                                .header("X-Timing-Clean-Ms", format!("{:.3}", clean_ms))
-                                .header("X-Timing-Norm-Ms", format!("{:.3}", norm_ms))
-                                .header("X-Timing-Thinking-Ms", format!("{:.3}", think_fill_ms))
-                                .header("X-Timing-Ttft-Ms", format!("{:.3}", ttft_ms))
-                                .header(
-                                    "X-Timing-Ttft-Overhead-Ms",
-                                    format!("{:.3}", fallback_overhead_ms),
-                                )
+                                .timing_overhead(&TimingHeaders::new(
+                                    clean_ms,
+                                    norm_ms,
+                                    think_fill_ms,
+                                    ttft_ms,
+                                    headers_ms,
+                                    fallback_overhead_ms,
+                                    "",
+                                ))
                                 .body(Body::from(serde_json::to_string(&unwrapped).unwrap()))
                                 .unwrap()
                                 .into_response());
@@ -794,20 +833,7 @@ pub async fn handle_generate(
                 }
             }
 
-            ttft_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
-            let is_thinking = body
-                .get("generationConfig")
-                .and_then(|g| g.get("thinkingConfig"))
-                .is_some()
-                || mapped_model.to_lowercase().contains("thinking");
-            crate::proxy::handlers::common::report_qos_ttft(
-                &token_manager,
-                &account_id,
-                Some(&affinity_key),
-                ttft_ms,
-                is_thinking,
-                Some(estimated_input_tokens),
-            );
+            // QoS/TTFT 已由首块探针上报；这里不能再用“整条响应完成时间”覆盖
             if let Some(effective_item) = fallback_attempts.iter_mut().find(|a| a.is_effective) {
                 effective_item.duration_s = ttft_ms / 1000.0;
             }
@@ -872,18 +898,15 @@ pub async fn handle_generate(
                 .header("X-Upstream-Model", config.final_model.as_str())
                 .header("X-Session-Id", &client_session_id)
                 .header("X-Antigravity-Session-Id", &client_session_id)
-                .header("X-Timing-Clean-Ms", format!("{:.3}", clean_ms))
-                .header("X-Timing-Norm-Ms", format!("{:.3}", norm_ms))
-                .header("X-Timing-Thinking-Ms", format!("{:.3}", think_fill_ms))
-                .header("X-Timing-Ttft-Ms", format!("{:.3}", ttft_ms))
-                .header(
-                    "X-Timing-Ttft-Overhead-Ms",
-                    format!("{:.3}", fallback_overhead_ms),
-                )
-                .header(
-                    "X-Timing-Ttft-Attempts",
+                .timing(&TimingHeaders::new(
+                    clean_ms,
+                    norm_ms,
+                    think_fill_ms,
+                    ttft_ms,
+                    headers_ms,
+                    fallback_overhead_ms,
                     attempts_b64.as_deref().unwrap_or(""),
-                )
+                ))
                 .body(Body::from(serde_json::to_string(&unwrapped).unwrap()))
                 .unwrap()
                 .into_response());
@@ -967,14 +990,9 @@ pub async fn handle_generate(
             continue; // 重试:下一轮读取新代数,派生全新 sessionId
         }
 
-        let scheduling_mode = token_manager.get_scheduling_mode().await;
-        let _allow_grace = match scheduling_mode {
-            crate::proxy::sticky_config::SchedulingMode::Balance => {
-                token_manager.tokens_count() <= 1
-            }
-            crate::proxy::sticky_config::SchedulingMode::CacheFirst => true,
-            crate::proxy::sticky_config::SchedulingMode::PerformanceFirst => false,
-        };
+        // [Grace Policy] SchedulingMode 不参与此裁决：429 微间隙 GraceRetry 属于
+        // “账号池保护”（Fixes #3329/#3409），单账号等待已由 RequestRetryState 限制为
+        // 每账号一次，不存在无界等待。Claude 因历史原因仍按调度模式决定是否原地等待。
 
         // 确定重试策略：传入当前 attempt 与 pool_size，执行智能自适应裁决
         let strategy = retry_state.determine_strategy_adaptive(
@@ -993,82 +1011,26 @@ pub async fn handle_generate(
             retry_after.as_deref(),
         );
 
-        // [FIX #3713] 503 / 529 服务端过载：思考预算原地降级自愈 (Pipeline First)
-        // 当模型遭遇过载 (503/529 / overloaded)，若当前请求带有 -1 或超大思考预算，优先在当前账号上降级预算原地重试一次，
-        // 杜绝盲目全池轮换导致跨账号缓存丢失 (Prefix Cache Protection)。
-        if crate::proxy::pipeline::UpstreamClassification::is_server_overloaded(
+        // [Pipeline Auto-Heal] 503 过载 / 400 tool_choice 冲突 / 400 损坏图片：
+        // 三者均是对已转出的 Gemini 报文的原地修复，统一在同账号重试（换号只会重蹈覆车）。
+        if let Some(heal) = crate::proxy::pipeline::try_auto_heal(
+            &classification,
             status_code,
             &error_text,
-        ) && !retried_with_budget_degraded
-            && crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(
-                &mut wrapped_body,
-            )
-        {
-            retried_with_budget_degraded = true;
-            degraded_wrapped_body = Some(wrapped_body);
+            &mut wrapped_body,
+            &mut degraded_wrapped_body,
+            &mut heal_flags,
+        ) {
             force_rotate = false;
-            tracing::warn!(
-                "[Gemini] Upstream {}/overloaded detected. In-place self-healing: degraded thinking budget to 4000 on account {} (preserving prefix cache)",
-                status_code, email
+            crate::proxy::stage_trace::StageTrace::alert_current(
+                "self_heal",
+                format!(
+                    "protocol=gemini kind={} status={} account={}",
+                    heal.kind, status_code, email
+                ),
             );
-            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(heal.delay_ms)).await;
             continue;
-        }
-
-        // [FIX #3721] 400 强制工具调用与思考冲突：自愈剔除 thinkingConfig 原地重试 (Pipeline First)
-        if crate::proxy::pipeline::UpstreamClassification::is_thinking_tool_choice_conflict(
-            status_code,
-            &error_text,
-        ) && !retried_tool_choice_conflict
-        {
-            retried_tool_choice_conflict = true;
-            if let Some(req) = wrapped_body
-                .get_mut("request")
-                .and_then(Value::as_object_mut)
-            {
-                if let Some(gc) = req
-                    .get_mut("generationConfig")
-                    .and_then(Value::as_object_mut)
-                {
-                    gc.remove("thinkingConfig");
-                }
-            } else if let Some(gc) = wrapped_body
-                .get_mut("generationConfig")
-                .and_then(Value::as_object_mut)
-            {
-                gc.remove("thinkingConfig");
-            }
-            degraded_wrapped_body = Some(wrapped_body);
-            force_rotate = false;
-            tracing::warn!(
-                "[Gemini] Upstream 400 tool_choice/thinking conflict detected. In-place self-healing: stripped thinkingConfig on account {}, retrying.",
-                email
-            );
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            continue;
-        }
-
-        // [FIX Corrupted Image] 400 多模态图像解码/处理失败：自愈剔除损坏图片并在同账号原地重试
-        if classification.is_image_processing_error() && !retried_with_image_omitted {
-            let purged_count =
-                crate::proxy::mappers::common_utils::purge_corrupted_images_from_gemini_payload(
-                    &mut wrapped_body,
-                );
-            if purged_count == 0 {
-                tracing::warn!(
-                    "[Gemini] Upstream 400 Unable to process input image detected, but no inline image was purged. Skipping retry to prevent duplicate 400."
-                );
-            } else {
-                retried_with_image_omitted = true;
-                degraded_wrapped_body = Some(wrapped_body);
-                force_rotate = false;
-                tracing::warn!(
-                    "[Gemini] Upstream 400 Unable to process input image detected. In-place self-healing: purged {} image(s) to text placeholders on account {}, retrying.",
-                    purged_count, email
-                );
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                continue;
-            }
         }
 
         if classification.abandons_sticky_account() {
@@ -1082,11 +1044,13 @@ pub async fn handle_generate(
         }
 
         if classification.is_model_not_found() {
-            // [NEW] 针对特定账号记录单模型临时熔断（例如该 PRO 账号未开通 Claude 5.5），绝不连坐其他模型
-            token_manager.mark_model_unsupported(&account_id, &mapped_model, Some(900));
+            // [Pipeline Policy] 单模型临时熔断 + 是否换号的决策已下沉；这里只构造协议响应。
+            let can_rotate =
+                crate::proxy::pipeline::policy::apply_model_not_found(attempt, pool_size, || {
+                    token_manager.mark_model_unsupported(&account_id, &mapped_model, Some(900))
+                });
 
-            // 如果账号池中还有其他未尝试的候选账号，则顺畅换号重试，而不是直接放弃报错
-            if attempt < pool_size {
+            if can_rotate {
                 tracing::warn!(
                     "[Gemini] 上游报错模型不可用 (HTTP {})，已标记账号 {} 对模型 [{}] 临时熔断，继续换号重试 ({}/{})...",
                     status_code, email, mapped_model, attempt, pool_size
@@ -1248,51 +1212,20 @@ pub async fn handle_generate(
 pub async fn handle_list_models(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    use crate::proxy::common::model_mapping::{
-        get_all_dynamic_models, get_all_dynamic_models_metadata,
-    };
-
-    // 获取所有动态模型列表（与 /v1/models 一致）
-    let only_raw = *state.only_raw_quota_models.read().await;
-    let model_ids =
-        get_all_dynamic_models(&state.custom_mapping, Some(&state.token_manager), only_raw).await;
-    let metadata_map = get_all_dynamic_models_metadata(
-        &state.custom_mapping,
-        Some(&state.token_manager),
-        only_raw,
-    )
-    .await;
-
-    // 转换为 Gemini API 格式
-    let models: Vec<_> = model_ids
+    let entries = crate::proxy::handlers::common::collect_model_list_entries(&state).await;
+    let models: Vec<_> = entries
         .into_iter()
-        .map(|id| {
-            let (fallback_in, fallback_out) =
-                crate::proxy::handlers::openai::resolve_model_token_limits(&id);
-            let meta = metadata_map
-                .get(&id)
-                .or_else(|| metadata_map.get(&id.to_lowercase()));
-            let display_name = meta
-                .and_then(|m| m.display_name.clone())
-                .unwrap_or_else(|| id.clone());
-            let input_limit = meta
-                .and_then(|m| m.max_tokens)
-                .map(|v| v as i64)
-                .unwrap_or(fallback_in);
-            let output_limit = meta
-                .and_then(|m| m.max_output_tokens)
-                .map(|v| v as i64)
-                .unwrap_or(fallback_out);
-
+        .map(|entry| {
+            let display_name = entry.display_name.unwrap_or_else(|| entry.id.clone());
             json!({
-                "name": format!("models/{}", id),
+                "name": format!("models/{}", entry.id),
                 "version": "001",
                 "displayName": display_name,
                 "description": "",
-                "inputTokenLimit": input_limit,
-                "outputTokenLimit": output_limit,
-                "maxTokens": input_limit,
-                "maxOutputTokens": output_limit,
+                "inputTokenLimit": entry.context_limit,
+                "outputTokenLimit": entry.output_limit,
+                "maxTokens": entry.context_limit,
+                "maxOutputTokens": entry.output_limit,
                 "supportedGenerationMethods": ["generateContent", "countTokens"],
                 "temperature": 1.0,
                 "topP": 0.95,

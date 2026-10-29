@@ -315,16 +315,9 @@ pub fn transform_openai_request_with_session(
     );
 
     let tb_config = crate::proxy::config::get_thinking_budget_config();
-    let is_client_control =
-        tb_config.control_source == crate::proxy::config::ThinkingControlSource::Client;
-
-    let is_client_disabled = is_client_control && client_switch.is_disabled();
-
-    let actual_include_thinking = if is_client_disabled {
-        false
-    } else {
-        !is_under_v3 && (is_thinking_model || force_server_thinking || is_client_control)
-    };
+    // 客户端直控模式已下线：思考开关只通过路由层（降档）表达，
+    // 传输通道与预算一律由流水线按官方模型结构体决定。
+    let actual_include_thinking = !is_under_v3 && (is_thinking_model || force_server_thinking);
 
     if _user_enabled_thinking || _user_thinking_budget.is_some() {
         tracing::debug!(
@@ -930,20 +923,7 @@ pub fn transform_openai_request_with_session(
     }
 
     // 为 thinking 模型注入 thinkingConfig (使用流水线统一配置治理)
-    if is_client_disabled {
-        tracing::debug!(
-            "[OpenAI-Request] Client direct control disabled thinking: removing thinkingConfig for {}",
-            mapped_model
-        );
-        crate::proxy::pipeline::InboundThinkingPipeline::configure_inbound_thinking(
-            mapped_model,
-            &mut gen_config,
-            client_switch,
-            None,
-            None,
-            token,
-        );
-    } else if actual_include_thinking {
+    if actual_include_thinking {
         // [RESOLVE #1694] Check image thinking mode
         let image_thinking_mode = crate::proxy::config::get_image_thinking_mode();
         // Only disable if mode is explicitly "disabled" AND it's an image generation request
@@ -974,48 +954,16 @@ pub fn transform_openai_request_with_session(
                         .and_then(|r| r.max_tokens.map(|b| b as u64))
                 });
 
-            let resolved_budget =
-                crate::proxy::pipeline::InboundThinkingPipeline::configure_inbound_thinking(
-                    mapped_model,
-                    &mut gen_config,
-                    client_switch,
-                    client_effort,
-                    client_budget,
-                    token,
-                );
-
-            if let Some(final_budget) = resolved_budget {
-                if final_budget > 0 {
-                    // [CRITICAL] 思维模型的 maxOutputTokens 必须大于 thinkingBudget
-                    // [FIX #1675] 针对图像模型使用更保守的 max_tokens 增量，避免触发 128k 限制
-                    let overhead = if config.request_type == "image_gen" {
-                        2048
-                    } else {
-                        32768
-                    };
-                    let min_overhead = if config.request_type == "image_gen" {
-                        1024
-                    } else {
-                        8192
-                    };
-
-                    if let Some(max_tokens) = request.max_tokens {
-                        if (max_tokens as i64) <= final_budget {
-                            gen_config["maxOutputTokens"] = json!(final_budget + min_overhead);
-                        }
-                    } else {
-                        // [FIX #1592] Use a more conservative default to avoid 400 error on 128k context models
-                        gen_config["maxOutputTokens"] = json!(final_budget + overhead);
-                    }
-
-                    let new_max = gen_config["maxOutputTokens"].as_i64().unwrap_or(0);
-                    tracing::debug!(
-                        "[OpenAI-Request] Adjusted maxOutputTokens to {} for thinking model (budget={})",
-                        new_max,
-                        final_budget
-                    );
-                }
-            }
+            // `configure_inbound_thinking` 是唯一写入方：内部已完成
+            // 「maxOutputTokens > thinkingBudget」协商与官方硬顶收紧，适配器不再二次改写。
+            crate::proxy::pipeline::InboundThinkingPipeline::configure_inbound_thinking(
+                mapped_model,
+                &mut gen_config,
+                client_switch,
+                client_effort,
+                client_budget,
+                token,
+            );
 
             tracing::debug!(
                 "[OpenAI-Request] Configured thinkingConfig for model {}: {:?} (source={:?})",
@@ -1028,27 +976,7 @@ pub fn transform_openai_request_with_session(
 
     // 官方字段迁移后，thinkingConfig 统一由 pipeline 决定（level 或 budget），
     // 适配层不得再自行改写，否则会把 thinkingLevel 通道清空。
-
-    // [FIX] Cap maxOutputTokens to prevent 400 Invalid Argument
-    if let Some(val) = gen_config["maxOutputTokens"].as_i64() {
-        let safe_limit = if mapped_model_lower.contains("5-5") || mapped_model_lower.contains("5.5")
-        {
-            128000
-        } else if mapped_model_lower.contains("claude") {
-            64000
-        } else if mapped_model_lower.contains("pro") {
-            65535
-        } else {
-            65536
-        };
-        if val > safe_limit {
-            tracing::warn!(
-                "[Generation-Config] Capping maxOutputTokens from {} to {} to prevent 400 Invalid Argument",
-                val, safe_limit
-            );
-            gen_config["maxOutputTokens"] = json!(safe_limit);
-        }
-    }
+    // maxOutputTokens 的硬顶与 budget 协商同样已收敛到 `configure_inbound_thinking`。
 
     if let Some(stop) = &request.stop {
         if !mapped_model_lower.contains("claude-opus-4-6-thinking") {
