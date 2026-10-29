@@ -2367,10 +2367,14 @@ pub async fn handle_chat_completions(
     let mut degraded_gemini_body: Option<Value> = None;
 
     // 2. 模型路由解析 (移到循环外以支持在所有路径返回 X-Mapped-Model)
+    // [2026-10-29] 四协议统一抽象：显式关闭思考（thinking.type=disabled / budget=0 / effort=none）
+    // 归一为路由意图 "none"，由路由层按官方档位数组降为最低档。
+    let route_effort =
+        crate::proxy::pipeline::routing_effort(client_switch.is_disabled(), effort_hint.as_deref());
     let mapped_model = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
         &openai_req.model,
         &*state.custom_mapping.read().await,
-        effort_hint.as_deref(),
+        route_effort,
     );
     let anchor = SessionManager::openai_content_anchor(&openai_req);
     let session_scope = crate::proxy::thinking_store::SessionScope::resolve(
@@ -4336,10 +4340,31 @@ pub async fn handle_completions(
                 .and_then(|t| t.effort.as_deref())
         });
 
+    let route_effort = crate::proxy::pipeline::routing_effort(
+        crate::proxy::pipeline::extract_client_thinking_switch(
+            openai_req
+                .thinking
+                .as_ref()
+                .and_then(|t| t.thinking_type.as_deref()),
+            openai_req
+                .thinking
+                .as_ref()
+                .and_then(|t| t.budget_tokens.map(|b| b as u64))
+                .or_else(|| {
+                    openai_req
+                        .reasoning
+                        .as_ref()
+                        .and_then(|r| r.max_tokens.map(|b| b as u64))
+                }),
+            effort_hint,
+        )
+        .is_disabled(),
+        effort_hint,
+    );
     let mapped_model = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
         &openai_req.model,
         &*state.custom_mapping.read().await,
-        effort_hint,
+        route_effort,
     );
     let trace_id = format!("req_{}", chrono::Utc::now().timestamp_subsec_millis());
     if debug_logger::is_enabled(&debug_cfg) {

@@ -1,4 +1,12 @@
 {
+    "thinking_adaptive": {
+        "title": "思考檔位：閘道自適應（官方結構體驅動）",
+        "tag": "推薦",
+        "desc": "客戶端直控模式與自訂 Token 檔位已下線：具備 thinkingLevel 的模型由模型檔位直接決定等級（low / medium / high），其餘模型沿用官方 thinkingBudget 預設值。客戶端傳入的思考檔位僅在無後綴（裸）模型上生效，用於選擇具體檔位模型。"
+    },
+    "hub_update": {
+        "available": "antigravity hub latest: {{version}}，如果請求正常請忽略"
+    },
     "common": {
         "empty": "空",
         "loading": "載入中...",

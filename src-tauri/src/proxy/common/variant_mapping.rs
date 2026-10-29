@@ -238,7 +238,7 @@ pub fn resolve_with_tier(
         };
 
         // 3.x Flash 裸模型依据思考档位路由为 {base}-high / -low / -medium / -tiered，
-        // 未显式指定档位时遵循统一决策链（tiered 优先 -> medium 次之 -> 向上取高于 low 的最低档位 -> 保底 low）
+        // 未显式指定档位时遵循统一决策链（tiered 优先 -> medium 次之 -> high 下的一个等级 -> 保底首个档位）
         let resolved_id = if crate::proxy::model_specs::is_bare_gemini_v3_flash(canonical) {
             let eff_str = if explicit_tier.is_some() || name_tier.is_some() {
                 match dynamic_tier {
@@ -523,15 +523,9 @@ pub static GEMINI_FAMILIES: &[CanonicalFamily] = &[
             (VariantTier::High, SPEC_3_FLASH_AGENT),
         ],
         aliases: &[
-            (
-                "gemini-3.5-flash-high",
-                AliasPolicy::Fixed(VariantTier::High),
-            ),
-            (
-                "gemini-3.5-flash-medium",
-                AliasPolicy::Fixed(VariantTier::Medium),
-            ),
-            ("gemini-3.5-flash-low", AliasPolicy::Fixed(VariantTier::Low)),
+            ("gemini-3.5-flash-high", AliasPolicy::HonorTier),
+            ("gemini-3.5-flash-medium", AliasPolicy::HonorTier),
+            ("gemini-3.5-flash-low", AliasPolicy::HonorTier),
             ("gemini-3-flash", AliasPolicy::HonorTier),
         ],
     },
@@ -549,9 +543,9 @@ pub static GEMINI_FAMILIES: &[CanonicalFamily] = &[
             (VariantTier::High, SPEC_31_PRO_HIGH),
         ],
         aliases: &[
-            ("gemini-3.1-pro-high", AliasPolicy::Fixed(VariantTier::High)),
+            ("gemini-3.1-pro-high", AliasPolicy::HonorTier),
             ("gemini-pro", AliasPolicy::HonorTier),
-            ("gemini-3.1-pro-low", AliasPolicy::Fixed(VariantTier::Low)),
+            ("gemini-3.1-pro-low", AliasPolicy::HonorTier),
         ],
     },
 ];

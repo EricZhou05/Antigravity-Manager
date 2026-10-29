@@ -177,18 +177,25 @@ pub async fn handle_generate(
     let mut retried_with_image_omitted = false;
     let mut degraded_wrapped_body: Option<Value> = None;
 
-    let client_effort = body
+    let thinking_cfg = body
         .get("request")
         .unwrap_or(&body)
         .get("generationConfig")
-        .and_then(|gc| gc.get("thinkingConfig"))
+        .and_then(|gc| gc.get("thinkingConfig"));
+    let client_effort = thinking_cfg
         .and_then(|tc| tc.get("thinkingLevel").or_else(|| tc.get("effort")))
         .and_then(|v| v.as_str());
+    // Gemini 的“关闭思考”表达在 thinkingConfig 内部（includeThoughts=false / budget=0）
+    let explicit_disable = thinking_cfg.map_or(false, |tc| {
+        tc.get("includeThoughts").and_then(|v| v.as_bool()) == Some(false)
+            || tc.get("thinkingBudget").and_then(|v| v.as_i64()) == Some(0)
+    });
+    let route_effort = crate::proxy::pipeline::routing_effort(explicit_disable, client_effort);
 
     let initial_mapped_model = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
         &model_name,
         &*state.custom_mapping.read().await,
-        client_effort,
+        route_effort,
     );
 
     while let Some(attempt) = next_rotation_attempt(
@@ -1433,18 +1440,23 @@ pub async fn execute_count_tokens(
     crate::proxy::mappers::common_utils::sanitize_gemini_payload_inline_data(&mut body);
 
     // 1. 模型路由解析
-    let client_effort = body
+    let thinking_cfg = body
         .get("request")
         .unwrap_or(&body)
         .get("generationConfig")
-        .and_then(|gc| gc.get("thinkingConfig"))
+        .and_then(|gc| gc.get("thinkingConfig"));
+    let client_effort = thinking_cfg
         .and_then(|tc| tc.get("thinkingLevel").or_else(|| tc.get("effort")))
         .and_then(|v| v.as_str());
+    let explicit_disable = thinking_cfg.map_or(false, |tc| {
+        tc.get("includeThoughts").and_then(|v| v.as_bool()) == Some(false)
+            || tc.get("thinkingBudget").and_then(|v| v.as_i64()) == Some(0)
+    });
 
     let mapped_model = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
         &model_name,
         &*state.custom_mapping.read().await,
-        client_effort,
+        crate::proxy::pipeline::routing_effort(explicit_disable, client_effort),
     );
 
     // 2. 解析请求配置并获取 Token

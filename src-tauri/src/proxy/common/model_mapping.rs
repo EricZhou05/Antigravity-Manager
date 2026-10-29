@@ -200,6 +200,16 @@ pub fn is_model_compliant_with_baseline(model: &str) -> bool {
         return false;
     }
 
+    // [2026-10-29] 统一基准：Gemini 主版本 < 3 全量下线（2.5-pro / 2.5-flash / 2.0 / 1.5 …）。
+    // 官方 fetchAvailableModels 的字典里仍可能残留这些条目，但模型列表与门禁一律不得暴露。
+    if let Some(rest) = m.strip_prefix("gemini-") {
+        if let Some((major, _minor)) = parse_version_tuple(rest) {
+            if major < 3 {
+                return false;
+            }
+        }
+    }
+
     // 特许放行的官方轻量级与图像专用模型，以及新一代 Gemini 4 Argon 旗舰模型
     if m.contains("argon")
         || m == "gemini-3.1-flash-lite"
@@ -366,8 +376,9 @@ pub async fn get_all_dynamic_models(
     let mut custom_keys = HashSet::new();
 
     // 1. 获取所有账号从官方 fetchAvailableModels 接口汇聚而来的真实可用模型并集
+    // [2026-10-29] 严格取官方可用集合（不含内部保护桶名，也不含字典残留）
     if let Some(tm) = token_manager {
-        for dynamic_model in tm.get_all_collected_models() {
+        for dynamic_model in tm.get_all_available_models() {
             if is_model_compliant_with_baseline(&dynamic_model) {
                 model_ids.insert(dynamic_model);
             }
@@ -579,29 +590,25 @@ pub async fn get_all_dynamic_models_metadata(
         }
     }
 
-    // 5. 应用思考预算配置与官方模型结构体参数覆盖：
-    // 用户前端配置自定义思考预算（或选择自适应 -1）优先覆盖；
-    // 默认模式下如实继承官方结构体的默认值（如官方自适应 -1 或标准预算），保持双轨完整支持。
-    let tb_config = crate::proxy::config::get_thinking_budget_config();
+    // 5. 应用官方模型结构体参数覆盖：
+    // [2026-10-29] 官方已把思考传输迁移到 thinkingLevel，不再下发 thinkingBudget 的模型
+    // 一律不伪造预算（避免向客户端暴露一个实际不会生效的数字）。
     for (name, meta) in meta_map.iter_mut() {
         if meta.supports_thinking.unwrap_or(true) {
             let official_budget = crate::models::OfficialModelCatalog::get(name)
                 .and_then(|info| info.thinking_budget)
                 .map(|b| b as i32);
 
-            let configured_budget = if tb_config.control_source
-                == crate::proxy::config::ThinkingControlSource::Gateway
-            {
-                crate::proxy::model_specs::resolve_custom_budget(name, None, None, &tb_config, None)
-                    .map(|b| b as i32)
-            } else {
-                None
-            };
-
-            meta.thinking_budget = configured_budget
-                .or(official_budget)
-                .or(meta.thinking_budget);
+            meta.thinking_budget = official_budget.or(meta.thinking_budget);
         }
+    }
+
+    // 6. 最终校验：剔除已下线 / 不合格的字典残留（2.x、agent、internal、未经官方开通的条目）
+    // 用户显式配置的自定义映射键除外（自定义别名必须原样生效）。
+    {
+        let mapping = custom_mapping.read().await;
+        meta_map
+            .retain(|name, _| mapping.contains_key(name) || is_model_compliant_with_baseline(name));
     }
 
     meta_map
@@ -1316,6 +1323,15 @@ mod tests {
         assert!(!is_model_compliant_with_baseline("gemini-2.0-pro"));
         assert!(!is_model_compliant_with_baseline("gemini-3-pro"));
         assert!(!is_model_compliant_with_baseline("gemini-3.1-pro-preview"));
+
+        // [2026-10-29] Gemini 主版本 < 3 全量下线：对外模型列表不得含任何 2.x（含 2.5 Pro）
+        assert!(!is_model_compliant_with_baseline("gemini-2.5-pro"));
+        assert!(
+            !get_supported_models()
+                .iter()
+                .any(|m| m.starts_with("gemini-2.")),
+            "对外模型列表不得包含任何 Gemini 2.x（含 2.5 Pro）"
+        );
 
         // Image models
         assert!(is_model_compliant_with_baseline("gemini-3.1-flash-image"));

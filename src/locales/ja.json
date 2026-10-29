@@ -1,4 +1,12 @@
 {
+    "thinking_adaptive": {
+        "title": "思考レベル：ゲートウェイ適応（公式カタログ駆動）",
+        "tag": "推奨",
+        "desc": "クライアント直接制御とカスタム Token 階層は廃止されました。thinkingLevel を持つモデルはモデル階層（low / medium / high）でレベルが決まり、それ以外は公式の thinkingBudget 既定値に従います。クライアント指定の思考強度は接尾辞なし（ベース）モデルでの階層選択にのみ使用されます。"
+    },
+    "hub_update": {
+        "available": "antigravity hub latest: {{version}} — リクエストが正常であれば無視してください"
+    },
     "common": {
         "loading": "読み込み中...",
         "empty": "空",

@@ -1048,9 +1048,10 @@ pub async fn handle_messages(
             .map(|v| v as u32)
     };
 
-    // 当客户端显式关闭思考或预算为 0 时（如 Claude Desktop 自动模式安全门禁），意图对齐至 low 档位，确保命中低开销模型
+    // 当客户端显式关闭思考或预算为 0 时（如 Claude Desktop 自动模式安全门禁），
+    // 统一归一为 "none"：具体降到哪个档位由路由层根据官方档位数组推导（不再硬编码 low）。
     let effort_hint = if client_disabled {
-        Some("low".to_string())
+        Some("none".to_string())
     } else {
         request
             .output_config

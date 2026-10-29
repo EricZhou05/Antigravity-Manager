@@ -5933,6 +5933,31 @@ impl TokenManager {
         }
     }
 
+    /// 获取当前所有可用账号中收集到的官方下发模型集合
+    ///
+    /// 用于对外模型列表（`/v1/models` 等）：**不包含** `model_quotas` 里的内部保护桶名，
+    /// 也不包含任何未在 `fetchAvailableModels` 可用集合里的字典残留。
+    pub fn get_all_available_models(&self) -> std::collections::HashSet<String> {
+        let mut all_models = std::collections::HashSet::new();
+        for entry in self.tokens.iter() {
+            let token = entry.value();
+
+            for model_id in &token.available_models {
+                all_models.insert(model_id.clone());
+            }
+
+            // 持久化文件里的原始 quota 模型 ID（官方 fetchAvailableModels 可用集合）
+            if let Some(raw_models) = Self::get_available_models_from_json(&token.account_path) {
+                for model_id in raw_models {
+                    all_models.insert(model_id);
+                }
+            }
+        }
+        // 同步到全局快照：一键配置（CLI/opencode/dsh 等）只列真实可用模型
+        crate::proxy::cli_sync::update_available_model_ids(all_models.iter().cloned());
+        all_models
+    }
+
     /// 获取当前所有可用账号中收集到的官方下发的所有动态模型集合
     pub fn get_all_collected_models(&self) -> std::collections::HashSet<String> {
         let mut all_models = std::collections::HashSet::new();
@@ -9126,9 +9151,9 @@ mod tests {
 
         let mut meta = HashMap::new();
         meta.insert(
-            "gemini-3.7-flash-high".to_string(),
+            "gemini-3.8-flash-high".to_string(),
             crate::models::quota::ModelListingMeta {
-                display_name: Some("Gemini 3.7 Flash (High)".to_string()),
+                display_name: Some("Gemini 3.8 Flash (High)".to_string()),
                 supports_images: Some(true),
                 supports_thinking: Some(true),
                 thinking_budget: Some(2048),
@@ -9168,9 +9193,9 @@ mod tests {
 
         // 1. 测试 TokenManager 聚合
         let collected = manager.get_all_model_metadata();
-        assert!(collected.contains_key("gemini-3.7-flash-high"));
+        assert!(collected.contains_key("gemini-3.8-flash-high"));
         assert_eq!(
-            collected["gemini-3.7-flash-high"].supports_images,
+            collected["gemini-3.8-flash-high"].supports_images,
             Some(true)
         );
 

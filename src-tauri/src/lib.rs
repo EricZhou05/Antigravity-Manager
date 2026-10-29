@@ -492,20 +492,13 @@ pub fn run() {
                         }
                     }
 
-                    // Initialize Hub fingerprint from config or detection
+                    // Initialize Hub fingerprint from config or hardcoded calibration baseline.
+                    // 注意：启动阶段**不做**远程版本跟随——CL 无法自动获取，版本与 CL 必须成对，
+                    // 远程探测仅用于前端启动提示（check_hub_update）。
                     crate::modules::hub_version::update_hub_fingerprint(
                         config.proxy.hub_version.as_deref(),
                         config.proxy.hub_cl.as_deref(),
                     );
-                    let hub_ver_cfg = config.proxy.hub_version.clone();
-                    let hub_cl_cfg = config.proxy.hub_cl.clone();
-                    tokio::spawn(async move {
-                        crate::modules::hub_version::detect_and_update_hub_fingerprint(
-                            hub_ver_cfg.as_deref(),
-                            hub_cl_cfg.as_deref(),
-                        )
-                        .await;
-                    });
 
                     // Start proxy service
                     if let Err(e) = commands::proxy::internal_start_proxy_service(
@@ -610,15 +603,6 @@ pub fn run() {
                         config.proxy.hub_version.as_deref(),
                         config.proxy.hub_cl.as_deref(),
                     );
-                    let gui_hub_ver = config.proxy.hub_version.clone();
-                    let gui_hub_cl = config.proxy.hub_cl.clone();
-                    tauri::async_runtime::spawn(async move {
-                        crate::modules::hub_version::detect_and_update_hub_fingerprint(
-                            gui_hub_ver.as_deref(),
-                            gui_hub_cl.as_deref(),
-                        )
-                        .await;
-                    });
                     let state = handle.state::<commands::proxy::ProxyServiceState>();
                     let cf_state = handle.state::<commands::cloudflared::CloudflaredState>();
                     let integration =
@@ -875,6 +859,7 @@ pub fn run() {
             commands::proxy::get_preferred_account,
             commands::proxy::get_hub_fingerprint,
             commands::proxy::detect_remote_hub_fingerprint,
+            commands::proxy::check_hub_update,
             commands::proxy::clear_proxy_rate_limit,
             commands::proxy::clear_all_proxy_rate_limits,
             // Proxy Pool Binding commands

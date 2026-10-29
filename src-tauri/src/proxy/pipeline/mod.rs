@@ -32,7 +32,7 @@ pub use image::{
     stream_chunk_has_image_data, text_has_nonempty_image_data_url,
     value_has_nonempty_image_data_url, ImageDiagnostic,
 };
-pub use inbound::{extract_client_thinking_switch, InboundThinkingPipeline};
+pub use inbound::{extract_client_thinking_switch, routing_effort, InboundThinkingPipeline};
 pub use policy::UpstreamClassification;
 pub use stream_lifecycle::{run_stream_lifecycle, ProtocolStreamHandler, StreamLifecycleConfig};
 pub use terminal::{

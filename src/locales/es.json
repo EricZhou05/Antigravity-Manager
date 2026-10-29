@@ -1,4 +1,12 @@
 {
+    "thinking_adaptive": {
+        "title": "Nivel de pensamiento: adaptativo del gateway (según catálogo oficial)",
+        "tag": "Recomendado",
+        "desc": "El control directo del cliente y los niveles de tokens personalizados quedan retirados: los modelos con thinkingLevel toman el nivel de su escalón (low / medium / high) y el resto usa el thinkingBudget oficial por defecto. El esfuerzo enviado por el cliente solo se aplica a modelos sin sufijo para elegir el modelo de escalón concreto."
+    },
+    "hub_update": {
+        "available": "antigravity hub latest: {{version}} — ignora esto si las solicitudes funcionan con normalidad"
+    },
     "common": {
         "loading": "Cargando...",
         "empty": "Vacío",

@@ -477,9 +477,8 @@ pub fn tier_weight(tier: &str) -> i32 {
 /// 根据默认档位决策原则，从可用档位数组中自适应选取默认档位：
 /// 1. 优先找 tiered 模型（如存在 -tiered，走自适应思考）
 /// 2. 其次找 medium
-/// 3. 再次找大于 low 的最低等级（如在 ["low", "high"] 中命中 high）
-/// 4. 否则若有等于 low 且确实存在时取 low
-/// 5. 极端保底：仅从真实存在的可用档位中取首项，绝不虚构不存在的档位
+/// 3. 再次找「high 下的一个等级」（权重严格低于 high 的最高档，如 [low, high] → low）
+/// 4. 极端保底：仅从真实存在的可用档位中取首项，绝不虚构不存在的档位
 pub fn pick_optimal_default_tier(available_tiers: &[String]) -> Option<String> {
     if available_tiers.is_empty() {
         return None;
@@ -501,29 +500,20 @@ pub fn pick_optimal_default_tier(available_tiers: &[String]) -> Option<String> {
         return Some(t.clone());
     }
 
-    // 3. 再次找权重严格大于 low (weight > 1) 的最低等级
-    let low_weight = tier_weight("low");
-    let mut candidates_above_low: Vec<(&String, i32)> = available_tiers
+    // 3. 再次找「high 下的一个等级」：在权重严格低于 high 的档位中取最高档
+    // （例：[low, high] → low；[lite, low, medium, high] 中 medium 已在第 2 步命中）
+    let high_weight = tier_weight("high");
+    let mut below_high: Vec<(&String, i32)> = available_tiers
         .iter()
         .map(|t| (t, tier_weight(t)))
-        .filter(|(_, w)| *w > low_weight)
+        .filter(|(_, w)| *w < high_weight)
         .collect();
 
-    if !candidates_above_low.is_empty() {
-        // 取大于 low 的最低权重项（例如 high 权重为 4）
-        candidates_above_low.sort_by_key(|(_, w)| *w);
-        return Some(candidates_above_low[0].0.clone());
+    if !below_high.is_empty() {
+        below_high.sort_by_key(|(_, w)| std::cmp::Reverse(*w));
+        return Some(below_high[0].0.clone());
     }
-
-    // 4. 若无大于 low 的等级，且 low 真实存在，取 low
-    if let Some(t) = available_tiers
-        .iter()
-        .find(|t| t.eq_ignore_ascii_case("low"))
-    {
-        return Some(t.clone());
-    }
-
-    // 5. 极端保底：仅从真实存在的可用档位中取第一个，绝不虚构不存在的档位
+    // 4. 极端保底：仅从真实存在的可用档位中取第一个，绝不虚构不存在的档位
     available_tiers.first().cloned()
 }
 
@@ -568,48 +558,78 @@ impl DynamicTierRouter {
             return None;
         }
 
-        // 3. 客户端显式指定了思考强度：
-        if let Some(eff_str) = client_effort.and_then(normalize_client_thinking_level) {
-            let target_tier = eff_str.to_lowercase();
-            // 若可用档位中精确包含该档位，直接命中
-            if let Some(matched) = available_tiers
-                .iter()
-                .find(|t| t.eq_ignore_ascii_case(&target_tier))
-            {
-                if base.contains("3.5") && matched == "medium" {
-                    return Some("gemini-3.5-flash".to_string());
+        // 2.5 显式关闭思考：仅裸模型能走到这里（具名档位已在步骤 1 返回）。
+        // 官方不允许真正关闭思考，因此降为**官方档位数组中的最低档**（tiered 不参与）。
+        if let Some(raw) = client_effort.map(|s| s.trim().to_lowercase()) {
+            if matches!(raw.as_str(), "none" | "off" | "disabled" | "false" | "0") {
+                let lowest = available_tiers
+                    .iter()
+                    .filter(|t| !t.eq_ignore_ascii_case("tiered"))
+                    .min_by_key(|t| tier_weight(t));
+                if let Some(tier) = lowest {
+                    return Some(format!("{}-{}", base, tier));
                 }
-                return Some(format!("{}-{}", base, matched));
             }
-
-            // 若客户端传了 high 但无 high，或传了 low 但无 low：
-            // 必须严格在真实存在的 available_tiers 中按权重就近匹配，绝不虚构不存在的档位
-            let target_w = tier_weight(&target_tier);
-            if let Some(closest) = available_tiers
-                .iter()
-                .min_by_key(|t| (tier_weight(t) - target_w).abs())
-            {
-                if base.contains("3.5") && closest == "medium" {
-                    return Some("gemini-3.5-flash".to_string());
-                }
-                return Some(format!("{}-{}", base, closest));
-            }
-            return None;
         }
 
-        // 4. 客户端未指定思考强度：按统一默认档位决策原则自动选取
-        // 遵循原则：tiered 优先 -> medium 次之 -> 向上取高于 low 的最低档位 -> 存在时保底 low
+        // 3. 客户端显式指定了思考强度：**只接受官方真实存在的档位后缀**；
+        // 其余（含 default / 不认识的词 / 该家族不存在的档位）一律走第 4 步的默认档位。
+        if let Some(raw) = client_effort.map(|s| s.trim().to_lowercase().replace('_', "-")) {
+            let is_explicit_tier =
+                !raw.is_empty() && !matches!(raw.as_str(), "default" | "none" | "off" | "disabled");
+
+            if is_explicit_tier {
+                // ① 原始值直接命中（如 extra-low / xhigh 若官方真存在）
+                if let Some(matched) = available_tiers
+                    .iter()
+                    .find(|t| t.eq_ignore_ascii_case(&raw))
+                {
+                    return Some(format!("{}-{}", base, matched));
+                }
+                // ② 语义等价映射后再命中（如 xhigh/max → high、minimal → low）
+                if let Some(level) = normalize_client_thinking_level(&raw) {
+                    let level_lower = level.to_lowercase();
+                    if let Some(matched) = available_tiers
+                        .iter()
+                        .find(|t| t.eq_ignore_ascii_case(&level_lower))
+                    {
+                        return Some(format!("{}-{}", base, matched));
+                    }
+                }
+                // ③ 不属于官方实际后缀档位 → 不猜、不就近，直接走默认档位
+            }
+        }
+
+        // 4. 未指定 / default / 非官方实际档位：按统一默认档位决策
+        // tiered → medium → 「high 下的一个等级」→ 首个真实档位
         let default_tier = match pick_optimal_default_tier(&available_tiers) {
             Some(t) => t,
             None => return None,
         };
 
-        if base.contains("3.5") && (default_tier == "medium" || default_tier == "high") {
-            return Some("gemini-3.5-flash".to_string());
-        }
-
         Some(format!("{}-{}", base, default_tier))
     }
+}
+
+/// 该模型家族在官方目录中真实存在的思考档位后缀（低→高排序，**不含 tiered**）。
+///
+/// 用于 agent 一键配置里的 effort 选单：裸模型（如 `gemini-3.8-flash`）应当只暴露
+/// `low / medium / high` 这三个官方真实存在的档位；`default` 一律表示“不指定，交给网关默认路由”。
+pub fn available_efforts_for(model_id: &str) -> Vec<String> {
+    let base = crate::proxy::common::model_mapping::strip_tier_suffix(model_id);
+    let tiers = crate::models::OfficialModelCatalog::collect_tiers_for_base(&base);
+    let mut out = Vec::new();
+    for want in ["extra-low", "low", "medium", "high"] {
+        if tiers.iter().any(|t| t.eq_ignore_ascii_case(want)) {
+            out.push(want.to_string());
+        }
+    }
+    // 单一档位不是“可选强度”（如 gpt-oss-120b-medium 的 medium 只是模型名的一部分），
+    // 只有真正存在多个可选档位时才暴露 effort 选单。
+    if out.len() < 2 {
+        return Vec::new();
+    }
+    out
 }
 
 /// 通用裸模型档位路由器 (Unified Bare Model Tier Router)

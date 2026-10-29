@@ -503,13 +503,19 @@ pub fn wrap_request_v2(
                 .get_mut("thinkingConfig")
                 .and_then(|v| v.as_object_mut())
             {
+                // 官方字段迁移后 thinkingLevel 是主流通道，必须原样保留；
+                // 仅当模型确实走预算通道（已携带 thinkingBudget）时才清理等级，避免把唯一通道删空。
+                if tc.contains_key("thinkingBudget") {
+                    tc.remove("thinkingLevel");
+                }
                 tracing::info!(
-                    "[Gemini-Wrap] Pipeline thinking budget {:?} for {} (client_level={:?})",
-                    budget_opt,
+                    "[Gemini-Wrap] Pipeline thinking config for {} (pipeline_budget={:?}, budget={:?}, level={:?}, client_level={:?})",
                     final_model_name,
+                    budget_opt,
+                    tc.get("thinkingBudget"),
+                    tc.get("thinkingLevel"),
                     client_level
                 );
-                tc.remove("thinkingLevel");
             }
         }
 

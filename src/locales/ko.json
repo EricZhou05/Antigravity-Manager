@@ -1,4 +1,12 @@
 {
+    "thinking_adaptive": {
+        "title": "사고 레벨: 게이트웨이 적응형(공식 카탈로그 기반)",
+        "tag": "권장",
+        "desc": "클라이언트 직접 제어와 사용자 지정 토큰 단계는 종료되었습니다. thinkingLevel 을 제공하는 모델은 모델 단계(low / medium / high)로 레벨이 결정되며, 나머지 모델은 공식 thinkingBudget 기본값을 따릅니다. 클라이언트가 보낸 사고 강도는 접미사 없는(베이스) 모델에서 구체적 단계 모델을 고를 때만 사용됩니다."
+    },
+    "hub_update": {
+        "available": "antigravity hub latest: {{version}} — 요청이 정상이라면 무시하세요"
+    },
     "common": {
         "loading": "로딩 중...",
         "empty": "없음",

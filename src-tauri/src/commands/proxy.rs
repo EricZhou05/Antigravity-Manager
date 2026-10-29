@@ -978,15 +978,48 @@ pub async fn get_hub_fingerprint() -> Result<crate::modules::hub_version::HubFin
     Ok(crate::modules::hub_version::get_current_hub_fingerprint())
 }
 
+/// 官方 Hub 版本更新提示（仅提示，**不改变**出站指纹）
+#[derive(serde::Serialize)]
+pub struct HubUpdateStatus {
+    /// 当前硬编码校准版本
+    pub current: String,
+    /// 官方最新版本（探测失败为 None）
+    pub latest: Option<String>,
+    /// 官方是否存在比校准值更新的版本
+    pub update_available: bool,
+}
+
+/// 检查官方 Hub 是否发布了比当前校准基线更新的版本。
+///
+/// 仅供前端启动时的小提示使用：出站 UA 仍使用硬编码的版本 + CL 配对，
+/// 因为 CL 无法从任何公开端点获取，自动跟随版本号只会造成版本/CL 不一致。
+#[tauri::command]
+pub async fn check_hub_update() -> HubUpdateStatus {
+    let current = crate::constants::OFFICIAL_HUB_VERSION.to_string();
+    let latest = crate::modules::hub_version::fetch_remote_hub_release()
+        .await
+        .map(|release| release.version);
+    let update_available = latest
+        .as_deref()
+        .map_or(false, crate::modules::hub_version::is_update_available);
+
+    HubUpdateStatus {
+        current,
+        latest,
+        update_available,
+    }
+}
+
 /// 强制探测官方远程更新源并返回最新 Hub 指纹信息
 #[tauri::command]
 pub async fn detect_remote_hub_fingerprint(
     custom_version: Option<String>,
     custom_cl: Option<String>,
 ) -> Result<crate::modules::hub_version::HubFingerprint, String> {
-    let fp = crate::modules::hub_version::detect_and_update_hub_fingerprint(
+    let fp = crate::modules::hub_version::detect_and_update_hub_fingerprint_with(
         custom_version.as_deref(),
         custom_cl.as_deref(),
+        true,
     )
     .await;
 

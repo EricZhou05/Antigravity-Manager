@@ -220,6 +220,24 @@ pub fn parse_and_migrate_config(content: &str) -> Result<(AppConfig, bool), Stri
             }
         }
 
+        // [2026-10-29] 思考控制权已收敛为「网关 + 自适应」：
+        // 旧配置中的 client（客户端直控）统一迁移回 gateway，避免 UI 显示已不存在的模式。
+        if let Some(tb) = proxy
+            .get_mut("thinking_budget")
+            .and_then(|t| t.as_object_mut())
+        {
+            if tb.get("control_source").and_then(|v| v.as_str()) == Some("client") {
+                tb.insert(
+                    "control_source".to_string(),
+                    serde_json::Value::String("gateway".to_string()),
+                );
+                tracing::info!(
+                    "Migrating thinking_budget.control_source: client -> gateway (client control mode removed)"
+                );
+                modified = true;
+            }
+        }
+
         if modified {
             proxy.as_object_mut().unwrap().insert(
                 "custom_mapping".to_string(),

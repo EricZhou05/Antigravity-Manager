@@ -28,7 +28,10 @@ pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
             .post(*url)
             .timeout(std::time::Duration::from_millis(3000))
             .bearer_auth(access_token)
-            .header("User-Agent", crate::constants::USER_AGENT.as_str())
+            .header(
+                "User-Agent",
+                crate::constants::current_egress_user_agent().as_str(),
+            )
             .header("Content-Type", "application/json")
             .json(&request_body)
             .send()

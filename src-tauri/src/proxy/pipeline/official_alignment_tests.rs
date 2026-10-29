@@ -327,7 +327,7 @@ mod tests {
         }
         let _guard = ResetGuard;
 
-        // 1. Gemini 3.8 Flash High -> official default thinking_budget is -1
+        // 1. Gemini 3.8 Flash High -> 官方已迁移至 thinkingLevel=3（预算字段不再生效）
         let mut gc_high = json!({});
         InboundThinkingPipeline::configure_inbound_thinking(
             "gemini-3.8-flash-high",
@@ -339,9 +339,10 @@ mod tests {
         );
         let tc_high = gc_high.get("thinkingConfig").unwrap();
         assert_eq!(tc_high["includeThoughts"], true);
-        assert_eq!(tc_high["thinkingBudget"], -1);
+        assert_eq!(tc_high["thinkingLevel"], "HIGH");
+        assert!(tc_high.get("thinkingBudget").is_none());
 
-        // 2. Gemini 3.8 Flash Low -> official default thinking_budget is 1000
+        // 2. Gemini 3.8 Flash Low -> thinkingLevel=1 -> LOW
         let mut gc_low = json!({});
         InboundThinkingPipeline::configure_inbound_thinking(
             "gemini-3.8-flash-low",
@@ -353,9 +354,10 @@ mod tests {
         );
         let tc_low = gc_low.get("thinkingConfig").unwrap();
         assert_eq!(tc_low["includeThoughts"], true);
-        assert_eq!(tc_low["thinkingBudget"], 1000);
+        assert_eq!(tc_low["thinkingLevel"], "LOW");
+        assert!(tc_low.get("thinkingBudget").is_none());
 
-        // 3. Gemini 3.8 Flash Medium -> official default thinking_budget is 4000
+        // 3. Gemini 3.8 Flash Medium -> thinkingLevel=2 -> MEDIUM
         let mut gc_med = json!({});
         InboundThinkingPipeline::configure_inbound_thinking(
             "gemini-3.8-flash-medium",
@@ -367,7 +369,8 @@ mod tests {
         );
         let tc_med = gc_med.get("thinkingConfig").unwrap();
         assert_eq!(tc_med["includeThoughts"], true);
-        assert_eq!(tc_med["thinkingBudget"], 4000);
+        assert_eq!(tc_med["thinkingLevel"], "MEDIUM");
+        assert!(tc_med.get("thinkingBudget").is_none());
 
         // 4. Claude Sonnet 4.6 -> official default thinking_budget is 1024
         let mut gc_claude = json!({});
@@ -598,7 +601,7 @@ mod tests {
             None
         );
 
-        // 6. Inbound pipeline 配置测试：-1 预算正确注入且 maxOutputTokens 不被截断
+        // 6. Inbound pipeline：具名档位模型走等级通道，且等级由模型档位决定（不受 client effort 影响）
         let mut gc = json!({});
         InboundThinkingPipeline::configure_inbound_thinking(
             "gemini-3.8-flash-high",
@@ -608,9 +611,9 @@ mod tests {
             None,
             None,
         );
-        assert_eq!(gc["thinkingConfig"]["thinkingBudget"], -1);
+        assert_eq!(gc["thinkingConfig"]["thinkingLevel"], "HIGH");
         assert_eq!(gc["thinkingConfig"]["includeThoughts"], true);
-        assert!(gc["thinkingConfig"].get("thinkingLevel").is_none());
+        assert!(gc["thinkingConfig"].get("thinkingBudget").is_none());
 
         // 7. Argon 系列必须输出 thinkingLevel，严禁输出 thinkingBudget！
         let mut gc_argon = json!({});

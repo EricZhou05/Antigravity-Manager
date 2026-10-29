@@ -187,7 +187,7 @@ async fn fetch_project_id(
             .header(rquest::header::CONTENT_TYPE, "application/json")
             .header(
                 rquest::header::USER_AGENT,
-                crate::constants::USER_AGENT.as_str(),
+                crate::constants::current_egress_user_agent().as_str(),
             )
             .json(&meta)
             .send()
@@ -345,7 +345,7 @@ pub async fn fetch_quota_with_cache(
             .bearer_auth(access_token)
             .header(
                 rquest::header::USER_AGENT,
-                crate::constants::USER_AGENT.as_str(),
+                crate::constants::current_egress_user_agent().as_str(),
             )
             .json(&payload)
             .send()
@@ -467,9 +467,8 @@ pub async fn fetch_quota_with_cache(
                         }
                     }
                 }
-                if !official_supported_ids.is_empty() {
-                    official_supported_ids.insert("gemini-3.1-flash-lite".to_string());
-                }
+                // [2026-10-29] 不再向官方可用集合里注入任何“字典存在但未开通”的模型（如 gemini-3.1-flash-lite），
+                // 对外模型列表严格等于 fetchAvailableModels 的可用集合。
 
                 // Parse deprecated model routing rules
                 if let Some(deprecated) = quota_response.deprecated_model_ids {
@@ -804,7 +803,7 @@ async fn fetch_quota_summary(
             .bearer_auth(access_token)
             .header(
                 rquest::header::USER_AGENT,
-                crate::constants::USER_AGENT.as_str(),
+                crate::constants::current_egress_user_agent().as_str(),
             )
             .json(&payload)
             .send()

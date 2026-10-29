@@ -216,21 +216,33 @@ pub static SESSION_ID: LazyLock<String> = LazyLock::new(|| uuid::Uuid::new_v4().
 
 /// Antigravity 官方语言服务枢纽 (Antigravity Hub) 版本号
 /// 对应官方出站 User-Agent: antigravity/hub/{OFFICIAL_HUB_VERSION}
-pub const OFFICIAL_HUB_VERSION: &str = "2.24.0";
+/// 2026-10-29 官方实抓版本与 CL（实抓自 Windows 客户端，出站平台段与之一致）
+pub const OFFICIAL_HUB_VERSION: &str = "2.28.0";
 
 /// Antigravity 官方内部代码仓库 (Google Piper Monorepo) 变更集编号 (Changelist Number / CL)
 /// 官方每一个正式版本发布均对应确定的构建提交点，全球正版客户端保持统一，切勿随机变动
-pub const OFFICIAL_HUB_CL: &str = "1000335682";
+pub const OFFICIAL_HUB_CL: &str = "1008300195";
 
 /// Returns the official Antigravity Hub User-Agent matching the upstream egress signature:
 /// format: "antigravity/hub/{OFFICIAL_HUB_VERSION} (aidev_client; os_type={os}; arch={arch}; cl={OFFICIAL_HUB_CL})"
-/// e.g.: "antigravity/hub/2.24.0 (aidev_client; os_type=darwin; arch=arm64; cl=1000335682)"
+/// e.g.: "antigravity/hub/2.28.0 (aidev_client; os_type=windows; arch=amd64; cl=1008300195)"
 pub fn build_official_upstream_user_agent() -> String {
     crate::modules::hub_version::get_current_hub_user_agent()
 }
 
 /// Official Antigravity upstream User-Agent
+///
+/// ⚠️ 这是**冷启动快照**：`LazyLock` 首次访问后即固定。
+/// 出站请求请统一使用 [`current_egress_user_agent()`]，以便启动时的远程 Hub 指纹探测能即时生效。
 pub static USER_AGENT: LazyLock<String> = LazyLock::new(build_official_upstream_user_agent);
+
+/// 当前生效的出站 User-Agent（动态读取已解析的 Hub 指纹）
+///
+/// 启动时会由 `hub_version::detect_and_update_hub_fingerprint()` 异步刷新为官方最新版本
+/// （当前兜底基线 `OFFICIAL_HUB_VERSION`），CL 与版本号始终成对下发。
+pub fn current_egress_user_agent() -> String {
+    crate::modules::hub_version::get_current_hub_user_agent()
+}
 
 /// Sanitizes a custom User-Agent string for upstream egress requests.
 ///
@@ -364,10 +376,10 @@ mod tests {
     #[test]
     fn test_official_hub_version_baseline() {
         assert!(
-            compare_semver(OFFICIAL_HUB_VERSION, "2.23.1") > std::cmp::Ordering::Equal,
-            "OFFICIAL_HUB_VERSION must be >= 2.24.0 to satisfy upstream Google Argon gate"
+            compare_semver(OFFICIAL_HUB_VERSION, "2.27.0") > std::cmp::Ordering::Equal,
+            "OFFICIAL_HUB_VERSION must be >= 2.28.0 to satisfy upstream Google Argon gate"
         );
-        assert_eq!(OFFICIAL_HUB_CL, "1000335682");
+        assert_eq!(OFFICIAL_HUB_CL, "1008300195");
     }
 
     #[test]

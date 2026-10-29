@@ -1,4 +1,12 @@
 {
+    "thinking_adaptive": {
+        "title": "Mức suy nghĩ: thích ứng qua gateway (theo catalog chính thức)",
+        "tag": "Khuyến nghị",
+        "desc": "Chế độ khách hàng điều khiển trực tiếp và các mức token tùy chỉnh đã bị gỡ bỏ: các mô hình có thinkingLevel lấy mức từ phân hạng của mô hình (low / medium / high), các mô hình còn lại dùng thinkingBudget mặc định chính thức. Mức suy nghĩ do client gửi chỉ áp dụng cho mô hình không có hậu tố để chọn đúng mô hình phân hạng."
+    },
+    "hub_update": {
+        "available": "antigravity hub latest: {{version}} — bỏ qua nếu các yêu cầu vẫn hoạt động bình thường"
+    },
     "common": {
         "empty": "Trống",
         "loading": "Đang tải...",

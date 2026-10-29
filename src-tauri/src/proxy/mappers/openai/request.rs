@@ -1026,13 +1026,8 @@ pub fn transform_openai_request_with_session(
         }
     }
 
-    // Tiered Flash models: if resolved_budget was None (default) in gateway authority, ensure only includeThoughts is set
-    if !is_client_control
-        && is_tiered_flash_model(mapped_model)
-        && gen_config["thinkingConfig"].get("thinkingBudget").is_none()
-    {
-        gen_config["thinkingConfig"] = json!({ "includeThoughts": true });
-    }
+    // 官方字段迁移后，thinkingConfig 统一由 pipeline 决定（level 或 budget），
+    // 适配层不得再自行改写，否则会把 thinkingLevel 通道清空。
 
     // [FIX] Cap maxOutputTokens to prevent 400 Invalid Argument
     if let Some(val) = gen_config["maxOutputTokens"].as_i64() {
@@ -1615,23 +1610,23 @@ mod tests {
         let _lock = crate::proxy::config::TEST_CONFIG_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        // Server-authoritative: client reasoning.effort must not set thinkingLevel, but populates thinkingBudget per tier.
+        // 官方 2026-10 起 tiered 模型走 thinkingLevel 通道；客户端 effort 仅决定等级
         for model in ["gemini-3.8-flash-tiered"] {
             assert!(is_tiered_flash_model(model));
-            for (effort, expected_budget) in [
-                (None, -1),
-                (Some("low"), 1000),
-                (Some("medium"), 4000),
-                (Some("high"), -1),
-                (Some("xhigh"), -1),
+            for (effort, expected_level) in [
+                (None, "HIGH"),
+                (Some("low"), "LOW"),
+                (Some("medium"), "MEDIUM"),
+                (Some("high"), "HIGH"),
+                (Some("xhigh"), "HIGH"),
             ] {
                 let body = tiered_request_body(model, effort);
                 let thinking = &body["request"]["generationConfig"]["thinkingConfig"];
 
                 assert_eq!(body["model"], model);
                 assert_eq!(thinking["includeThoughts"], true);
-                assert!(thinking.get("thinkingLevel").is_none());
-                assert_eq!(thinking["thinkingBudget"], expected_budget);
+                assert_eq!(thinking["thinkingLevel"], expected_level);
+                assert!(thinking.get("thinkingBudget").is_none());
             }
         }
     }
@@ -1641,7 +1636,7 @@ mod tests {
         let _lock = crate::proxy::config::TEST_CONFIG_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        for model in ["gemini-3.1-pro-high", "gemini-3.8-flash"] {
+        for model in ["gemini-3.1-pro-high", "gemini-2.5-pro"] {
             assert!(!is_tiered_flash_model(model));
             let body = tiered_request_body(model, Some("low"));
             let thinking = &body["request"]["generationConfig"]["thinkingConfig"];
@@ -1672,7 +1667,7 @@ mod tests {
             -1
         );
 
-        // 2. 裸模型 Flash 接管客户端 reasoning_effort
+        // 2. 等级通道模型（gemini-3-flash 官方已迁移 thinkingLevel）：按客户端 effort 选等级
         let req_flash_high: OpenAIRequest = serde_json::from_value(json!({
             "model": "gemini-3-flash",
             "messages": [{"role": "user", "content": "hi"}],
@@ -1682,9 +1677,12 @@ mod tests {
         let (body, _, _, _) =
             transform_openai_request(&req_flash_high, "test-p", "gemini-3-flash", None);
         assert_eq!(
-            body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            -1
+            body["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "HIGH"
         );
+        assert!(body["request"]["generationConfig"]["thinkingConfig"]
+            .get("thinkingBudget")
+            .is_none());
 
         let req_flash_low: OpenAIRequest = serde_json::from_value(json!({
             "model": "gemini-3-flash",
@@ -1695,11 +1693,11 @@ mod tests {
         let (body, _, _, _) =
             transform_openai_request(&req_flash_low, "test-p", "gemini-3-flash", None);
         assert_eq!(
-            body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            1000
+            body["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "LOW"
         );
 
-        // 3. 裸模型 Flash 客户端未填或试图关闭：绝不关闭思考，强制回填 -high (-1) 或 -medium (4000)
+        // 3. 裸模型客户端未填或试图关闭：网关权威模式不关闭思考，回落官方等级（3 → HIGH）
         let req_flash_none: OpenAIRequest = serde_json::from_value(json!({
             "model": "gemini-3-flash",
             "messages": [{"role": "user", "content": "hi"}]
@@ -1708,8 +1706,8 @@ mod tests {
         let (body, _, _, _) =
             transform_openai_request(&req_flash_none, "test-p", "gemini-3-flash", None);
         assert_eq!(
-            body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            4000
+            body["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "HIGH"
         );
 
         let req_flash_disabled: OpenAIRequest = serde_json::from_value(json!({
@@ -1721,11 +1719,11 @@ mod tests {
         let (body, _, _, _) =
             transform_openai_request(&req_flash_disabled, "test-p", "gemini-3-flash", None);
         assert_eq!(
-            body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            1000
+            body["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "HIGH"
         );
 
-        // 4. 裸模型 Flash 客户端传入自定义 budget_tokens：彻底被忽略，由服务端权威等级回填
+        // 4. 等级通道模型：客户端传自定义 budget_tokens 也被忽略，仍发官方等级
         let req_flash_custom_budget: OpenAIRequest = serde_json::from_value(json!({
             "model": "gemini-3-flash",
             "messages": [{"role": "user", "content": "hi"}],
@@ -1734,11 +1732,13 @@ mod tests {
         .unwrap();
         let (body, _, _, _) =
             transform_openai_request(&req_flash_custom_budget, "test-p", "gemini-3-flash", None);
-        // 新行为：客户端自定义 budget 被忽略，服务端回填默认 4000
         assert_eq!(
-            body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            4000
+            body["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "HIGH"
         );
+        assert!(body["request"]["generationConfig"]["thinkingConfig"]
+            .get("thinkingBudget")
+            .is_none());
 
         let req_flash_high_custom_budget: OpenAIRequest = serde_json::from_value(json!({
             "model": "gemini-3-flash",
@@ -1754,8 +1754,8 @@ mod tests {
             None,
         );
         assert_eq!(
-            body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            -1
+            body["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "HIGH"
         );
     }
 
@@ -2620,10 +2620,12 @@ mod tests {
         let (result, _sid, _msg_count, _) =
             transform_openai_request(&req, "test-proj", "gemini-3.8-flash-high", None);
 
-        let budget = result["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"]
-            .as_i64()
-            .expect("thinkingBudget from model_specs");
-        assert_eq!(budget, -1, "client budget + Passthrough must be ignored");
+        let thinking = &result["request"]["generationConfig"]["thinkingConfig"];
+        assert_eq!(
+            thinking["thinkingLevel"], "HIGH",
+            "client budget must be ignored; official level wins"
+        );
+        assert!(thinking.get("thinkingBudget").is_none());
 
         let contents = result["request"]["contents"].as_array().unwrap();
         let model_msg = contents
@@ -2756,8 +2758,8 @@ mod tests {
             .as_object()
             .expect("Should have thinkingConfig for default thinking");
         assert_eq!(tc1.get("includeThoughts"), Some(&json!(true)));
+        assert_eq!(tc1.get("thinkingLevel"), Some(&json!("HIGH")));
         assert!(tc1.get("thinkingBudget").is_none());
-        assert!(tc1.get("thinkingLevel").is_none());
 
         // 场景 2: 客户端仅传思考等级 low（等级透传，绝不脑补 budget，必须带上 includeThoughts: true）
         let req_level = OpenAIRequest {
@@ -2800,13 +2802,11 @@ mod tests {
             .as_object()
             .expect("Should have thinkingConfig for budget");
         assert_eq!(tc3.get("includeThoughts"), Some(&json!(true)));
-        assert_eq!(tc3.get("thinkingBudget"), Some(&json!(8192)));
-        assert!(tc3.get("thinkingLevel").is_none());
-        // 且验证 maxOutputTokens 自动垫高保证 > budget
-        let max_out = res3["request"]["generationConfig"]["maxOutputTokens"]
-            .as_i64()
-            .unwrap();
-        assert!(max_out > 8192);
+        assert_eq!(tc3.get("thinkingLevel"), Some(&json!("HIGH")));
+        assert!(
+            tc3.get("thinkingBudget").is_none(),
+            "等级通道模型必须忽略客户端传入的 thinkingBudget"
+        );
     }
 
     #[test]
@@ -2853,9 +2853,10 @@ mod tests {
             .expect("Should have generationConfig in request payload");
         let thinking_config = gen_config["thinkingConfig"].as_object().unwrap();
 
-        // 网关权威控制模式下，90% 用户行为保持不变，依然权威锁定 4000 预算
-        assert_eq!(thinking_config.get("thinkingBudget"), Some(&json!(4000)));
+        // 网关权威控制模式下，具名档位模型的等级由模型档位决定（medium → MEDIUM）
+        assert_eq!(thinking_config.get("thinkingLevel"), Some(&json!("MEDIUM")));
         assert_eq!(thinking_config.get("includeThoughts"), Some(&json!(true)));
+        assert!(thinking_config.get("thinkingBudget").is_none());
     }
 
     #[test]

@@ -24,6 +24,19 @@ impl ClientThinkingSwitch {
     }
 }
 
+/// 四协议统一抽象：把“显式关闭思考”归一为路由用的 `"none"`。
+///
+/// 各协议只需给出**本协议自己的关闭布尔**（Gemini: includeThoughts=false 或 budget=0；
+/// Claude: thinking.type=disabled 或 budget_tokens=0；OpenAI/Codex: effort=none 等），
+/// 具体降档幅度完全由路由层根据官方档位数组推导（裸模型降为最低档，具名档位不受影响）。
+pub fn routing_effort<'a>(explicit_disable: bool, effort: Option<&'a str>) -> Option<&'a str> {
+    if explicit_disable {
+        Some("none")
+    } else {
+        effort
+    }
+}
+
 /// 统一归一化提取客户端思考开关状态（适用于 OpenAI / Claude / Gemini / Codex 等所有协议）
 pub fn extract_client_thinking_switch(
     thinking_type: Option<&str>,
@@ -47,9 +60,11 @@ pub fn extract_client_thinking_switch(
     }
 
     // 2. 显式开启判定（只要客户端带了有效开启标记、具体预算，或任何非空/非关闭的思考等级）
+    // 注意：Anthropic 的 `thinking.type = "adaptive"`（Claude Opus 4.5+ / 5.5 自适应思考）
+    // 明确属于“开启”，由模型自行决定深度，不得归为缺省或关闭。
     if matches!(
         t_type.as_deref(),
-        Some("enabled") | Some("on") | Some("true")
+        Some("enabled") | Some("on") | Some("true") | Some("adaptive")
     ) || budget.map_or(false, |b| b > 0)
         || eff.as_deref().map_or(false, |e| {
             !e.is_empty()
@@ -1574,48 +1589,66 @@ impl InboundThinkingPipeline {
             }
         }
 
-        // 判定该模型在 Google 官方接口中是采用思考等级 (thinkingLevel) 还是思考预算 (thinkingBudget)：
-        // 判定标准（完全通用数据驱动，基于 fetchAvailableModels 官方结构体与分档模型特征，涵盖当下与未来所有模型变体）：
-        // 1. official_info 显式含有 thinking_level 字段；
-        // 2. 或基底模型的所有已知变体中存在声明了 thinking_level 的变体；
-        // 3. 或属于未在官方目录中静态收录但遵循思考等级规则的新一代高阶模型变体（Gemini >= 4 或 Claude >= 5.0，且官方未显式声明支持数字预算）；
-        // 4. 传统模型（如 Gemini 3.8 Flash, Gemini 3.1 Pro, Claude 4.6 等）官方声明使用 thinkingBudget，继续走数字预算通道。
-        let is_thinking_level_model = {
-            if let Some(ref info) = official_info {
-                if info.thinking_level.is_some() {
-                    true
-                } else if info.thinking_budget.is_some() {
-                    false
-                } else {
-                    let base = crate::proxy::common::model_mapping::strip_tier_suffix(target_model);
-                    let tiers = crate::models::OfficialModelCatalog::collect_tiers_for_base(&base);
-                    tiers.iter().any(|t| {
-                        crate::models::OfficialModelCatalog::get(&format!("{}-{}", base, t))
-                            .map_or(false, |ti| ti.thinking_level.is_some())
-                    }) || crate::proxy::model_specs::is_gemini_v4_or_above(target_model)
-                        || crate::proxy::model_specs::is_claude_v5_or_above(target_model)
-                }
-            } else {
-                let base = crate::proxy::common::model_mapping::strip_tier_suffix(target_model);
-                let tiers = crate::models::OfficialModelCatalog::collect_tiers_for_base(&base);
-                let any_variant_has_level = tiers.iter().any(|t| {
-                    crate::models::OfficialModelCatalog::get(&format!("{}-{}", base, t))
-                        .map_or(false, |ti| ti.thinking_level.is_some())
-                });
-                any_variant_has_level
-                    || crate::proxy::model_specs::is_gemini_v4_or_above(target_model)
-                    || crate::proxy::model_specs::is_claude_v5_or_above(target_model)
-            }
-        };
+        // ════════════════════════════════════════════════════════════════════
+        // 传输通道判定（完全以官方模型结构体为准）
+        // 1. 官方声明了 thinkingLevel  → 等级通道（即使同时声明了 budget，也以等级为准）；
+        // 2. 否则声明了 thinkingBudget → 预算通道；
+        // 3. 两者皆无                 → 不写 thinkingConfig（图像/内部模型等）。
+        // 不再依据模型名或版本号猜测通道，避免官方换字段后整条链路静默失效。
+        // ════════════════════════════════════════════════════════════════════
+        let official_level = official_info
+            .as_ref()
+            .and_then(|info| info.thinking_level.as_deref());
+        let official_budget = official_info.as_ref().and_then(|info| info.thinking_budget);
+        let is_thinking_level_model = official_level.is_some();
 
         let tb_config = crate::proxy::config::get_thinking_budget_config();
 
+        // 等级取值优先级：
+        // ① 具名档位后缀（模型名即档位，对齐官方客户端：-low → LOW）
+        // ② 无后缀 / 自适应模型 → 客户端 effort
+        // ③ 官方结构体声明的等级数值（如 tiered=3、2.5-flash=1）
+        // ④ 网关配置 effort → ⑤ MEDIUM 兜底
         let resolve_level_for_model = |raw_effort: Option<&str>| -> String {
+            let lower = target_model.to_lowercase();
+            if lower.ends_with("-low")
+                || lower.ends_with("-extra-low")
+                || lower.ends_with("-minimal")
+                || lower.ends_with("-lite")
+            {
+                return "LOW".to_string();
+            }
+            if lower.ends_with("-high")
+                || lower.ends_with("-xhigh")
+                || lower.ends_with("-max")
+                || lower.ends_with("-extreme")
+            {
+                return "HIGH".to_string();
+            }
+            if lower.ends_with("-medium")
+                || lower.ends_with("-default")
+                || lower.ends_with("-normal")
+            {
+                return "MEDIUM".to_string();
+            }
+
+            // 自适应/裸模型：客户端显式档位优先
             if let Some(eff) =
                 raw_effort.and_then(crate::proxy::model_specs::normalize_client_thinking_level)
             {
                 return eff.to_string();
             }
+
+            // 官方结构体声明的等级（数字 1/2/3 或字符串 LOW/MEDIUM/HIGH）
+            if let Some(raw) = official_level {
+                match raw.trim().to_ascii_lowercase().as_str() {
+                    "1" | "low" => return "LOW".to_string(),
+                    "2" | "medium" => return "MEDIUM".to_string(),
+                    "3" | "high" => return "HIGH".to_string(),
+                    _ => {}
+                }
+            }
+
             if let Some(eff) = tb_config
                 .effort
                 .as_deref()
@@ -1623,33 +1656,7 @@ impl InboundThinkingPipeline {
             {
                 return eff.to_string();
             }
-            let lower = target_model.to_lowercase();
-            if lower.ends_with("-low")
-                || lower.ends_with("-extra-low")
-                || lower.ends_with("-minimal")
-                || lower.ends_with("-lite")
-            {
-                "LOW".to_string()
-            } else if lower.ends_with("-high")
-                || lower.ends_with("-xhigh")
-                || lower.ends_with("-max")
-                || lower.ends_with("-extreme")
-            {
-                "HIGH".to_string()
-            } else if lower.ends_with("-medium")
-                || lower.ends_with("-default")
-                || lower.ends_with("-normal")
-            {
-                "MEDIUM".to_string()
-            } else if let Some(ref info) = official_info {
-                match info.thinking_level.as_deref() {
-                    Some("1") | Some("low") | Some("LOW") => "LOW".to_string(),
-                    Some("3") | Some("high") | Some("HIGH") => "HIGH".to_string(),
-                    _ => "MEDIUM".to_string(),
-                }
-            } else {
-                "MEDIUM".to_string()
-            }
+            "MEDIUM".to_string()
         };
 
         // ════════════════════════════════════════════════════════════════════
@@ -1723,64 +1730,57 @@ impl InboundThinkingPipeline {
             // 模式分流 2: 网关权威控制模式（Gateway Authority，99% 用户）
             // ════════════════════════════════════════════════════════════════════
             if is_thinking_level_model {
-                // 官方新一代分级模型（如 Gemini 4 Argon / Claude 5.5 系列及未来任何分级模型变体）：
-                // 官方完全受控于 thinkingLevel（"LOW", "MEDIUM", "HIGH"），严禁输出 thinkingBudget！
+                // 等级通道：官方声明了 thinkingLevel 的模型
+                // （3.8 Flash / 4 Argon / Claude 5.5 / 2.5 Flash / 3-flash 等）。
+                // 官方场上 thinkingLevel 与 thinkingBudget 只会生效其一，这里严格只发等级。
                 let level = resolve_level_for_model(client_effort);
                 generation_config["thinkingConfig"] = json!({
                     "includeThoughts": true,
                     "thinkingLevel": level
                 });
-            } else {
-                // 官方传统预算模型（如 Gemini 3.8 Flash / Gemini 3.1 Pro / Claude 4.6 系列）：
-                // 官方使用 thinkingBudget（支持 -1 官方自适应与具体数值），严禁输出 thinkingLevel！
-                let resolved_budget = crate::proxy::model_specs::resolve_custom_budget(
+            } else if let Some(budget) = official_budget {
+                // 预算通道：官方结构体明确声明 thinkingBudget 的模型
+                // （今日仅 gemini-2.5-pro=1024、gpt-oss-120b=8192，以及部分未升级账号的 claude-4.6=1024）。
+                generation_config["thinkingConfig"] = if budget == 0 {
+                    json!({ "includeThoughts": false, "thinkingBudget": 0 })
+                } else {
+                    json!({ "includeThoughts": true, "thinkingBudget": budget })
+                };
+            } else if official_info.is_none() {
+                // 官方目录未收录的模型（如历史 *-thinking-exp 实验模型）：
+                // 保留旧的预算解析作为兼容兜底，避免静默丢掉现有的思考能力。
+                match crate::proxy::model_specs::resolve_custom_budget(
                     target_model,
                     client_effort,
                     client_budget,
                     &tb_config,
                     token,
-                );
-
-                let is_tiered = crate::proxy::model_specs::is_tiered_flash_model(target_model)
-                    || target_model.to_lowercase().contains("tiered");
-
-                let mut tc = json!({
-                    "includeThoughts": true
-                });
-
-                let final_budget = match resolved_budget {
-                    Some(b) => Some(b),
-                    None => official_info
-                        .as_ref()
-                        .and_then(|info| info.thinking_budget)
-                        .or_else(|| {
-                            if target_model.to_lowercase().contains("claude") {
-                                Some(crate::proxy::model_specs::get_thinking_budget(
-                                    target_model,
-                                    token,
-                                ) as i64)
-                            } else {
-                                None
-                            }
-                        }),
-                };
-
-                if let Some(budget) = final_budget {
-                    if budget == 0 {
-                        tc = json!({
+                ) {
+                    Some(0) => {
+                        generation_config["thinkingConfig"] = json!({
                             "includeThoughts": false,
                             "thinkingBudget": 0
                         });
-                    } else {
-                        tc["thinkingBudget"] = json!(budget);
                     }
-                } else if is_tiered {
-                    tc = json!({
-                        "includeThoughts": true
-                    });
+                    Some(budget) => {
+                        generation_config["thinkingConfig"] = json!({
+                            "includeThoughts": true,
+                            "thinkingBudget": budget
+                        });
+                    }
+                    None => {
+                        // 目录未收录且无预算可解析：保持与历史一致的 includeThoughts，不脑补数字
+                        generation_config["thinkingConfig"] = json!({
+                            "includeThoughts": true
+                        });
+                    }
                 }
-
-                generation_config["thinkingConfig"] = tc;
+            } else {
+                // 官方已收录、但既无等级也无预算（图像/内部模型等）：不注入思考配置，保持报文纯净
+                if let Some(obj) = generation_config.as_object_mut() {
+                    obj.remove("thinkingConfig");
+                    obj.remove("thinking_config");
+                }
             }
         }
 
@@ -3262,6 +3262,15 @@ mod tests {
             extract_client_thinking_switch(Some("enabled"), None, None),
             ClientThinkingSwitch::Enabled
         );
+        // Anthropic 自适应思考：adaptive 视同开启（而非缺省）
+        assert_eq!(
+            extract_client_thinking_switch(Some("adaptive"), None, None),
+            ClientThinkingSwitch::Enabled
+        );
+        assert_eq!(
+            extract_client_thinking_switch(Some("ADAPTIVE"), None, Some("high")),
+            ClientThinkingSwitch::Enabled
+        );
         assert_eq!(
             extract_client_thinking_switch(None, Some(1024), None),
             ClientThinkingSwitch::Enabled
@@ -3322,7 +3331,7 @@ mod tests {
         );
         assert!(gc1.get("thinkingConfig").is_none());
 
-        // 2. 缺省：includeThoughts=true，绝无 thinkingBudget
+        // 2. 缺省：官方 tiered=3 → thinkingLevel HIGH，绝无 thinkingBudget
         let mut gc2 = json!({});
         InboundThinkingPipeline::configure_inbound_thinking(
             "gemini-3.8-flash-tiered",
@@ -3334,8 +3343,8 @@ mod tests {
         );
         let tc2 = gc2.get("thinkingConfig").unwrap().as_object().unwrap();
         assert_eq!(tc2.get("includeThoughts"), Some(&json!(true)));
+        assert_eq!(tc2.get("thinkingLevel"), Some(&json!("HIGH")));
         assert!(tc2.get("thinkingBudget").is_none());
-        assert!(tc2.get("thinkingLevel").is_none());
 
         // 3. 显式等级：thinkingLevel=LOW / HIGH，绝无 thinkingBudget，必须带上 includeThoughts: true
         let mut gc3 = json!({});
@@ -3352,7 +3361,7 @@ mod tests {
         assert_eq!(tc3.get("thinkingLevel"), Some(&json!("LOW")));
         assert!(tc3.get("thinkingBudget").is_none());
 
-        // 3.1 客户端填了任何自定义等级（非硬编码）且没填预算，忠实透传等级，坚决不填预算
+        // 3.1 非标准 effort 不再原样透传：等级以官方结构体为准（tiered=3 → HIGH）
         let mut gc3_custom = json!({});
         let budget_custom_res = InboundThinkingPipeline::configure_inbound_thinking(
             "gemini-3.8-flash-tiered",
@@ -3368,16 +3377,16 @@ mod tests {
             .as_object()
             .unwrap();
         assert_eq!(tc3_custom.get("includeThoughts"), Some(&json!(true)));
-        assert_eq!(
-            tc3_custom.get("thinkingLevel"),
-            Some(&json!("CUSTOM_ULTRA_LEVEL"))
+        assert_eq!(tc3_custom.get("thinkingLevel"), Some(&json!("HIGH")));
+        assert!(
+            tc3_custom.get("thinkingBudget").is_none(),
+            "等级通道模型必须严格不携带 thinkingBudget"
         );
-        assert!(tc3_custom.get("thinkingBudget").is_none(), "When client provides custom effort without budget, thinkingBudget must strictly remain None");
         assert!(budget_custom_res.is_none());
 
-        // 4. 显式预算：thinkingBudget=8192，绝无 thinkingLevel，必须带上 includeThoughts: true
+        // 4. 等级通道模型：客户端预算被忽略（等级优先），仍发官方等级
         let mut gc4 = json!({});
-        InboundThinkingPipeline::configure_inbound_thinking(
+        let budget_res = InboundThinkingPipeline::configure_inbound_thinking(
             "gemini-3.8-flash-tiered",
             &mut gc4,
             ClientThinkingSwitch::Enabled,
@@ -3387,8 +3396,12 @@ mod tests {
         );
         let tc4 = gc4.get("thinkingConfig").unwrap().as_object().unwrap();
         assert_eq!(tc4.get("includeThoughts"), Some(&json!(true)));
-        assert_eq!(tc4.get("thinkingBudget"), Some(&json!(8192)));
-        assert!(tc4.get("thinkingLevel").is_none());
+        assert_eq!(tc4.get("thinkingLevel"), Some(&json!("HIGH")));
+        assert!(
+            tc4.get("thinkingBudget").is_none(),
+            "官方声明了 thinkingLevel 时，thinkingBudget 必须被忽略"
+        );
+        assert!(budget_res.is_none());
     }
 
     #[test]

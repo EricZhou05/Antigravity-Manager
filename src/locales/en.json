@@ -1,4 +1,12 @@
 {
+    "thinking_adaptive": {
+        "title": "Thinking level: gateway adaptive (official catalog driven)",
+        "tag": "Recommended",
+        "desc": "Client-direct control and custom token tiers are retired: models exposing thinkingLevel take their level from the model tier (low / medium / high), while other models follow the official thinkingBudget default. Client-provided effort only applies to bare (suffix-less) models to pick the concrete tier model."
+    },
+    "hub_update": {
+        "available": "antigravity hub latest: {{version}} — ignore if requests are working normally"
+    },
     "common": {
         "loading": "Loading...",
         "empty": "Empty",

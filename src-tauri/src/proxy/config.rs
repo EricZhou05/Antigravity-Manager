@@ -30,12 +30,19 @@ pub static TEST_CONFIG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static GLOBAL_THINKING_BUDGET_CONFIG: OnceLock<RwLock<ThinkingBudgetConfig>> = OnceLock::new();
 
 /// 获取当前 Thinking Budget 配置
+///
+/// [2026-10-29] 官方已把 Gemini 3.8/4 与 Claude 5.5 全量迁移到 `thinkingLevel`，
+/// 网关不再提供「客户端自适应（Client Direct Control）」模式，也不再用自造的档位预算表。
+/// 这里强制归一到 `Gateway`：旧配置文件里的 `client` 会在读取时被忽略，
+/// 保证四个协议适配层全部走「官方结构体为准」的统一通道。
 pub fn get_thinking_budget_config() -> ThinkingBudgetConfig {
-    GLOBAL_THINKING_BUDGET_CONFIG
+    let mut cfg = GLOBAL_THINKING_BUDGET_CONFIG
         .get()
         .and_then(|lock| lock.read().ok())
         .map(|cfg| cfg.clone())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    cfg.control_source = ThinkingControlSource::Gateway;
+    cfg
 }
 
 /// 更新全局 Thinking Budget 配置

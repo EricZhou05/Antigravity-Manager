@@ -1,4 +1,12 @@
 {
+    "thinking_adaptive": {
+        "title": "思考档位：网关自适应（官方结构体驱动）",
+        "tag": "推荐",
+        "desc": "客户端直控模式与自定义 Token 档位已下线：具备 thinkingLevel 的模型由模型档位直接决定等级（low / medium / high），其余模型沿用官方 thinkingBudget 默认值。客户端传入的思考档位仅在无后缀（裸）模型上生效，用于选择具体档位模型。"
+    },
+    "hub_update": {
+        "available": "antigravity hub latest: {{version}}，如果请求正常请忽略"
+    },
     "common": {
         "loading": "加载中...",
         "load_more": "加载更多",

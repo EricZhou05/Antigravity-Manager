@@ -66,7 +66,9 @@ function isCompliantModel(
         m.includes('internal') ||
         m.includes('-exp') ||
         m.endsWith('-agent') ||
-        m === 'gemini-3-flash'
+        m === 'gemini-3-flash' ||
+        // 未在官方可用集合里的字典残留（已从后端可用集合移除）
+        m === 'gemini-3.1-flash-lite'
     ) {
         return false;
     }
@@ -80,7 +82,6 @@ function isCompliantModel(
     // 2. 特许放行的特定官方核心与专用模型 (Lite 专用系列 / 绘图系列)
     if (
         m === 'gemini-3.5-flash-lite' ||
-        m === 'gemini-3.1-flash-lite' ||
         m === 'gemini-flash-lite' ||
         m === 'gemini-3.1-flash-image' ||
         m === 'gemini-3-pro-image'

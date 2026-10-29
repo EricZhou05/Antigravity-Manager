@@ -1,4 +1,12 @@
 {
+    "thinking_adaptive": {
+        "title": "Düşünme seviyesi: ağ geçidi uyarlamalı (resmi katalog temelli)",
+        "tag": "Önerilen",
+        "desc": "İstemci doğrudan kontrolü ve özel token kademeleri kaldırıldı: thinkingLevel sunan modeller seviyeyi kendi kademesinden (low / medium / high) alır, diğerleri resmi thinkingBudget varsayılanını kullanır. İstemciden gelen düşünme gücü yalnızca sonek almayan (çıplak) modellerde kademe modelini seçmek için uygulanır."
+    },
+    "hub_update": {
+        "available": "antigravity hub latest: {{version}} — istekler normal çalışıyorsa yok sayın"
+    },
     "common": {
         "empty": "Boş",
         "loading": "Yükleniyor...",

@@ -781,9 +781,9 @@ impl UpstreamClient {
     }
 
     fn apply_default_user_agent(builder: rquest::ClientBuilder) -> rquest::ClientBuilder {
-        let ua = crate::constants::USER_AGENT.as_str();
-        if header::HeaderValue::from_str(ua).is_ok() {
-            builder.user_agent(ua)
+        let ua = crate::constants::current_egress_user_agent();
+        if header::HeaderValue::from_str(&ua).is_ok() {
+            builder.user_agent(ua.as_str())
         } else {
             tracing::warn!(
                 user_agent = %ua,
@@ -805,7 +805,7 @@ impl UpstreamClient {
         let ua_override = self.user_agent_override.read().await;
         match ua_override.as_ref() {
             Some(ua) => crate::constants::sanitize_egress_user_agent(ua),
-            None => crate::constants::USER_AGENT.clone(),
+            None => crate::constants::current_egress_user_agent(),
         }
     }
 
@@ -1336,8 +1336,10 @@ impl UpstreamClient {
             header::USER_AGENT,
             header::HeaderValue::from_str(&self.get_user_agent().await).unwrap_or_else(|e| {
                 tracing::warn!("Invalid User-Agent header value, using fallback: {}", e);
-                header::HeaderValue::from_str(crate::constants::USER_AGENT.as_str())
-                    .unwrap_or_else(|_| header::HeaderValue::from_static("antigravity"))
+                header::HeaderValue::from_str(
+                    crate::constants::current_egress_user_agent().as_str(),
+                )
+                .unwrap_or_else(|_| header::HeaderValue::from_static("antigravity"))
             }),
         );
 
