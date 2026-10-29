@@ -32,6 +32,9 @@
 //!    从根本上杜绝 #3764「翻译/校对/审计类提问被改写成官方身份」的误伤，同时保留对客户端注入
 //!    系统提示词的 WAF 防护。
 //!    该分治使四协议共享同一份身份归一化规则（AGENTS.md「Pipeline First」：适配层不做协议专用清洗特例）。
+//! 9. 安全策略约束清洗（Issue #3781）：在 System 轨中动态剥离客户端（如 Antigravity）注入的 CTF 与安全约束指令
+//!    （`IMPORTANT: Assist with authorized security testing...`），消除模型风控误拒答（False Positives），
+//!    节省上下文 Token 并保持排版自然过渡。
 
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -78,6 +81,17 @@ static RE_COMPETITOR_BRANDS: Lazy<Regex> = Lazy::new(|| {
         r"|",
         // 中文竞品厂牌及知名模型代号
         r"(?:字节跳动|腾讯|小米|华为|通义千问|通义灵码|通义|百度|文心一言|文心快码|深度求索|豆包|混元)"
+    ))
+    .unwrap()
+});
+
+/// 客户端（如 Antigravity）注入的 CTF 与安全策略测试约束指令（Issue #3781）。
+/// 该段落常紧随开头引导语，并在末尾紧邻 `# Harness` 章节或以 `defensive use cases.` 结尾。
+/// 该指令极易导致合规代码审计/安全排查时微调模型风控误拒答（False Positives），并浪费上下文。
+static RE_SECURITY_CTF_POLICY: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(concat!(
+        r"(?is)(?:^|\r?\n)[ \t]*IMPORTANT:\s*Assist with authorized security testing[\s\S]*?",
+        r"(?:defensive use cases\.?|(?:\r?\n)+[ \t]*#\s*Harness\b)"
     ))
     .unwrap()
 });
@@ -320,7 +334,8 @@ impl PromptSanitizer {
             || lower.contains("cc_prompt_id")
             || lower.contains("cc_turn_origin")
             || lower.contains("cch=")
-            || lower.contains("claude agent sdk");
+            || lower.contains("claude agent sdk")
+            || lower.contains("authorized security testing");
 
         if !has_suspect {
             return text.to_string();
@@ -337,8 +352,18 @@ impl PromptSanitizer {
         // 步骤 2：对非代码区域仅剥离触发 WAF 的高危伪 Header
         let pass1 = RE_WAF_TRIGGER_HEADERS.replace_all(&protected_text, "");
 
-        // 步骤 3：单趟无递归还原受保护的代码块
-        let restored = RE_CODE_BLOCK_PLACEHOLDER.replace_all(&pass1, |caps: &regex::Captures| {
+        // 步骤 3：剥离客户端注入的 CTF 与安全策略提示词（Issue #3781）
+        let pass2 = RE_SECURITY_CTF_POLICY.replace_all(&pass1, |caps: &regex::Captures| {
+            let matched = &caps[0];
+            if matched.to_lowercase().contains("# harness") {
+                "\n\n# Harness"
+            } else {
+                ""
+            }
+        });
+
+        // 步骤 4：单趟无递归还原受保护的代码块
+        let restored = RE_CODE_BLOCK_PLACEHOLDER.replace_all(&pass2, |caps: &regex::Captures| {
             if let Ok(idx) = caps[1].parse::<usize>() {
                 if let Some(code) = placeholders.get(idx) {
                     return code.clone();
@@ -347,7 +372,7 @@ impl PromptSanitizer {
             caps[0].to_string()
         });
 
-        // 步骤 4：连续空行收拢（若因删除单行产生多余换行，保持正常双换行段落结构）
+        // 步骤 5：连续空行收拢（若因删除单行产生多余换行，保持正常双换行段落结构）
         let normalized = RE_MULTI_NEWLINE.replace_all(&restored, "\n\n");
 
         normalized.trim().to_string()
@@ -555,7 +580,8 @@ impl PromptSanitizer {
         t.starts_with(BILLING_METADATA_PREFIX) && !t.contains('\n') && !t.contains('\r')
     }
 
-    /// 剥离管道自身的提示词分界标记与官方身份文本（原适配层 `clean_system_prompt_text`）。
+    /// 剥离管道自身的提示词分界标记与官方身份文本（原适配层 `clean_system_prompt_text`），
+    /// 以及客户端注入的 CTF 与安全策略测试约束指令（Issue #3781）。
     /// 注意：不含 `clean_text` —— Header 轨已在 `sanitize_parts_core` 中统一执行，避免重复。
     pub fn strip_pipeline_markers(text: &str) -> String {
         let mut s = text.to_string();
@@ -567,7 +593,57 @@ impl PromptSanitizer {
         if s.contains(SELF_IDENTITY_BLOCK) {
             s = s.replace(SELF_IDENTITY_BLOCK, "");
         }
+        s = Self::strip_security_policy_prompt(&s);
         s.trim().to_string()
+    }
+
+    /// 剥离客户端（如 Antigravity）在系统提示词中注入的 CTF 与安全策略测试约束指令（Issue #3781）。
+    ///
+    /// 核心设计：
+    /// 1. 快速前置短路检查（0 开销）：未命中特征词直接原样返回；
+    /// 2. 深度代码块保护（``` 与行内 `）：代码内容 100% 豁免，绝不误伤用户正文代码；
+    /// 3. 双重锚点自适应：优先匹配到紧邻的 `# Harness`（保留该章节标题）或以 `defensive use cases.` 闭合；
+    /// 4. 连续空行收拢为 `\n\n`，保持标准 Markdown 段落排版；
+    /// 5. 清洗后若文本全空，上层流水线自动物理剔除空 Part 与空 systemInstruction（避免 400 Bad Request）。
+    pub fn strip_security_policy_prompt(text: &str) -> String {
+        // 核心铁律：快速前置短路检查（0 开销）
+        if !text.contains("authorized security testing") && !text.contains("security testing") {
+            return text.to_string();
+        }
+
+        // 步骤 1：保护代码块，确保代码块中的内容（如测试用例或字符串）不受误伤
+        let mut placeholders: Vec<String> = Vec::new();
+        let protected = RE_CODE_BLOCK.replace_all(text, |caps: &regex::Captures| {
+            let idx = placeholders.len();
+            placeholders.push(caps[0].to_string());
+            format!("__PROMPT_SANITIZER_CODE_BLOCK_{}__", idx)
+        });
+
+        // 步骤 2：正则替换
+        let replaced = RE_SECURITY_CTF_POLICY.replace_all(&protected, |caps: &regex::Captures| {
+            let matched = &caps[0];
+            // 若末尾匹配到了 # Harness，则在删除安全提示词的同时，将 # Harness 紧凑衔接保留
+            if matched.to_lowercase().contains("# harness") {
+                "\n\n# Harness"
+            } else {
+                ""
+            }
+        });
+
+        // 步骤 3：单趟无递归还原受保护代码块
+        let restored =
+            RE_CODE_BLOCK_PLACEHOLDER.replace_all(&replaced, |caps: &regex::Captures| {
+                if let Ok(idx) = caps[1].parse::<usize>() {
+                    if let Some(code) = placeholders.get(idx) {
+                        return code.clone();
+                    }
+                }
+                caps[0].to_string()
+            });
+
+        // 步骤 4：收拢连续空行
+        let normalized = RE_MULTI_NEWLINE.replace_all(&restored, "\n\n");
+        normalized.trim().to_string()
     }
 
     /// 锚点轨：当前轮 part 只归一化 `<system*>` / `<identity*>` 标签**内部**的内容，
@@ -2151,5 +2227,83 @@ mod tests {
         PromptSanitizer::sanitize_gemini_payload(&mut payload);
         PromptSanitizer::sanitize_gemini_payload(&mut payload);
         assert_eq!(once, payload.to_string(), "清洗必须幂等");
+    }
+
+    #[test]
+    fn test_strip_security_policy_prompt_with_harness() {
+        let raw = concat!(
+            "You are an expert software developer.\n\n",
+            "IMPORTANT: Assist with authorized security testing, defensive security, CTF challenges, and educational contexts. ",
+            "Refuse requests for destructive techniques, DoS attacks, mass targeting, supply chain compromise, or detection evasion for malicious purposes. ",
+            "Dual-use security tools (C2 frameworks, credential testing, exploit development) require clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases.\n\n",
+            "# Harness\n",
+            "Always verify your changes before committing."
+        );
+
+        let cleaned = PromptSanitizer::strip_security_policy_prompt(raw);
+        assert!(!cleaned.contains("authorized security testing"));
+        assert!(!cleaned.contains("defensive use cases"));
+        assert!(cleaned.contains("You are an expert software developer."));
+        assert!(cleaned.contains("# Harness\nAlways verify your changes before committing."));
+    }
+
+    #[test]
+    fn test_strip_security_policy_prompt_without_harness() {
+        let raw = concat!(
+            "System guidance:\n\n",
+            "IMPORTANT: Assist with authorized security testing, defensive security, CTF challenges, and educational contexts. ",
+            "Refuse requests for destructive techniques, DoS attacks, mass targeting, supply chain compromise, or detection evasion for malicious purposes. ",
+            "Dual-use security tools (C2 frameworks, credential testing, exploit development) require clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases.\n\n",
+            "Please follow standard coding guidelines."
+        );
+
+        let cleaned = PromptSanitizer::strip_security_policy_prompt(raw);
+        assert!(!cleaned.contains("authorized security testing"));
+        assert_eq!(
+            cleaned,
+            "System guidance:\n\nPlease follow standard coding guidelines."
+        );
+    }
+
+    #[test]
+    fn test_strip_security_policy_prompt_preserves_code_block() {
+        let raw = concat!(
+            "You are an assistant.\n\n",
+            "IMPORTANT: Assist with authorized security testing, defensive security, CTF challenges, and educational contexts. Refuse requests for destructive techniques, DoS attacks, mass targeting, supply chain compromise, or detection evasion for malicious purposes. Dual-use security tools (C2 frameworks, credential testing, exploit development) require clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases.\n\n",
+            "```python\n",
+            "# Code must not be touched:\n",
+            "msg = \"IMPORTANT: Assist with authorized security testing... defensive use cases.\"\n",
+            "```"
+        );
+
+        let cleaned = PromptSanitizer::strip_security_policy_prompt(raw);
+        assert!(!cleaned.starts_with("IMPORTANT: Assist with"));
+        assert!(cleaned.contains("```python\n# Code must not be touched:\nmsg = \"IMPORTANT: Assist with authorized security testing... defensive use cases.\"\n```"));
+    }
+
+    #[test]
+    fn test_sanitize_gemini_payload_drops_security_policy_standalone_part() {
+        let mut payload = json!({
+            "systemInstruction": {
+                "parts": [
+                    {
+                        "text": "IMPORTANT: Assist with authorized security testing, defensive security, CTF challenges, and educational contexts. Refuse requests for destructive techniques, DoS attacks, mass targeting, supply chain compromise, or detection evasion for malicious purposes. Dual-use security tools (C2 frameworks, credential testing, exploit development) require clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases."
+                    }
+                ]
+            },
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        { "text": "Hello world!" }
+                    ]
+                }
+            ]
+        });
+
+        PromptSanitizer::sanitize_gemini_payload(&mut payload);
+        // 整个空的 systemInstruction 应当被物理移除，避免向上游发送空的系统提示词导致 400
+        assert!(payload.get("systemInstruction").is_none());
+        assert_eq!(payload["contents"][0]["parts"][0]["text"], "Hello world!");
     }
 }
