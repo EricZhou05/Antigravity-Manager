@@ -4,8 +4,24 @@
 
 *   **Version History**:
     *   **v5.0.1-beta.9 (2026-10-29)**:
-        -   **[Feature Category] Main Update Summary (PR #xxx)**:
-            -   **Description**: Please document update details here; credit external contributors inline as `(Thanks to @username)`.
+        -   **[Pipeline Convergence: Unified Terminal Handling, Auto-Heal, Budgets, Routing, Rotation, and Observability] (Ref #3763, #3751, #3735)**:
+            -   **Unified Four-Protocol Timeouts & Sunk Global Budget**: Timeout policies and the 270s global request budget across all four protocols (Google Responses / Chat Completions / Claude / Gemini) are now uniformly managed by the pipeline stage; requests with exhausted budget are short-circuited immediately to prevent redundant upstream rotation. (Ref #3763, #3735)
+            -   **Stateful Rotation & Thinking Auto-Heal**: Unified empty thinking recovery and stream protocol error event recognition; stateful retry evaluation combined with scheduling-mode in-place waiting prevents Claude livelocks and account pool cascading failures. (Ref #3751, #3763)
+            -   **Model Gate & Official Thinking Migration**: Aligned with the 2026-10-29 official thinking migration (`thinkingLevel` prioritized, `thinkingBudget` fallback, explicitly disabled thinking falls back to lowest tier); egress platform fingerprint calibrated to 2.28.0 / CL 1008300195; model lists, agent configs, and UI selectors now strictly expose available model sets, retiring all Gemini < 3 models. (Ref #3751, #3763)
+            -   **Proactive Flush on Exit & Trace Timeline**: Active best-effort disk flush on exit; full-link stage timeline diagnostics and tracking for slow requests (≥25s). (Ref #3763)
+        -   **[Endpoint Streaming Real TTFT Closed-Loop Backfill & Negative Value Guard] (Ref #3763, #3751)**:
+            -   **Cross-Stage TTFT Probe Backfill**: Added the `StreamTtftCapture` container mounted via Response extensions; on stream completion, `monitor_middleware` backfills the genuine clean TTFT captured from the first valid data chunk into request logs, thoroughly replacing the `-1.000` header placeholder. (Ref #3763)
+            -   **UI Defenses & Graceful Degradation**: `ProxyMonitor` and `RequestDetailModal` now filter out negative durations (`<= 0`) and fall back to effective endpoint attempt durations, resolving the `-` TTFT in tables and the `-0.0010s` (`-0.0%`) display glitch in details drawers. (Ref #3751, Ref #3763)
+        -   **[Dynamic Inbound Sanitization for Client CTF and Security Policy Prompts] (Fixes #3781, Thanks to @Ran-Xing)**:
+            -   **Adaptive Security Policy Stripping**: Strips Antigravity-injected CTF and defensive security instructions via regex with dual-anchor adaptation (preserving adjacent `# Harness` chapter headers or closing on `defensive use cases.`). (Fixes #3781, Thanks to @Ran-Xing)
+            -   **Code Block Protection & Empty Block Pruning**: Deep code block isolation (``` and `) ensures 100% exemption for user code; empty parts post-sanitization are physically purged, and empty `systemInstruction` objects are deregistered to prevent 400 Bad Request and avoid model refusal false positives. (Fixes #3781, Thanks to @Ran-Xing)
+        -   **[Antigravity IDE 2.6.0+ Account Switching Fix & Background Orphan Cleanup] (Fixes #3778, Fixes #3770, Ref #3762, PR #3780, Thanks to @lbjlaq)**:
+            -   **Dual-Write Injection**: Implemented simultaneous dual-write for Antigravity IDE (2.6.0+) into SQLite `state.vscdb`, system Keyring (`gemini:antigravity`), and file fallbacks, resolving stale credential reads by the core `agy` language service. (Fixes #3778, Fixes #3770, PR #3780, Thanks to @lbjlaq)
+            -   **Language Server Process Recognition**: Added `is_language_server_process` recognition inside `is_helper_process` and matched the `--hub` flag in `matches_target_client` to target `ide`. (PR #3780)
+            -   **Orphan Process Cleanup**: Expanded cross-platform `close_antigravity` calls to `sweep_orphan_language_servers`, terminating orphan background `agy` processes during restart or account switching. (PR #3780, Ref #3762)
+        -   **[Direct Account List Refresh upon QoS Jail Release] (Ref #3749, Ref #3768, PR #3782, Thanks to @wthsama)**:
+            -   **Decoupled Release from Quota Refresh**: Releasing QoS jail now only resets local runtime QoS state instead of triggering remote `handleRefresh` / `refreshQuota` calls prone to 429 failures. (Ref #3768, PR #3782, Thanks to @wthsama)
+            -   **Instant Local Feedback**: Directly calls `useAccountStore.getState().fetchAccounts()` to refresh the local account list, immediately clearing the jail badge and countdown while eliminating redundant quota queries in table views. (PR #3782, Thanks to @wthsama)
 
     *   **v5.0.1-beta.8 (2026-10-29)**:
         -   **[Tool Signature Cache Read/Write Closed-Loop Optimization: Eliminating SQLite Write Amplification and Serialized Read Bottlenecks] (PR #3765, PR #3774, Ref #753, Thanks to @zepeng-jin, @jeikl)**:

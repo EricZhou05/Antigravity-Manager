@@ -4,8 +4,24 @@
 
 *   **版本演进**:
     *   **v5.0.1-beta.9 (2026-10-29)**:
-        -   **[更新分类] 核心更新标题 (PR #xxx)**:
-            -   **功能详述**: 详细说明请在此处补充；涉及外部贡献者时以行内 `(Thanks to @username)` 标注。
+        -   **[流水线收敛：终态、自愈、预算、路由、轮换与观测统一] (Ref #3763, #3751, #3735)**:
+            -   **四协议超时与全局预算统一下沉**: 四大协议（Google Responses / Chat Completions / Claude / Gemini）超时处置与 270s 全局请求预算统一由 pipeline 接管，剩余预算不足时直接短路拦截，消除跨协议漂移与无效空转。(Ref #3763, #3735)
+            -   **有状态轮换与思考自愈**: 统一思考空回复原地自愈与流式错误事件识别；有状态重试裁决与调度模式原地等待判定收敛，彻底杜绝 Claude 活锁与号池雪崩。(Ref #3751, #3763)
+            -   **模型门禁与官方思考迁移**: 对齐 2026-10-29 官方思考迁移规则（`thinkingLevel` 优先、`thinkingBudget` 兜底，显式关闭时降至最低档）；出站指纹校准至 2.28.0 / CL 1008300195；列表、一键配置与 UI 仅暴露可用模型，下线 Gemini < 3 全量模型。(Ref #3751, #3763)
+            -   **退出主动刷盘与时间线留痕**: 进程退出时主动尽力刷盘；支持阶段耗时时间线异常输出与 ≥25s 慢请求排查留痕。(Ref #3763)
+        -   **[端点流式真实 TTFT 闭环回填与防负数展示] (Ref #3763, #3751)**:
+            -   **首包探针跨阶段回填**: 新增 `StreamTtftCapture` 容器，四大协议流式返回时挂载首包探针；流式传输完毕后，在 `monitor_middleware` 中将生效端点捕获到的真实纯净 TTFT 回填至请求日志，彻底清除发头时 `-1.000` 占位符。(Ref #3763)
+            -   **前端防御与优雅降级**: `ProxyMonitor` 与 `RequestDetailModal` 增加防负数过滤（严格拦截 `<= 0`），并优先使用生效端点尝试的实际耗时兜底，彻底解决列表页首字显示 `-` 以及详情抽屉显示 `-0.0010s`（占比 `-0.0%`）的显示异常。(Ref #3751, Ref #3763)
+        -   **[前置流水线动态清洗客户端 CTF 与安全策略提示词] (Fixes #3781, Thanks to @Ran-Xing)**:
+            -   **安全策略自适应剥离**: 在 System 轨与全文本轨中正则匹配并剥离 Antigravity 注入的 CTF/安全测试免责与防御声明，支持紧邻 `# Harness` 章节（自然衔接标头）与以 `defensive use cases.` 闭合的双重自适应匹配。(Fixes #3781, Thanks to @Ran-Xing)
+            -   **代码块深度隔离与空 Block 自动修剪**: 深度隔离代码块（``` 与行内 `）确保正文代码 100% 豁免；清洗后空 Part 自动物理剔除，若 `systemInstruction` 变为空则物理注销，消除模型微调风控误拒答（False Positives）、节省上下文 Token，并杜绝 400 Bad Request。(Fixes #3781, Thanks to @Ran-Xing)
+        -   **[Antigravity IDE 2.6.0+ 切号失败与后台孤儿进程治理] (Fixes #3778, Fixes #3770, Ref #3762, PR #3780, Thanks to @lbjlaq)**:
+            -   **全链路双写注入**: 针对 Antigravity IDE (2.6.0+) 实施全链路双写，同时注入 SQLite `state.vscdb` 与系统 Keyring (`gemini:antigravity`) 及文件回退，解决核心后台 agy 语言服务继续读取旧凭据的问题。(Fixes #3778, Fixes #3770, PR #3780, Thanks to @lbjlaq)
+            -   **语言服务进程精确识别**: 在 `is_helper_process` 中纳入 `is_language_server_process`，并在 `matches_target_client` 判定 `--hub` 启动参数精确绑定 `ide` 目标。(PR #3780)
+            -   **孤儿进程清理**: 跨平台补全 `close_antigravity` 对 `sweep_orphan_language_servers` 的调用，重启或切号时彻底终止后台孤儿 agy 进程。(PR #3780, Ref #3762)
+        -   **[解除 QoS 小黑屋后直接重拉账号列表] (Ref #3749, Ref #3768, PR #3782, Thanks to @wthsama)**:
+            -   **解除与配额刷新解耦**: 解除小黑屋只重置本地运行时 QoS 状态，不再复用易因 429 报错打断列表刷新的 `handleRefresh` / `refreshQuota` 远程接口。(Ref #3768, PR #3782, Thanks to @wthsama)
+            -   **本地即时回显**: 改为直接调用 `useAccountStore.getState().fetchAccounts()` 重拉本地账号列表，解除成功后小黑屋徽章与倒计时立即消失，同时消除表格视图中多余的 3 次配额请求。(PR #3782, Thanks to @wthsama)
 
     *   **v5.0.1-beta.8 (2026-10-29)**:
         -   **[工具签名缓存读写闭环优化：消除 SQLite 写放大与读路径串行瓶颈] (PR #3765, PR #3774, Ref #753, Thanks to @zepeng-jin, @jeikl)**:
