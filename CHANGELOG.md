@@ -3,6 +3,10 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.1-beta.9 (2026-10-29)**:
+        -   **[更新分类] 核心更新标题 (PR #xxx)**:
+            -   **功能详述**: 详细说明请在此处补充；涉及外部贡献者时以行内 `(Thanks to @username)` 标注。
+
     *   **v5.0.1-beta.8 (2026-10-29)**:
         -   **[工具签名缓存读写闭环优化：消除 SQLite 写放大与读路径串行瓶颈] (PR #3765, PR #3774, Ref #753, Thanks to @zepeng-jin, @jeikl)**:
             -   **写路径去重与容量对齐**: L1 `TOOL_CACHE_LIMIT` 由 500 提升至 10,000，与 SQLite L2 表上限完全对齐；`cache_tool_signature` 命中未过期同签名时仅刷新内存时间戳并跳过冗余落盘，彻底消除多轮历史重放（一次携带 125 条工具调用曾触发 250 次同步写库）导致的 10~17s 本地 CPU 与磁盘阻塞。(PR #3765, Thanks to @zepeng-jin)

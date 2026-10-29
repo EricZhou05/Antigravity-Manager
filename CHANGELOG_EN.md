@@ -3,6 +3,10 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.1-beta.9 (2026-10-29)**:
+        -   **[Feature Category] Main Update Summary (PR #xxx)**:
+            -   **Description**: Please document update details here; credit external contributors inline as `(Thanks to @username)`.
+
     *   **v5.0.1-beta.8 (2026-10-29)**:
         -   **[Tool Signature Cache Read/Write Closed-Loop Optimization: Eliminating SQLite Write Amplification and Serialized Read Bottlenecks] (PR #3765, PR #3774, Ref #753, Thanks to @zepeng-jin, @jeikl)**:
             -   **Write-Path Deduplication & Capacity Alignment**: Raised L1 `TOOL_CACHE_LIMIT` from 500 to 10,000, fully aligned with the SQLite L2 table cap; `cache_tool_signature` now only refreshes the in-memory timestamp and skips redundant persistence when the same unexpired signature is already in L1, eliminating the 10–17s local CPU/disk stall caused by multi-turn history replay (a single request with 125 tool calls used to trigger 250 synchronous writes). (PR #3765, Thanks to @zepeng-jin)
