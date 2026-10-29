@@ -713,15 +713,18 @@ pub async fn handle_generate(
                         .header("X-Upstream-Model", config.final_model.as_str())
                         .header("X-Session-Id", &client_session_id)
                         .header("X-Antigravity-Session-Id", &client_session_id)
-                        .timing(&TimingHeaders::new(
-                            clean_ms,
-                            norm_ms,
-                            think_fill_ms,
-                            ttft_ms,
-                            headers_ms,
-                            fallback_overhead_ms,
-                            attempts_b64.as_deref().unwrap_or(""),
-                        ))
+                        .timing_stream(
+                            &TimingHeaders::new(
+                                clean_ms,
+                                norm_ms,
+                                think_fill_ms,
+                                ttft_ms,
+                                headers_ms,
+                                fallback_overhead_ms,
+                                attempts_b64.as_deref().unwrap_or(""),
+                            ),
+                            crate::proxy::pipeline::timing::StreamTtftCapture(ttft_seen.clone()),
+                        )
                         .body(body)
                         .unwrap()
                         .into_response());

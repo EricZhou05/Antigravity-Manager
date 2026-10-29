@@ -4,6 +4,30 @@
 //! 这里保留一个数据结构 + `Builder` 扩展，适配器只负责填入已算好的毫秒值。
 
 use axum::http::response::Builder;
+use std::sync::{Arc, OnceLock};
+
+/// 供流式链路跨阶段共享生效端点首块 TTFT（毫秒）的容器。
+///
+/// 流式发头时由于首个 Token 尚未到达，HTTP 响应头只能写入 -1（未知）；
+/// 当首个非心跳数据块到达并触发 probe 时，测得的真实端点 TTFT 写入该容器；
+/// monitor_middleware 在流结束后即可读取该真实值并回填日志，
+/// 消除日志中遗留 -1.0 占位符、以及前端显示 -0.0010s 负数的问题。
+#[derive(Clone, Default, Debug)]
+pub struct StreamTtftCapture(pub Arc<OnceLock<f64>>);
+
+impl StreamTtftCapture {
+    pub fn new() -> Self {
+        Self(Arc::new(OnceLock::new()))
+    }
+
+    pub fn set(&self, ttft_ms: f64) {
+        let _ = self.0.set(ttft_ms);
+    }
+
+    pub fn get(&self) -> Option<f64> {
+        self.0.get().copied()
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct TimingHeaders {
@@ -48,6 +72,8 @@ pub trait TimingBuilderExt {
     fn timing_overhead(self, headers: &TimingHeaders) -> Self;
     /// 写入核心 5 个 X-Timing 头（错误/降级响应，不伪造 overhead/attempts）。
     fn timing_core(self, headers: &TimingHeaders) -> Self;
+    /// 附带挂载流式 TTFT 捕获器到 response extensions
+    fn timing_stream(self, headers: &TimingHeaders, capture: StreamTtftCapture) -> Self;
 }
 
 impl TimingBuilderExt for Builder {
@@ -73,5 +99,9 @@ impl TimingBuilderExt for Builder {
             .header("X-Timing-Thinking-Ms", format!("{:.3}", h.thinking_ms))
             .header("X-Timing-Ttft-Ms", format!("{:.3}", h.ttft_ms))
             .header("X-Timing-Headers-Ms", format!("{:.3}", h.headers_ms))
+    }
+
+    fn timing_stream(self, headers: &TimingHeaders, capture: StreamTtftCapture) -> Self {
+        self.timing(headers).extension(capture)
     }
 }

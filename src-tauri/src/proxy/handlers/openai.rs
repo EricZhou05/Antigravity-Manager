@@ -2943,6 +2943,8 @@ pub async fn handle_chat_completions(
                     }
                 };
                 // [QoS] 流式：以首个真实数据块上报 TTFT；非流式已由 peek 上报
+                let ttft_seen = std::sync::Arc::new(std::sync::OnceLock::<f64>::new());
+                let ttft_seen_cb = ttft_seen.clone();
                 let combined_stream: std::pin::Pin<
                     Box<dyn futures::Stream<Item = Result<Bytes, String>> + Send>,
                 > = if client_wants_stream {
@@ -2965,6 +2967,7 @@ pub async fn handle_chat_completions(
                                 )
                             },
                             move |ttft| {
+                                let _ = ttft_seen_cb.set(ttft);
                                 crate::proxy::handlers::common::report_qos_ttft(
                                     &ttft_tm,
                                     &ttft_account,
@@ -3039,15 +3042,18 @@ pub async fn handle_chat_completions(
                         .header("X-Upstream-Model", config.final_model.as_str())
                         .header("X-Session-Id", &client_session_id)
                         .header("X-Antigravity-Session-Id", &client_session_id)
-                        .timing(&TimingHeaders::new(
-                            clean_ms,
-                            norm_ms,
-                            think_fill_ms,
-                            ttft_ms,
-                            headers_ms,
-                            fallback_overhead_ms,
-                            attempts_b64.as_deref().unwrap_or(""),
-                        ))
+                        .timing_stream(
+                            &TimingHeaders::new(
+                                clean_ms,
+                                norm_ms,
+                                think_fill_ms,
+                                ttft_ms,
+                                headers_ms,
+                                fallback_overhead_ms,
+                                attempts_b64.as_deref().unwrap_or(""),
+                            ),
+                            crate::proxy::pipeline::timing::StreamTtftCapture(ttft_seen.clone()),
+                        )
                         .body(body)
                         .unwrap()
                         .into_response());
@@ -4783,6 +4789,8 @@ pub async fn handle_completions(
                     headers_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
                     ttft_ms = crate::proxy::pipeline::stream_peek::TTFT_UNKNOWN_MS;
                     // [QoS] Responses 流式与 chat 同口径：首个真实数据块上报 TTFT
+                    let ttft_seen = std::sync::Arc::new(std::sync::OnceLock::<f64>::new());
+                    let ttft_seen_cb = ttft_seen.clone();
                     let ttft_start = effective_attempt_start;
                     let ttft_tm = token_manager.clone();
                     let ttft_account = account_id.clone();

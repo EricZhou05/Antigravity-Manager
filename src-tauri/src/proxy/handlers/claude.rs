@@ -2273,6 +2273,8 @@ pub async fn handle_messages(
                         });
 
                     // [QoS] 以首个真实数据块为准上报 TTFT（与 peek / 非流式口径一致）
+                    let ttft_seen = std::sync::Arc::new(std::sync::OnceLock::<f64>::new());
+                    let ttft_seen_cb = ttft_seen.clone();
                     let ttft_probe_start = effective_attempt_start;
                     let ttft_tm = token_manager.clone();
                     let ttft_account = account_id.clone();
@@ -2291,6 +2293,7 @@ pub async fn handle_messages(
                                 )
                             },
                             move |ttft| {
+                                let _ = ttft_seen_cb.set(ttft);
                                 crate::proxy::handlers::common::report_qos_ttft(
                                     &ttft_tm,
                                     &ttft_account,
@@ -2315,15 +2318,18 @@ pub async fn handle_messages(
                         .header("X-Session-Id", &client_session_id)
                         .header("X-Antigravity-Session-Id", &client_session_id)
                         .header("X-Context-Purified", "false")
-                        .timing(&TimingHeaders::new(
-                            clean_ms,
-                            norm_ms,
-                            think_fill_ms,
-                            ttft_ms,
-                            headers_ms,
-                            fallback_overhead_ms,
-                            attempts_b64.as_deref().unwrap_or(""),
-                        ))
+                        .timing_stream(
+                            &TimingHeaders::new(
+                                clean_ms,
+                                norm_ms,
+                                think_fill_ms,
+                                ttft_ms,
+                                headers_ms,
+                                fallback_overhead_ms,
+                                attempts_b64.as_deref().unwrap_or(""),
+                            ),
+                            crate::proxy::pipeline::timing::StreamTtftCapture(ttft_seen.clone()),
+                        )
                         .body(Body::from_stream(stream_mapped))
                         .unwrap();
                 }
