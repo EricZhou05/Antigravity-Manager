@@ -1103,6 +1103,7 @@ mod tests {
     #[test]
     fn test_multiturn_thinking_model_prevents_false_strikes() {
         let guardian = QoSGuardian::new();
+        guardian.set_auto_jail_enabled(true);
         let acc_a = create_test_token("acc_a", "PRO");
         let acc_b = create_test_token("acc_b", "PRO");
         let all = vec![acc_a.clone(), acc_b.clone()];
