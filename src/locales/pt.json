@@ -1275,7 +1275,7 @@
             "extra_wait_desc": "Este parâmetro afeta o tempo máximo de espera do upload.",
             "formula_title": "Espera máxima = tamanho do corpo ÷ banda de upload × (1 + fator de espera)",
             "stall_title": "Tempo de travamento (segundos)",
-            "stall_desc": "Tempo limite para travamento contínuo de rede durante o upload; se a espera máxima for menor, usa-se a espera máxima.",
+            "stall_desc": "Tempo limite para estagnação contínua durante o upload; garantido para não ser menor que o tempo de conexão, evitando cancelamentos prematuros no handshake.",
             "header_wait_title": "Tempo do primeiro cabeçalho (segundos)",
             "header_wait_desc": "0 = usar valores internos: 30 s no endpoint principal / 25 s no alternativo; um valor diferente de 0 apenas eleva o mínimo.",
             "large_body_desc": "Arquivos acima do limite são enviados apenas uma vez por padrão, evitando repetições que saturem o upload.",
@@ -1287,7 +1287,7 @@
         },
         "timeouts": {
             "banner_title": "Configurações de tempo limite",
-            "banner_desc": "Cadeia completa de tempos de uma solicitação: conexão → upload → primeiro cabeçalho → primeiro token / saída contínua.",
+            "banner_desc": "Cadeia completa de tempo limite para uma solicitação: ① Conexão do endpoint → ② Upload do corpo → ③ Resposta do primeiro token e fluxo contínuo.",
             "section_connect": "① Conexão ao endpoint (failover automático)",
             "connect_label": "Tempo de conexão (segundos)",
             "connect_desc": "Tempo de estabelecimento TCP com o endpoint; normalmente muito rápido.",

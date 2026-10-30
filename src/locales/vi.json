@@ -1309,7 +1309,7 @@
             "extra_wait_desc": "Tham số này ảnh hưởng đến thời gian chờ tối đa khi tải lên.",
             "formula_title": "Chờ tối đa = kích thước nội dung ÷ băng thông tải lên × (1 + hệ số chờ)",
             "stall_title": "Thời gian đình trệ (giây)",
-            "stall_desc": "Thời gian chờ khi mạng đứng hoàn toàn trong lúc tải lên; nếu chờ tối đa ngắn hơn thì dùng mức đó.",
+            "stall_desc": "Thời gian chờ khi quá trình truyền dữ liệu bị dừng hoàn toàn; hệ thống tự động bảo đảm không thấp hơn thời gian kết nối để tránh phán đoán sai lúc bắt tay.",
             "header_wait_title": "Thời gian chờ tiêu đề đầu (giây)",
             "header_wait_desc": "0 = dùng giá trị tích hợp: 30 giây cho endpoint chính / 25 giây cho dự phòng; giá trị khác 0 chỉ nâng mức tối thiểu.",
             "large_body_desc": "Tệp vượt ngưỡng mặc định chỉ gửi một lần, tránh gửi lại nhiều lần làm nghẽn đường lên.",
@@ -1321,7 +1321,7 @@
         },
         "timeouts": {
             "banner_title": "Cài đặt thời gian chờ",
-            "banner_desc": "Chuỗi thời gian chờ đầy đủ của một yêu cầu: kết nối → tải lên → tiêu đề đầu → token đầu / xuất liên tục.",
+            "banner_desc": "Chuỗi thời gian chờ đầy đủ của một yêu cầu: ① Thiết lập kết nối điểm cuối → ② Tải lên phần thân yêu cầu → ③ Phản hồi ký tự đầu và luồng liên tục.",
             "section_connect": "① Kết nối endpoint (tự động chuyển)",
             "connect_label": "Thời gian kết nối (giây)",
             "connect_desc": "Thời gian thiết lập TCP tới endpoint; thường rất nhanh.",

@@ -1296,7 +1296,7 @@
             "extra_wait_desc": "This parameter affects the maximum upload wait time.",
             "formula_title": "Max wait = request body size ÷ upload bandwidth × (1 + extra wait factor)",
             "stall_title": "Stall timeout (seconds)",
-            "stall_desc": "Timeout for a sustained network stall during upload; if the max wait is shorter, the max wait is used.",
+            "stall_desc": "Timeout for sustained zero-progress stalls during upload; guaranteed not to fall below connect timeout to prevent premature aborts during handshakes.",
             "header_wait_title": "First header timeout (seconds)",
             "header_wait_desc": "0 = use built-in values: 30s for the primary endpoint / 25s for the fallback; a non-zero value only raises the lower bound.",
             "large_body_desc": "Files above the threshold are sent only once by default, avoiding repeated retries that saturate the uplink.",
@@ -1308,7 +1308,7 @@
         },
         "timeouts": {
             "banner_title": "Timeout Settings",
-            "banner_desc": "The full timeout chain for one request: connect → upload → first response header → first token / continuous output.",
+            "banner_desc": "The full timeout chain for one request: ① Endpoint Connection → ② Payload Upload → ③ First-Token Response & Continuous Stream.",
             "section_connect": "① Endpoint connection (auto failover)",
             "connect_label": "Connect timeout (seconds)",
             "connect_desc": "TCP connection establishment timeout to the endpoint; usually very fast.",

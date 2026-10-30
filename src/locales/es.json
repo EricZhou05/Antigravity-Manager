@@ -1262,7 +1262,7 @@
             "extra_wait_desc": "Este parámetro afecta al tiempo máximo de espera de la carga.",
             "formula_title": "Espera máxima = tamaño del cuerpo ÷ ancho de banda × (1 + factor de espera)",
             "stall_title": "Tiempo de bloqueo (segundos)",
-            "stall_desc": "Tiempo de espera ante un bloqueo de red continuo durante la carga; si la espera máxima es menor, se usa la espera máxima.",
+            "stall_desc": "Tiempo de espera por falta continua de progreso durante la carga; garantizado para no ser inferior al tiempo de conexión, evitando abortos durante el saludo.",
             "header_wait_title": "Tiempo de primera cabecera (segundos)",
             "header_wait_desc": "0 = usar valores integrados: 30 s en el endpoint principal / 25 s en el alternativo; un valor distinto de 0 solo eleva el mínimo.",
             "large_body_desc": "Los archivos que superan el umbral se envían una sola vez por defecto, evitando reintentos que saturen la subida.",
@@ -1274,7 +1274,7 @@
         },
         "timeouts": {
             "banner_title": "Configuración de tiempos de espera",
-            "banner_desc": "Cadena completa de tiempos para una solicitud: conexión → carga → primera cabecera → primer token / salida continua.",
+            "banner_desc": "Cadena completa de tiempos de espera para una solicitud: ① Conexión de endpoint → ② Carga del cuerpo → ③ Respuesta del primer token y flujo continuo.",
             "section_connect": "① Conexión al endpoint (failover automático)",
             "connect_label": "Tiempo de conexión (segundos)",
             "connect_desc": "Tiempo de establecimiento TCP con el endpoint; suele ser muy rápido.",

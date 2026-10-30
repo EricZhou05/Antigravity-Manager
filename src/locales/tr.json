@@ -1311,7 +1311,7 @@
             "extra_wait_desc": "Bu parametre maksimum yükleme bekleme süresini etkiler.",
             "formula_title": "Maks. bekleme = gövde boyutu ÷ yükleme hızı × (1 + ek bekleme katsayısı)",
             "stall_title": "Takılma zaman aşımı (saniye)",
-            "stall_desc": "Yükleme sırasında ağ tamamen durursa uygulanacak süre; maksimum bekleme daha kısaysa o kullanılır.",
+            "stall_desc": "Yükleme sırasında aktarım ilerlemesinin durması için zaman aşımı süresi; el sıkışma hatalarını önlemek için bağlantı zaman aşımının altına inmeyecek şekilde korunur.",
             "header_wait_title": "İlk başlık zaman aşımı (saniye)",
             "header_wait_desc": "0 = yerleşik değerler: birincil uç nokta 30 sn / yedek 25 sn; 0 dışı değer yalnızca alt sınırı yükseltir.",
             "large_body_desc": "Eşiği aşan dosyalar varsayılan olarak bir kez gönderilir; tekrarların hattı doldurması önlenir.",
@@ -1323,7 +1323,7 @@
         },
         "timeouts": {
             "banner_title": "Zaman Aşımı Ayarları",
-            "banner_desc": "Bir isteğin tam zaman aşımı zinciri: bağlantı → yükleme → ilk yanıt başlığı → ilk token / sürekli çıktı.",
+            "banner_desc": "Bir isteğin tam zaman aşımı zinciri: ① Uç Nokta Bağlantısı → ② Gövde Yükleme → ③ İlk Belirteç Yanıtı ve Kesintisiz Akış.",
             "section_connect": "① Uç nokta bağlantısı (otomatik yedekleme)",
             "connect_label": "Bağlantı zaman aşımı (saniye)",
             "connect_desc": "Uç noktaya TCP bağlantısı kurma zaman aşımı; genellikle çok hızlıdır.",
