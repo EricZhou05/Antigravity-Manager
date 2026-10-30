@@ -3,15 +3,18 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.2-beta.1 (2026-10-30)**:
+        -   **[大请求上传超时解耦与思考模型小黑屋误封修复] (Ref #3763, Fixes #3772, Ref #3768, Ref #3781, PR #3784, Thanks to @cubelikeplayDaniel)**:
+            -   **上传停滞超时解耦与保底**: 彻底解耦 `stall_secs` 与自适应 `upload_budget_secs`，停滞超时不再随体积计算缩水至 3~5s，并强制保证绝不低于连接超时 (`max connect_secs`)，杜绝 TLS 握手及代理抖动误触发停滞中断；对 ≥256KB 请求引入 15s 上传保底时间。(Ref #3763, PR #3784, Thanks to @cubelikeplayDaniel)
+            -   **端点耗尽终态防穿透重放**: 当请求在上传阶段耗尽全部首选与备用端点时，明确标记 `UpstreamTerminal::Upload` 终态并直接向客户端返回 504 截断，杜绝中等请求因未标记终态引发跨账号盲目轮换并耗死正常账号。(Ref #3763, PR #3784, Thanks to @cubelikeplayDaniel)
+            -   **流水线深度思考特征统一收敛**: 在 `pipeline::qos` 下实现统一的 `payload_enables_thinking`，优先依据转出报文的 `generationConfig.thinkingConfig` 真实指令进行判定，并通配 `argon`、`-high`、`o1/o3/o4` 及 `v4.0+` 模型语义，从根源上消除 `gemini-3.8-flash-high` 等思考模型在多轮会话中被误判为非思考请求而按 20s 阈值连击误关小黑屋的问题。(Fixes #3772, Ref #3768, PR #3784, Thanks to @cubelikeplayDaniel)
+            -   **安全策略提示词自适应清洗**: 扩展 `RE_SECURITY_CTF_POLICY` 兼容无 `authorized` 前缀的提示词注入，并在前置快速过滤器与多行 user turn 中补全正则覆盖与自动化单测。(Ref #3781, PR #3784)
+
     *   **v5.0.2-beta.0 (2026-10-30)**:
         -   **[QoS 自动限流进小黑屋独立开关与忽略校验时长机制] (Fixes #3783, Thanks to @TakimotoUki)**:
             -   **手动可控与默认关闭**: 新增 `proxy.qos_auto_jail` 配置项，默认关闭 (`false`)。针对网络延迟抖动场景，赋予用户自主选择权，避免正常账号因突发网络波动被判定为限速降速而打入小黑屋。(Fixes #3783, Thanks to @TakimotoUki)
             -   **忽略校验时长与清空解封**: 当关闭该开关时，处理首包延迟 (TTFT) 时直接忽略时长校验，不进行 Strike 判定，不打标疑似限速 (Suspicious)，不关入小黑屋 (Jailed)，亦不解绑粘性会话；若在运行期从开启切换至关闭，立即原子清空全池小黑屋记录与惩罚记忆，全量账号即刻恢复正常调度。(Fixes #3783)
             -   **首页快捷切换与全语言覆盖**: 在首页仪表盘顶部操作栏（紧邻可用账号右侧）新增胶囊小开关，支持一键实时热切换、三态徽章展示与详尽 Tooltip 说明；同步更新设置页反代配置，并为全部 12 种系统语言补齐原生国际化翻译词条。(Fixes #3783)
-        -   **[大请求上传超时与思考模型小黑屋误封修复] (Ref #3763, Fixes #3772, Ref #3768, Ref #3781, PR #3784, Thanks to @cubelikeplayDaniel)**:
-            -   **上传停滞超时解耦与终态归一**: 解耦 `stall_secs` 与自适应 `upload_budget_secs`，杜绝 500KB 级中大请求因握手抖动被压缩至 5s 误判停滞；为 ≥256KB 请求提供 15s 上传保底；端点耗尽时明确标记 `UpstreamTerminal::Upload` 终态，杜绝跨账号盲目重放耗死健康账号。(Ref #3763, PR #3784, Thanks to @cubelikeplayDaniel)
-            -   **流水线思考特征统一收敛**: 在 `pipeline::qos` 新增 `payload_enables_thinking`，优先依据规范化 Gemini 载荷（`generationConfig.thinkingConfig`）及模型启发式（覆盖 argon、-high、o 系列等）统一定义思考特征，并在四大协议适配器中全面统一调用，彻底根除多轮会话热缓存增量较小时被误套 20s 非思考阈值导致连击 Strike 误进小黑屋的问题。(Fixes #3772, Ref #3768, PR #3784, Thanks to @cubelikeplayDaniel)
-            -   **提示词清洗自适应放宽**: 放宽 `RE_SECURITY_CTF_POLICY` 匹配兼容不含 `authorized` 前缀的注入语句，并扩充多行 user turn 过滤单测。(Ref #3781, PR #3784)
 
     *   **v5.0.1-beta.9 (2026-10-29)**:
         -   **[流水线收敛：终态、自愈、预算、路由、轮换与观测统一] (Ref #3763, #3751, #3735)**:

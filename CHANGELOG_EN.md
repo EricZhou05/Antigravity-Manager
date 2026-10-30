@@ -3,15 +3,18 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.2-beta.1 (2026-10-30)**:
+        -   **[Large Payload Upload Stall Decoupling and Thinking QoS False Positive Fix] (Ref #3763, Fixes #3772, Ref #3768, Ref #3781, PR #3784, Thanks to @cubelikeplayDaniel)**:
+            -   **Upload Stall Decoupling & Floor Guard**: Completely decoupled `stall_secs` from adaptive `upload_budget_secs`, ensuring stall detection never shrinks to 3~5s and strictly respects `max connect_secs` to avoid false stall aborts during TLS/proxy handshakes; enforced a 15s budget floor for payloads ≥256KB. (Ref #3763, PR #3784, Thanks to @cubelikeplayDaniel)
+            -   **Upload Terminal State & Replay Cascade Suppression**: Explicitly marked `UpstreamTerminal::Upload` terminal state when all primary and fallback endpoints fail during upload, immediately returning 504 to prevent blind cross-account retries from exhausting healthy account quotas. (Ref #3763, PR #3784, Thanks to @cubelikeplayDaniel)
+            -   **Unified Pipeline-Level Thinking Recognition**: Implemented `payload_enables_thinking` under `pipeline::qos` to inspect converted `generationConfig.thinkingConfig` payloads directly while matching `argon`, `-high`, `o1/o3/o4`, and `v4.0+` patterns, fundamentally preventing thinking models like `gemini-3.8-flash-high` from being misjudged with a 20s non-thinking threshold during multi-turn chats. (Fixes #3772, Ref #3768, PR #3784, Thanks to @cubelikeplayDaniel)
+            -   **Adaptive Security Prompt Sanitization**: Expanded `RE_SECURITY_CTF_POLICY` to seamlessly match security instructions missing the `authorized` prefix, extending fast-path pre-filters and multi-turn user prompt unit tests. (Ref #3781, PR #3784)
+
     *   **v5.0.2-beta.0 (2026-10-30)**:
         -   **[Dedicated QoS Auto-Quarantine Toggle and Duration Check Bypass] (Fixes #3783, Thanks to @TakimotoUki)**:
             -   **Manual Control & Disabled by Default**: Added the `proxy.qos_auto_jail` configuration field, defaulted to disabled (`false`). In high-jitter network environments, users have full control to prevent accounts from being quarantined due to transient network stalls. (Fixes #3783, Thanks to @TakimotoUki)
             -   **Duration Check Bypass & Instant Unjail**: When disabled, incoming TTFT durations are ignored during QoS evaluation—no suspicious tags are assigned, accounts are never jailed, and sticky sessions are preserved; toggling the switch from enabled to disabled immediately unjails and restores all restricted accounts to Healthy in memory. (Fixes #3783)
             -   **Dashboard Quick Toggle & Full 12-Locale Support**: Introduced an intuitive pill toggle on the Dashboard header (adjacent to the available accounts filter) with dynamic badge states, instantaneous hot-reload, and contextual tooltips; aligned Settings UI and fully localized across all 12 supported languages. (Fixes #3783)
-        -   **[Large Payload Upload Stall Decoupling and Thinking QoS False Positive Fix] (Ref #3763, Fixes #3772, Ref #3768, Ref #3781, PR #3784, Thanks to @cubelikeplayDaniel)**:
-            -   **Upload Stall Decoupling & Terminal Normalization**: Decoupled `stall_secs` from `upload_budget_secs` to prevent 500KB requests from being squeezed to 5s stalls during handshake; enforced a 15s budget floor for payloads ≥256KB; marked `UpstreamTerminal::Upload` terminal state on exhausted endpoints to eliminate cross-account replay cascades. (Ref #3763, PR #3784, Thanks to @cubelikeplayDaniel)
-            -   **Unified Pipeline-Level Thinking Recognition**: Introduced `payload_enables_thinking` in `pipeline::qos` based on normalized Gemini payloads (`generationConfig.thinkingConfig`) and model heuristics (argon, -high, o-series, etc.), replacing fragile adapter-level string matching and resolving false QoS strikes for multi-turn thinking requests. (Fixes #3772, Ref #3768, PR #3784, Thanks to @cubelikeplayDaniel)
-            -   **Adaptive Security Prompt Sanitization**: Loosened `RE_SECURITY_CTF_POLICY` to adapt to policy prefixes omitting `authorized` and expanded multi-turn user prompt tests. (Ref #3781, PR #3784)
 
     *   **v5.0.1-beta.9 (2026-10-29)**:
         -   **[Pipeline Convergence: Unified Terminal Handling, Auto-Heal, Budgets, Routing, Rotation, and Observability] (Ref #3763, #3751, #3735)**:
